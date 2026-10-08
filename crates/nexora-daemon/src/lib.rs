@@ -1,17 +1,22 @@
 use anyhow::{Context, Result};
 use nexora_core::{Health, WindowId};
-use nexora_ipc::{PROTOCOL_VERSION, RenameResponse, Request, Response};
+use nexora_ipc::{
+    ModuleInfo, ModulesResponse, PROTOCOL_VERSION, RenameResponse, Request, Response,
+};
 use nexora_platform::detect_session;
 use nexora_rename::{RenameOptions, RenamePlanner};
 use nexora_runtime::{ModuleContext, ModuleRegistry};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Arc};
+use std::{os::unix::fs::PermissionsExt, path::Path, sync::Arc};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
 };
 
 mod modules;
+
+/// Maximum size of a single IPC request line.
+const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 
 use modules::CoreModule;
 
@@ -27,6 +32,10 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
     prepare_socket(socket_path).await?;
 
     let listener = UnixListener::bind(socket_path).context("failed to bind Nexora IPC socket")?;
+
+    // Only the owning user may talk to the daemon.
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
+        .context("failed to restrict Nexora socket permissions")?;
 
     let session = detect_session();
 
@@ -44,7 +53,7 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
         "Nexora daemon listening"
     );
 
-    run_server(listener, health, &registry).await?;
+    run_server(listener, health, Arc::clone(&registry)).await?;
 
     registry
         .stop_all()
@@ -84,7 +93,7 @@ async fn remove_socket(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn initialize_runtime() -> Result<ModuleRegistry> {
+async fn initialize_runtime() -> Result<Arc<ModuleRegistry>> {
     let mut registry = ModuleRegistry::new();
 
     registry
@@ -98,22 +107,26 @@ async fn initialize_runtime() -> Result<ModuleRegistry> {
         .await
         .context("failed to start Nexora modules")?;
 
-    Ok(registry)
+    Ok(Arc::new(registry))
 }
 
 async fn run_server(
     listener: UnixListener,
     health: Arc<Health>,
-    registry: &ModuleRegistry,
+    registry: Arc<ModuleRegistry>,
 ) -> Result<()> {
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .context("failed to install SIGTERM handler")?;
+
     loop {
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
                 let health = Arc::clone(&health);
+                let registry = Arc::clone(&registry);
 
                 tokio::spawn(async move {
-                    if let Err(error) = handle_client(stream, health).await {
+                    if let Err(error) = handle_client(stream, health, registry).await {
                         tracing::warn!(%error, "IPC client failed");
                     }
                 });
@@ -123,6 +136,12 @@ async fn run_server(
                 result.context("failed to listen for shutdown signal")?;
 
                 tracing::info!("shutdown signal received");
+
+                break;
+            }
+
+            _ = sigterm.recv() => {
+                tracing::info!("SIGTERM received");
 
                 break;
             }
@@ -137,10 +156,14 @@ async fn run_server(
     Ok(())
 }
 
-async fn handle_client(stream: UnixStream, health: Arc<Health>) -> Result<()> {
+async fn handle_client(
+    stream: UnixStream,
+    health: Arc<Health>,
+    registry: Arc<ModuleRegistry>,
+) -> Result<()> {
     let (read_half, mut write_half) = stream.into_split();
 
-    let mut reader = BufReader::new(read_half);
+    let mut reader = BufReader::new(read_half.take(MAX_REQUEST_BYTES));
     let mut line = String::new();
 
     reader.read_line(&mut line).await?;
@@ -150,7 +173,7 @@ async fn handle_client(stream: UnixStream, health: Arc<Health>) -> Result<()> {
     let payload = if envelope.version != PROTOCOL_VERSION {
         Response::Error(format!("unsupported protocol version {}", envelope.version))
     } else {
-        dispatch(envelope.payload, &health).await
+        dispatch(envelope.payload, &health, &registry).await
     };
 
     let response = serde_json::to_vec(&Envelope {
@@ -164,13 +187,32 @@ async fn handle_client(stream: UnixStream, health: Arc<Health>) -> Result<()> {
     Ok(())
 }
 
-async fn dispatch(request: Request, health: &Health) -> Response {
+async fn dispatch(request: Request, health: &Health, registry: &ModuleRegistry) -> Response {
     match request {
         Request::Ping => Response::Pong,
 
         Request::Health => Response::Health(health.clone()),
 
         Request::Windows => Response::Windows(Vec::<WindowId>::new()),
+
+        Request::Modules => Response::Modules(ModulesResponse {
+            modules: registry
+                .metadata()
+                .into_iter()
+                .map(|module| ModuleInfo {
+                    id: module.id.to_owned(),
+                    name: module.name.to_owned(),
+                    version: module.version.to_owned(),
+                    api_version: module.api_version,
+                    description: module.description.to_owned(),
+                    capabilities: module
+                        .capabilities
+                        .iter()
+                        .map(|capability| capability.as_str().to_owned())
+                        .collect(),
+                })
+                .collect(),
+        }),
 
         Request::Rename(request) => {
             let options = RenameOptions {

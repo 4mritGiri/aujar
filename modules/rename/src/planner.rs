@@ -52,12 +52,21 @@ impl RenamePlanner {
                 None => file_name.replace(&self.options.pattern, &self.options.replacement),
             };
 
+            // A rename must stay inside its directory: reject empty names,
+            // path separators, NUL bytes and dot entries (e.g. "../x").
+            let invalid_name = new_name.is_empty()
+                || new_name == "."
+                || new_name == ".."
+                || new_name.contains(['/', '\0']);
+
             let target = source
                 .parent()
                 .unwrap_or_else(|| Path::new(""))
-                .join(new_name);
+                .join(&new_name);
 
-            let status = if target == source {
+            let status = if invalid_name {
+                RenameItemStatus::InvalidTarget
+            } else if target == source {
                 RenameItemStatus::Unchanged
             } else if target.exists() {
                 RenameItemStatus::Collision

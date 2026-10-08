@@ -14,6 +14,7 @@ pub enum Request {
     Ping,
     Health,
     Windows,
+    Modules,
     Rename(RenameRequest),
 }
 
@@ -31,8 +32,24 @@ pub enum Response {
     Pong,
     Health(Health),
     Windows(Vec<WindowId>),
+    Modules(ModulesResponse),
     Rename(RenameResponse),
     Error(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModulesResponse {
+    pub modules: Vec<ModuleInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub api_version: u16,
+    pub description: String,
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,14 +79,17 @@ pub async fn send(socket: impl AsRef<Path>, request: Request) -> Result<Response
 
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
+
     reader.read_line(&mut line).await?;
 
     let response: Envelope<Response> = serde_json::from_str(&line)?;
+
     if response.version != PROTOCOL_VERSION {
         anyhow::bail!(
             "unsupported Nexora IPC protocol version {}",
             response.version
         );
     }
+
     Ok(response.payload)
 }

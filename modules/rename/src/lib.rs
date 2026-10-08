@@ -144,4 +144,28 @@ mod tests {
 
         fs::remove_dir_all(dir).unwrap();
     }
+
+    #[test]
+    fn rejects_path_traversal_in_replacement() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("old.txt");
+        fs::write(&source, "data").unwrap();
+
+        let planner = RenamePlanner::new(RenameOptions {
+            pattern: "old".into(),
+            replacement: "../escaped".into(),
+            regex: false,
+            apply: false,
+        });
+
+        let plan = planner
+            .plan(&[source.to_string_lossy().into_owned()])
+            .unwrap();
+
+        assert_eq!(plan.items[0].status, RenameItemStatus::InvalidTarget);
+        assert!(plan.has_errors());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

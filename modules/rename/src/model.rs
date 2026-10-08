@@ -16,6 +16,7 @@ pub enum RenameItemStatus {
     Unchanged,
     Collision,
     DuplicateTarget,
+    InvalidTarget,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +39,7 @@ impl RenamePlan {
                 RenameItemStatus::MissingSource
                     | RenameItemStatus::Collision
                     | RenameItemStatus::DuplicateTarget
+                    | RenameItemStatus::InvalidTarget
             )
         })
     }
@@ -66,6 +68,7 @@ impl RenamePlan {
                     RenameItemStatus::MissingSource
                         | RenameItemStatus::Collision
                         | RenameItemStatus::DuplicateTarget
+                        | RenameItemStatus::InvalidTarget
                 )
             })
             .count();
