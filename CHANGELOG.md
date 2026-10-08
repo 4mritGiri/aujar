@@ -11,6 +11,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Daemon handles `Request::Modules`.
 
 ### Changed
+- Daemon rejects IPC clients whose uid is neither the daemon's owner nor root; 5 s request read timeout.
+- Default socket path uses `XDG_RUNTIME_DIR` instead of a hard-coded uid.
 - License metadata set to Apache-2.0 to match `LICENSE`.
 - IPC socket is `0600`; requests capped at 64 KB; daemon handles SIGTERM.
 - systemd unit and desktop entry now call `nexora daemon`.

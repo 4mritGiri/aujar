@@ -25,7 +25,7 @@ or screen capture, so each feature lists its backend per session type.
 | Capability model (declared per module) | `nexora-runtime` | 🚧 | Declared, **not yet enforced** |
 | Versioned Unix-socket IPC | `nexora-ipc` | ✅ | JSON line protocol v1; 64 KB request cap |
 | Daemon (graceful shutdown, 0600 socket) | `nexora-daemon` | ✅ | SIGTERM + Ctrl-C |
-| IPC peer authentication (`SO_PEERCRED`) | `nexora-daemon` | 📅 | v0.2 |
+| IPC peer authentication (peer-uid check) | `nexora-daemon` | ✅ | Per-client capability grants 📅 |
 | Typed configuration (TOML) | `nexora-config` | 🚧 | Load only; no hot-reload/validation |
 | X11 / Wayland session detection | `nexora-platform` | ✅ | Env-based |
 | Compositor detection (GNOME/KDE/Sway/Hyprland) | `nexora-platform` | 📅 | v0.3 |

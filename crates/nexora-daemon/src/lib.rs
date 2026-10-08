@@ -7,7 +7,12 @@ use nexora_platform::detect_session;
 use nexora_rename::{RenameOptions, RenamePlanner};
 use nexora_runtime::{ModuleContext, ModuleRegistry};
 use serde::{Deserialize, Serialize};
-use std::{os::unix::fs::PermissionsExt, path::Path, sync::Arc};
+use std::{
+    os::unix::fs::{MetadataExt, PermissionsExt},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
@@ -17,6 +22,9 @@ mod modules;
 
 /// Maximum size of a single IPC request line.
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
+
+/// Maximum time a client may take to send its request line.
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 use modules::CoreModule;
 
@@ -37,6 +45,11 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
     std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
         .context("failed to restrict Nexora socket permissions")?;
 
+    // Only this user (and root) may use the daemon.
+    let owner_uid = std::fs::metadata("/proc/self")
+        .context("failed to determine daemon uid")?
+        .uid();
+
     let session = detect_session();
 
     let health = Arc::new(Health {
@@ -53,7 +66,7 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
         "Nexora daemon listening"
     );
 
-    run_server(listener, health, Arc::clone(&registry)).await?;
+    run_server(listener, health, Arc::clone(&registry), owner_uid).await?;
 
     registry
         .stop_all()
@@ -114,6 +127,7 @@ async fn run_server(
     listener: UnixListener,
     health: Arc<Health>,
     registry: Arc<ModuleRegistry>,
+    owner_uid: u32,
 ) -> Result<()> {
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("failed to install SIGTERM handler")?;
@@ -126,7 +140,7 @@ async fn run_server(
                 let registry = Arc::clone(&registry);
 
                 tokio::spawn(async move {
-                    if let Err(error) = handle_client(stream, health, registry).await {
+                    if let Err(error) = handle_client(stream, health, registry, owner_uid).await {
                         tracing::warn!(%error, "IPC client failed");
                     }
                 });
@@ -160,13 +174,24 @@ async fn handle_client(
     stream: UnixStream,
     health: Arc<Health>,
     registry: Arc<ModuleRegistry>,
+    owner_uid: u32,
 ) -> Result<()> {
+    let peer = stream
+        .peer_cred()
+        .context("failed to read IPC peer credentials")?;
+
+    if peer.uid() != owner_uid && peer.uid() != 0 {
+        anyhow::bail!("rejected IPC client with uid {}", peer.uid());
+    }
+
     let (read_half, mut write_half) = stream.into_split();
 
     let mut reader = BufReader::new(read_half.take(MAX_REQUEST_BYTES));
     let mut line = String::new();
 
-    reader.read_line(&mut line).await?;
+    tokio::time::timeout(READ_TIMEOUT, reader.read_line(&mut line))
+        .await
+        .context("timed out reading IPC request")??;
 
     let envelope: Envelope<Request> = serde_json::from_str(&line)?;
 

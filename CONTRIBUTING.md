@@ -5,7 +5,7 @@ Thanks for helping! Please read this and the [Code of Conduct](CODE_OF_CONDUCT.m
 ## Getting started
 
 ```bash
-git clone https://github.com/4mritgiri/nexora && cd nexora
+git clone https://github.com/nexora-project/nexora && cd nexora
 cargo install just cargo-deny   # optional helpers
 just check                      # fmt + clippy + tests
 ```

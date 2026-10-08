@@ -8,8 +8,8 @@
 | Threat | Mitigation | Status |
 |---|---|---|
 | Other local users connect to the socket | Socket mode `0600` | ✅ |
-| Other processes of the same user abuse the daemon | `SO_PEERCRED` check, per-client capability grants | 📅 |
-| Oversized / malformed IPC input | 64 KB request cap, JSON parsing, protocol version check | ✅ (read timeout 📅) |
+| Other processes of the same user abuse the daemon | Peer-uid check ✅; per-client capability grants 📅 | 🚧 |
+| Oversized / malformed IPC input | 64 KB request cap, JSON parsing, protocol version check | ✅ (5 s read timeout) |
 | Rename escapes target directory | Names with `/`, `\0`, `.`, `..` rejected | ✅ |
 | Rename partially applied after failure | Two-phase execution; full rollback | 🚧 |
 | Clipboard history leaks secrets | Exclude password managers, encrypt at rest, opt-in | 📅 |

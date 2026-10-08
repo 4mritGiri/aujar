@@ -10,7 +10,9 @@ pub struct Config {
 }
 
 fn default_socket_path() -> String {
-    "/run/user/1000/nexora.sock".into()
+    let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+
+    format!("{base}/nexora.sock")
 }
 
 fn default_log_level() -> String {
