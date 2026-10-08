@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --workspace
+      - name: Package
+        run: |
+          mkdir dist
+          tar -czf dist/nexora-${GITHUB_REF_NAME}-linux-x86_64.tar.gz \
+            -C target/release nexora \
+            -C ../../packaging systemd desktop
+          cd dist && sha256sum * > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

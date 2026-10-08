@@ -1,0 +1,14 @@
+name: Feature request
+description: Suggest an idea
+labels: [enhancement, triage]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: Problem / use case }
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes: { label: Proposed solution }
+  - type: textarea
+    id: compat
+    attributes: { label: Session/compositor considerations, description: "Does this need X11, Wayland, a portal or a compositor-specific API?" }

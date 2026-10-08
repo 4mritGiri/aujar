@@ -1,8 +1,27 @@
 # Nexora
 
-**Native Linux Productivity Platform**
+**Native Linux Productivity Platform** — an open-source, modular toolkit for Linux desktops,
+inspired by the utilities Windows users get from PowerToys. Independent project; not
+affiliated with Microsoft.
 
-Nexora is an independent, modular Linux desktop productivity platform written in Rust. It is designed as a platform first: shared core services, versioned IPC, capability-aware modules, and compositor-specific integrations.
+[![CI](https://github.com/nexora-project/nexora/actions/workflows/ci.yml/badge.svg)](https://github.com/nexora-project/nexora/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
+
+> **Status: early development (v0.1.x).** Only the platform foundation and the batch-rename
+> engine are functional. See the [feature matrix](docs/FEATURE_MATRIX.md) for exactly what
+> works on X11, Sway/Hyprland, KDE and GNOME.
+
+## Documentation
+
+| | |
+|---|---|
+| [Feature matrix](docs/FEATURE_MATRIX.md) | What is done / planned, per compositor |
+| [Architecture](docs/ARCHITECTURE.md) | Design principles and layout |
+| [Roadmap](docs/ROADMAP.md) | Milestones |
+| [Threat model](docs/THREAT_MODEL.md) | Security assumptions |
+| [Packaging](docs/PACKAGING.md) | Distro packaging plans |
+| [Contributing](CONTRIBUTING.md) · [Governance](GOVERNANCE.md) · [Security](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md) | Project policies |
 
 ## v0.1.1
 
@@ -31,7 +50,8 @@ cargo clippy --workspace --all-targets --all-features
 The CLI communicates with the Nexora daemon through the Unix socket.
 
 ```bash
-cargo run -p nexora-launcher-app -- ping
+cargo run -p nexora-launcher-app -- daemon   # terminal 1
+cargo run -p nexora-launcher-app -- ping     # terminal 2
 cargo run -p nexora-launcher-app -- health
 cargo run -p nexora-launcher-app -- windows
 ```
@@ -86,3 +106,7 @@ Nexora
 ```
 
 The next major milestone is the actual desktop Launcher UI and compositor integrations.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

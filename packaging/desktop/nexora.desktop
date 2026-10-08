@@ -1,7 +1,8 @@
 [Desktop Entry]
 Name=Nexora
 Comment=Native Linux Productivity Platform
-Exec=nexora-desktop
+Exec=nexora health
+NoDisplay=true
 Icon=nexora
 Terminal=false
 Type=Application

@@ -3,8 +3,13 @@ Description=Nexora Desktop Productivity Platform
 After=graphical-session.target
 
 [Service]
+# Hardening (user unit)
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+LockPersonality=true
 Type=simple
-ExecStart=%h/.local/bin/nexora-daemon
+ExecStart=%h/.local/bin/nexora daemon
 Restart=on-failure
 RestartSec=2
 Environment=RUST_LOG=info

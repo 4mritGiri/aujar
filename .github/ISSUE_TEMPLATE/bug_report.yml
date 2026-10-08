@@ -1,0 +1,33 @@
+name: Bug report
+description: Something is broken
+labels: [bug, triage]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened?, description: Include expected vs actual behaviour }
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes: { label: Steps to reproduce }
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes: { label: Nexora version (`nexora --version`) }
+    validations: { required: true }
+  - type: dropdown
+    id: session
+    attributes:
+      label: Session type
+      options: [X11, Wayland, Unknown]
+    validations: { required: true }
+  - type: input
+    id: de
+    attributes: { label: Desktop / compositor, placeholder: "GNOME 47, KDE Plasma 6, Sway, Hyprland ..." }
+    validations: { required: true }
+  - type: input
+    id: distro
+    attributes: { label: Linux distribution and version }
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes: { label: Logs, description: "Run the daemon with RUST_LOG=debug", render: shell }

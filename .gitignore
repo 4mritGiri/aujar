@@ -1,5 +1,7 @@
 /target
+**/*.rs.bk
+*.swp
 .idea/
 .vscode/
-*.swp
 .DS_Store
+dist/

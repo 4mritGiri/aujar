@@ -9,7 +9,7 @@
 - [x] Capability model
 - [x] X11/Wayland session detection
 - [x] Module boundaries
-- [ ] Automated CI on Linux
+- [x] Automated CI on Linux (configured; verify first run)
 - [ ] Protocol versioning
 - [ ] Persistent daemon state
 
@@ -53,3 +53,6 @@
 - Upgrade/migration support
 - Crash-safe configuration
 - Security review
+
+
+See [FEATURE_MATRIX](FEATURE_MATRIX.md) for per-feature, per-compositor status.

@@ -1,0 +1,6 @@
+# Replace with real GitHub handles/teams before publishing.
+*                       @nexora-project/maintainers
+/crates/nexora-ipc/     @nexora-project/maintainers @nexora-project/security
+/crates/nexora-runtime/ @nexora-project/maintainers @nexora-project/security
+/packaging/             @nexora-project/packagers
+/docs/                  @nexora-project/docs
