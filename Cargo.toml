@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "crates/nexora-core",
+    "crates/nexora-config",
+    "crates/nexora-ipc",
+    "crates/nexora-platform",
+    "crates/nexora-daemon",
+    "crates/nexora-plugin",
+    "apps/nexora-launcher",
+    "modules/launcher",
+    "modules/window",
+    "modules/zones",
+    "modules/clipboard",
+    "modules/color",
+    "modules/ruler",
+    "modules/rename",
+]
+
+default-members = [
+    "crates/nexora-core",
+    "crates/nexora-config",
+    "crates/nexora-ipc",
+    "crates/nexora-platform",
+    "crates/nexora-daemon",
+    "crates/nexora-plugin",
+    "apps/nexora-launcher",
+    "modules/launcher",
+    "modules/window",
+    "modules/zones",
+    "modules/clipboard",
+    "modules/color",
+    "modules/ruler",
+    "modules/rename",
+]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+license = "MIT"
+authors = ["Nexora Contributors"]
+repository = "https://github.com/nexora-project/nexora"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+tokio = { version = "1", features = [
+    "macros",
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "sync",
+    "time",
+    "fs",
+] }
+
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4", "serde"] }

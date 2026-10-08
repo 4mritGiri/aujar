@@ -1,0 +1,55 @@
+# Nexora Roadmap
+
+## v0.1 — Foundation
+- [x] Cargo workspace
+- [x] Core types
+- [x] Typed configuration
+- [x] Unix-socket IPC
+- [x] Central daemon
+- [x] Capability model
+- [x] X11/Wayland session detection
+- [x] Module boundaries
+- [ ] Automated CI on Linux
+- [ ] Protocol versioning
+- [ ] Persistent daemon state
+
+## v0.2 — Launcher
+- Application discovery
+- File provider
+- Calculator provider
+- Command provider
+- Keyboard shortcut integration
+- Search ranking
+- Native desktop UI
+
+## v0.3 — Window & Workspace
+- X11 window backend
+- KDE integration
+- Hyprland integration
+- Sway integration
+- Workspace manager
+- Zones UI
+- Multi-monitor support
+
+## v0.4 — Productivity tools
+- Clipboard service
+- Color picker
+- Screen ruler
+- Power Rename UI
+- Quick preview
+- Image utilities
+
+## v0.5 — Extensions
+- Plugin discovery
+- Manifest validation
+- Capability approval UI
+- Extension SDK
+- Example third-party extension
+
+## v1.0
+- Stable API/protocol
+- Polished desktop UI
+- Packaging: deb/rpm/Flatpak/AppImage/AUR
+- Upgrade/migration support
+- Crash-safe configuration
+- Security review

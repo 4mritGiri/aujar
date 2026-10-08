@@ -1,0 +1,18 @@
+[package]
+name = "nexora-launcher-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nexora"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+nexora-core = { path = "../../crates/nexora-core" }
+nexora-daemon = { path = "../../crates/nexora-daemon" }
+nexora-ipc = { path = "../../crates/nexora-ipc" }
+nexora-rename = { path = "../../modules/rename" }
+tokio.workspace = true

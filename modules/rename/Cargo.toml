@@ -1,0 +1,10 @@
+[package]
+name = "nexora-rename"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+regex.workspace = true
+serde.workspace = true
+thiserror.workspace = true

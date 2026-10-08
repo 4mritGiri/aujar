@@ -1,0 +1,17 @@
+[package]
+name = "nexora-daemon-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nexora-daemon"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+nexora-daemon = { path = "../../crates/nexora-daemon" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

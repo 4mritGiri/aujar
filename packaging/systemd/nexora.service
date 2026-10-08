@@ -1,0 +1,13 @@
+[Unit]
+Description=Nexora Desktop Productivity Platform
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/nexora-daemon
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
