@@ -8,6 +8,7 @@ members = [
     "crates/nexora-platform",
     "crates/nexora-daemon",
     "crates/nexora-plugin",
+    "crates/nexora-runtime",
     "apps/nexora-launcher",
     "modules/launcher",
     "modules/window",
@@ -59,6 +60,7 @@ tokio = { version = "1", features = [
     "sync",
     "time",
     "fs",
+    "signal",
 ] }
 
 toml = "0.9"
