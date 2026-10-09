@@ -6,7 +6,7 @@ mod ranking;
 pub use apps::{AppsProvider, DesktopEntry, default_dirs, parse_desktop_entry, parse_exec};
 pub use calculator::{CalculatorProvider, evaluate};
 pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
-pub use ranking::score;
+pub use ranking::{score, score_strict};
 
 #[derive(Debug, Clone)]
 pub struct LauncherQuery {
@@ -62,7 +62,11 @@ impl Launcher {
             .iter()
             .filter(|provider| provider.id() == provider_id)
             .find_map(|provider| provider.resolve(id))
-            .unwrap_or_else(|| Err(format!("result `{id}` cannot be launched")))
+            .unwrap_or_else(|| {
+                Err(format!(
+                    "no launchable result with id `{id}` (run `aujar search <text>` to list valid ids)"
+                ))
+            })
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {

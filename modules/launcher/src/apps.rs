@@ -1,6 +1,6 @@
 use crate::{
     model::{LaunchSpec, Provider, ResultKind, SearchResult},
-    ranking::score,
+    ranking::{score, score_strict},
 };
 use std::{
     collections::HashSet,
@@ -263,7 +263,7 @@ impl Provider for AppsProvider {
                 let comment_score = entry
                     .comment
                     .as_deref()
-                    .and_then(|comment| score(query, comment))
+                    .and_then(|comment| score_strict(query, comment))
                     .map(|value| value / 2);
 
                 let best = name_score.into_iter().chain(comment_score).max()?;

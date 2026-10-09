@@ -3,6 +3,16 @@
 /// Tiers: exact > prefix > word-prefix > substring > subsequence (3+ chars).
 /// Shorter texts get a small bonus so tighter matches rank first.
 pub fn score(query: &str, text: &str) -> Option<u32> {
+    score_inner(query, text, true)
+}
+
+/// Like [`score`] but without fuzzy (subsequence) matching. Use for long
+/// free text such as descriptions, where fuzzy matches are mostly noise.
+pub fn score_strict(query: &str, text: &str) -> Option<u32> {
+    score_inner(query, text, false)
+}
+
+fn score_inner(query: &str, text: &str, allow_fuzzy: bool) -> Option<u32> {
     let query = query.trim().to_lowercase();
 
     if query.is_empty() {
@@ -23,7 +33,7 @@ pub fn score(query: &str, text: &str) -> Option<u32> {
         600
     } else if text.contains(&query) {
         400
-    } else if query.chars().count() >= 3 && is_subsequence(&query, &text) {
+    } else if allow_fuzzy && query.chars().count() >= 3 && is_subsequence(&query, &text) {
         200
     } else {
         return None;
@@ -40,7 +50,7 @@ fn is_subsequence(query: &str, text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::score;
+    use super::{score, score_strict};
 
     #[test]
     fn tiers_are_ordered() {
@@ -60,6 +70,13 @@ mod tests {
     fn no_match_and_empty_query() {
         assert_eq!(score("zzz", "Firefox"), None);
         assert_eq!(score("   ", "Firefox"), None);
+    }
+
+    #[test]
+    fn strict_scoring_skips_fuzzy_matches() {
+        assert!(score("fire", "File Roller").is_some());
+        assert_eq!(score_strict("fire", "File Roller"), None);
+        assert!(score_strict("roll", "File Roller").is_some());
     }
 
     #[test]
