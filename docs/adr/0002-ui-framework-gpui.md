@@ -1,6 +1,7 @@
 # ADR 0002: Use GPUI for the desktop UI
 
-- Status: proposed (pending a spike; see "Validation")
+- Status: proposed. Spike result so far: builds with `gpui-pre =0.3.3` and runs on a Wayland
+  session; checklist in [UI_SPIKE](../UI_SPIKE.md) still to be completed.
 
 ## Context
 

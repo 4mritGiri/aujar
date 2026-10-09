@@ -3,9 +3,11 @@
 Goal: decide whether GPUI is viable for Aujar's UI ([ADR 0002](adr/0002-ui-framework-gpui.md)).
 The spike lives in `apps/aujar-ui` and is built **separately** from the main workspace.
 
-What it proves: a GPUI window opens, renders on the GPU, is shown/hidden by daemon events
-(`aujar launcher show|hide|toggle`), and displays real search results from the daemon. It does
-not have text input yet.
+What it does: a GPUI window opens, renders on the GPU, is shown/hidden by daemon events
+(`aujar launcher show|hide|toggle`), and lets you **type a query, pick a result and launch it**.
+
+Keys: type to search, `Up`/`Down` to select, `Enter` to launch (calculations are not launchable yet),
+`Esc` to close.
 
 ## Build and run
 
@@ -19,18 +21,20 @@ sudo apt install build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-de
 ```bash
 cargo run -p aujar-launcher-app -- daemon                     # terminal 1
 cd apps/aujar-ui && cargo run                                 # terminal 2 (first build is slow)
+# then type, e.g. `fire`, press Enter to launch
 cargo run -p aujar-launcher-app -- launcher toggle            # terminal 3: window opens
 cargo run -p aujar-launcher-app -- launcher toggle            # window closes
 ```
 
-`cargo run -- <query>` changes the fixed query (default `fire`).
 
 ## Checklist (record results in the ADR)
 
 | Check | How | Result |
 |---|---|---|
-| Builds with pinned `gpui-pre =0.3.3` / `gpui-pre-platform =0.3.3` | `cargo build` | |
-| Window opens on your session | toggle | |
+| Builds with pinned `gpui-pre =0.3.3` / `gpui-pre-platform =0.3.3` | `cargo build` | ✅ Ubuntu, rustc 1.97, debug build 2m39s |
+| Window opens on your session | toggle | ✅ Wayland (GNOME-style session): window opens with rounded corners and live results |
+| Toggle show/hide from the CLI | `launcher toggle` twice | ✅ "Delivered to 1 subscriber" |
+| Typing, selection, Enter-to-launch, Esc | use the keyboard | |
 | Window opens on X11 | log into an X11 session, repeat | |
 | Daemon restart reconnects | stop/start the daemon, toggle again | |
 | GPU in use | `vulkaninfo --summary`; watch GPU load (`intel_gpu_top`, `nvtop`, `nvidia-smi`) while resizing | |
@@ -45,7 +49,12 @@ cargo run -p aujar-launcher-app -- launcher toggle            # window closes
 
 - Closing the window removes it; reopening creates a new one (no true hide yet).
 - GNOME on Wayland has no layer-shell, so the launcher is a normal, decorated window there.
-- No keyboard input, focus handling or IME yet. Next step once the base works.
+- Keyboard input uses plain key events (`key_char`): no IME/composition, no cursor movement or
+  selection inside the query. IME needs an `EntityInputHandler` implementation (a later step).
+- If `launcher toggle` reports 0 subscribers right after starting the UI, the UI had not yet finished
+  subscribing (or the daemon had just restarted and the UI was in its 1 s reconnect delay).
+- The window looked very slightly translucent in a screenshot (a terminal border line showed through).
+  Check whether that is intended; the background color is set opaque in code.
 - The official crates.io `gpui 0.2.2` failed to build on a current toolchain (`xattr 0.2.3` vs
   `libc`) and a git dependency on Zed `main` failed to resolve, so the spike uses the community
   `gpui-pre*` snapshot crates (zed@5b055fa). Commit `apps/aujar-ui/Cargo.lock`.
