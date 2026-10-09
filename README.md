@@ -68,6 +68,9 @@ cargo run -p aujar-launcher-app -- search fire
 cargo run -p aujar-launcher-app -- search '2*(3+4)'
 ```
 
+Bind your desktop shortcut to `aujar launcher toggle` ([guide](docs/HOTKEYS.md)); watch events with
+`aujar events`.
+
 Launch an app from a search result id:
 
 ```bash

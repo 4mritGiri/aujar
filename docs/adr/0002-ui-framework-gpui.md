@@ -30,8 +30,7 @@ Known constraints:
 
 ## Consequences
 
-- Needs a new IPC capability: **event subscription** (server push), because today IPC is
-  request/response only.
+- Needs **event subscription** (server push). Implemented: see [IPC](../IPC.md).
 - Launcher on GNOME runs as a normal window; on wlroots/KDE we want layer-shell (may need an
   upstream patch or a fork).
 - Fallback plan if the spike fails (API churn, missing Wayland features): GTK4 (`gtk4-rs`) or

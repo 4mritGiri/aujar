@@ -40,7 +40,7 @@ Status: design only. Framework decision: [ADR 0002](adr/0002-ui-framework-gpui.m
 
 | Need | Mechanism |
 |---|---|
-| Show/hide launcher on hotkey | IPC **event stream** (`Subscribe` → `Event::ShowLauncher`) |
+| Show/hide launcher on hotkey | IPC **event stream**: `Subscribe` → `Event::Launcher(Show\|Hide\|Toggle)` (implemented, see [IPC](IPC.md)) |
 | Search results | `Request::Search { query }` → ranked results |
 | Run an action | `Request::Execute { result_id }` (capability-checked) |
 | Rename preview/apply | existing `Request::Rename` |

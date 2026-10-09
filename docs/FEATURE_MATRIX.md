@@ -48,7 +48,7 @@ or screen capture, so each feature lists its backend per session type.
 | Clipboard history | Advanced Paste / Win+V | `modules/clipboard` | 🚧 in-memory store | 📅 | 📅 (`wlr-data-control`) | 📅 (`ext-data-control`) | ⚠️ (no data-control; needs extension) | Sensitive-app exclusion planned |
 | Color picker | Color Picker | `modules/color` | 🚧 stub | 📅 | 📅 (portal `PickColor`) | 📅 (portal) | 📅 (portal) | `xdg-desktop-portal` Screenshot |
 | Screen ruler | Screen Ruler | `modules/ruler` | 🚧 stub | 📅 | 📅 (portal screencast) | 📅 | 📅 | Requires screen-capture permission |
-| Global hotkeys | (all modules) | `aujar-runtime` | 📅 | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
+| Global hotkeys | (all modules) | `aujar-runtime` | 🚧 interim: bind `aujar launcher toggle` in your DE ([HOTKEYS](HOTKEYS.md)); native 📅 | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
 | Quick preview | Peek | — | 📅 | 📅 | 📅 | 📅 | 📅 | |
 | Image utilities | Image Resizer | — | 📅 | 📅 | 📅 | 📅 | 📅 | Pure Rust, no session dependency |
 | Keyboard remapping | Keyboard Manager | — | ⚠️ | ⚠️ (evdev/uinput, needs privileges) | ⚠️ | ⚠️ | ⚠️ | Privileged helper; design under review |
@@ -60,11 +60,11 @@ or screen capture, so each feature lists its backend per session type.
 
 | Front-end | Status | Notes |
 |---|---|---|
-| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `rename`, `daemon` |
+| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `launcher`, `events`, `rename`, `daemon` |
 | Settings app | 📅 | v0.4+; GPUI (proposed, [ADR 0002](adr/0002-ui-framework-gpui.md)) |
 | Launcher UI | 📅 | v0.2; GPUI, GPU-accelerated via wgpu (Vulkan/GL) with software fallback; see [UI_UX](UI_UX.md) |
 | Tray / status indicator | 📅 | StatusNotifierItem |
-| IPC event stream (daemon → UI) | 📅 | Prerequisite for UI; see UI_UX |
+| IPC event stream (daemon → UI) | ✅ | `Subscribe`, `Launcher` show/hide/toggle, `Shutdown`; see [IPC](IPC.md) |
 | GPU renderer selection / software fallback | 📅 | Part of the UI spike |
 
 ## 4. Distribution & Quality

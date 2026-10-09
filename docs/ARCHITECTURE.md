@@ -23,7 +23,8 @@ docs/       architecture, ADRs, feature matrix, threat model
 
 ## Request flow
 
-`aujar` CLI → versioned JSON over Unix socket → `aujar-daemon` → module → response.
+`aujar` CLI → versioned JSON over Unix socket → `aujar-daemon` → module → response. UIs may instead
+`Subscribe` and receive pushed events ([IPC](IPC.md)).
 
 ## Backends
 

@@ -1,6 +1,9 @@
 use anyhow::Result;
 use aujar_core::{Health, Session};
-use aujar_ipc::{ExecuteRequest, RenameRequest, Request, Response, SearchRequest, send};
+use aujar_ipc::{
+    Event, ExecuteRequest, LauncherCommand, RenameRequest, Request, Response, SearchRequest, send,
+    subscribe,
+};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -16,6 +19,23 @@ const FALLBACK_SOCKET: &str = "/tmp/aujar.sock";
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum LauncherAction {
+    Show,
+    Hide,
+    Toggle,
+}
+
+impl From<LauncherAction> for LauncherCommand {
+    fn from(action: LauncherAction) -> Self {
+        match action {
+            LauncherAction::Show => Self::Show,
+            LauncherAction::Hide => Self::Hide,
+            LauncherAction::Toggle => Self::Toggle,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -47,6 +67,15 @@ enum Command {
         /// Result id, e.g. `apps:firefox.desktop`.
         id: String,
     },
+
+    /// Show, hide or toggle the launcher UI. Bind this to a keyboard shortcut.
+    Launcher {
+        #[arg(value_enum)]
+        action: LauncherAction,
+    },
+
+    /// Print daemon events as they happen (debugging and scripting).
+    Events,
 
     /// Run the Aujar daemon.
     Daemon {
@@ -156,6 +185,35 @@ async fn main() -> Result<()> {
                 },
                 Response::Error(message) => anyhow::bail!(message),
                 other => println!("{other:?}"),
+            }
+        }
+
+        Command::Launcher { action } => {
+            let request = Request::Launcher(action.into());
+
+            match send(&resolve_socket(), request).await? {
+                Response::Delivered { subscribers: 0 } => {
+                    eprintln!("No launcher UI is subscribed yet (0 subscribers).");
+                }
+                Response::Delivered { subscribers } => {
+                    println!("Delivered to {subscribers} subscriber(s).");
+                }
+                Response::Error(message) => anyhow::bail!(message),
+                other => println!("{other:?}"),
+            }
+        }
+
+        Command::Events => {
+            let mut stream = subscribe(&resolve_socket()).await?;
+
+            eprintln!("Subscribed. Waiting for events (Ctrl-C to stop).");
+
+            while let Some(event) = stream.recv().await? {
+                println!("{event:?}");
+
+                if event == Event::Shutdown {
+                    break;
+                }
             }
         }
 

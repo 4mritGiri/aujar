@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use aujar_core::{Capability, Health, WindowId};
 use aujar_ipc::{
-    ExecuteResponse, ModuleInfo, ModulesResponse, PROTOCOL_VERSION, RenameResponse, Request,
-    Response, SearchHit, SearchResponse,
+    Envelope, Event, ExecuteResponse, ModuleInfo, ModulesResponse, PROTOCOL_VERSION,
+    RenameResponse, Request, Response, SearchHit, SearchResponse, encode_line,
 };
 use aujar_launcher::{LaunchSpec, Launcher};
 use aujar_platform::detect_session;
 use aujar_rename::{RenameOptions, RenamePlanner};
 use aujar_runtime::{ModuleContext, ModuleRegistry};
-use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     collections::HashSet,
     os::unix::{
@@ -19,6 +19,11 @@ use std::{
     process::Stdio,
     sync::Arc,
     time::Duration,
+};
+use tokio::{
+    io::Take,
+    net::unix::{OwnedReadHalf, OwnedWriteHalf},
+    sync::broadcast,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -36,13 +41,13 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// System policy file; a missing file means no restrictions.
 const POLICY_PATH: &str = "/etc/aujar/policy.toml";
 
-use modules::CoreModule;
+/// Maximum simultaneous event subscribers (UIs, scripts).
+const MAX_SUBSCRIBERS: usize = 16;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Envelope<T> {
-    version: u16,
-    payload: T,
-}
+/// Events buffered per slow subscriber before it starts missing events.
+const EVENT_BUFFER: usize = 64;
+
+use modules::CoreModule;
 
 /// State shared by every client connection.
 struct Shared {
@@ -51,6 +56,28 @@ struct Shared {
     launcher: Launcher,
     owner_uid: u32,
     denied: HashSet<Capability>,
+    events: broadcast::Sender<Event>,
+    subscribers: AtomicUsize,
+}
+
+/// Counts a subscriber for as long as it is alive.
+struct SubscriberGuard<'a>(&'a AtomicUsize);
+
+impl<'a> SubscriberGuard<'a> {
+    fn acquire(counter: &'a AtomicUsize) -> Option<Self> {
+        if counter.fetch_add(1, Ordering::SeqCst) >= MAX_SUBSCRIBERS {
+            counter.fetch_sub(1, Ordering::SeqCst);
+            None
+        } else {
+            Some(Self(counter))
+        }
+    }
+}
+
+impl Drop for SubscriberGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 fn load_denied_capabilities() -> Result<HashSet<Capability>> {
@@ -130,9 +157,15 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
         launcher: Launcher::with_default_providers(),
         owner_uid,
         denied,
+        events: broadcast::channel(EVENT_BUFFER).0,
+        subscribers: AtomicUsize::new(0),
     });
 
-    run_server(listener, shared).await?;
+    run_server(listener, Arc::clone(&shared)).await?;
+
+    // Tell subscribers we are going away, and give their tasks a moment to write it.
+    let _ = shared.events.send(Event::Shutdown);
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     registry
         .stop_all()
@@ -250,19 +283,64 @@ async fn handle_client(stream: UnixStream, shared: Arc<Shared>) -> Result<()> {
 
     let envelope: Envelope<Request> = serde_json::from_str(&line)?;
 
+    if envelope.version == PROTOCOL_VERSION && matches!(envelope.payload, Request::Subscribe) {
+        return stream_events(reader, write_half, &shared).await;
+    }
+
     let payload = if envelope.version != PROTOCOL_VERSION {
         Response::Error(format!("unsupported protocol version {}", envelope.version))
     } else {
         dispatch(envelope.payload, &shared).await
     };
 
-    let response = serde_json::to_vec(&Envelope {
-        version: PROTOCOL_VERSION,
-        payload,
-    })?;
+    write_half.write_all(&encode_line(payload)?).await?;
 
-    write_half.write_all(&response).await?;
-    write_half.write_all(b"\n").await?;
+    Ok(())
+}
+
+/// Serve a `Subscribe` connection: acknowledge, then push events until the
+/// client disconnects, the daemon shuts down, or the client misbehaves.
+async fn stream_events(
+    mut reader: BufReader<Take<OwnedReadHalf>>,
+    mut writer: OwnedWriteHalf,
+    shared: &Shared,
+) -> Result<()> {
+    let Some(_guard) = SubscriberGuard::acquire(&shared.subscribers) else {
+        let error = Response::Error("too many event subscribers".into());
+        writer.write_all(&encode_line(error)?).await?;
+
+        return Ok(());
+    };
+
+    // Subscribe before acknowledging so no event can slip in between.
+    let mut events = shared.events.subscribe();
+
+    writer
+        .write_all(&encode_line(Response::Subscribed)?)
+        .await?;
+
+    let mut ignored = String::new();
+
+    loop {
+        tokio::select! {
+            received = events.recv() => match received {
+                Ok(event) => {
+                    writer.write_all(&encode_line(&event)?).await?;
+
+                    if event == Event::Shutdown {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(skipped, "event subscriber lagged; events were dropped");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            },
+
+            // Clients send nothing after Subscribe: EOF (or any data) ends the stream.
+            _ = reader.read_line(&mut ignored) => break,
+        }
+    }
 
     Ok(())
 }
@@ -301,6 +379,16 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
                 })
                 .collect(),
         }),
+
+        Request::Subscribe => {
+            Response::Error("Subscribe is handled by the connection layer".into())
+        }
+
+        Request::Launcher(command) => {
+            let subscribers = shared.events.send(Event::Launcher(command)).unwrap_or(0);
+
+            Response::Delivered { subscribers }
+        }
 
         Request::Execute(request) => match shared.launcher.resolve(&request.id) {
             Ok(spec) => match spawn_detached(&spec) {

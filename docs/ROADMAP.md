@@ -15,14 +15,14 @@
 
 ## v0.2 — Launcher
 - GPUI spike across X11/KDE/GNOME/Sway/Hyprland (ADR 0002)
-- [ ] IPC event stream
+- [x] IPC event stream (subscribe, launcher commands, shutdown)
 - [x] IPC execute request (indexed apps only, policy-gated)
 - [x] IPC search request
 - [x] Application discovery (`.desktop`, XDG + Flatpak dirs)
 - [ ] File provider
 - [x] Calculator provider
 - [ ] Command provider
-- [ ] Keyboard shortcut integration
+- [x] Keyboard shortcut integration (interim: DE binding to `aujar launcher toggle`; native hotkeys 📅)
 - [x] Search ranking (tiered match scoring)
 - [ ] Native desktop UI
 

@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- IPC event stream: `Subscribe` connections, `Launcher` show/hide/toggle broadcast, `Shutdown` event; `aujar launcher` and `aujar events`.
+- `aujar_ipc::{encode_line, decode_line, Envelope, subscribe, EventStream}`; daemon and client share one framing implementation.
+- Daemon integration tests for the event stream. Docs: IPC protocol and keyboard-shortcut recipes.
 - `Execute` IPC request and `aujar run <id>`: launches indexed applications (no shell, field codes dropped, own process group).
 - Capability enforcement: each request maps to a capability; `/etc/aujar/policy.toml` can deny capabilities (fail-closed).
 - `Capability::ALL` / `Capability::parse`; `tokio` `process` feature.
