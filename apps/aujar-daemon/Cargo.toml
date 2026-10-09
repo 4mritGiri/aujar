@@ -1,0 +1,17 @@
+[package]
+name = "aujar-daemon-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aujar-daemon"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+aujar-daemon = { path = "../../crates/aujar-daemon" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

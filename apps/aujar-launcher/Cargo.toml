@@ -1,0 +1,18 @@
+[package]
+name = "aujar-launcher-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aujar"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+aujar-core = { path = "../../crates/aujar-core" }
+aujar-daemon = { path = "../../crates/aujar-daemon" }
+aujar-ipc = { path = "../../crates/aujar-ipc" }
+aujar-rename = { path = "../../modules/rename" }
+tokio.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "aujar-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+aujar-config = { path = "../aujar-config" }
+aujar-core = { path = "../aujar-core" }
+aujar-ipc = { path = "../aujar-ipc" }
+aujar-platform = { path = "../aujar-platform" }
+aujar-rename = { path = "../../modules/rename" }
+aujar-runtime = { path = "../aujar-runtime" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

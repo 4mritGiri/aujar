@@ -1,0 +1,10 @@
+[package]
+name = "aujar-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+aujar-core = { path = "../aujar-core" }
+thiserror.workspace = true

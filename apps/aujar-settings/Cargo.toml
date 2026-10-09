@@ -1,0 +1,10 @@
+[package]
+name="aujar-settings-app"
+version.workspace=true
+edition.workspace=true
+license.workspace=true
+[[bin]]
+name="aujar-settings"
+path="src/main.rs"
+[dependencies]
+aujar-config={path="../../crates/aujar-config"}

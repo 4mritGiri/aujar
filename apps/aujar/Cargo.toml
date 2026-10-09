@@ -1,0 +1,10 @@
+[package]
+name="aujar-app"
+version.workspace=true
+edition.workspace=true
+license.workspace=true
+[[bin]]
+name="aujar-desktop"
+path="src/main.rs"
+[dependencies]
+aujar-core={path="../../crates/aujar-core"}
