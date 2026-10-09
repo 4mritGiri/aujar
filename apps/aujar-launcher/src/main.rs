@@ -1,6 +1,6 @@
 use anyhow::Result;
 use aujar_core::{Health, Session};
-use aujar_ipc::{RenameRequest, Request, Response, send};
+use aujar_ipc::{RenameRequest, Request, Response, SearchRequest, send};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -28,6 +28,19 @@ enum Command {
 
     /// List available windows.
     Windows,
+
+    /// List the modules registered in the daemon.
+    Modules,
+
+    /// Search applications and calculations (what the launcher UI will show).
+    Search {
+        /// Search text, e.g. `fire` or `2*(3+4)`.
+        query: String,
+
+        /// Maximum number of results.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
 
     /// Run the Aujar daemon.
     Daemon {
@@ -82,6 +95,46 @@ async fn main() -> Result<()> {
         Command::Windows => {
             let response = send(&resolve_socket(), Request::Windows).await?;
             println!("{response:?}");
+        }
+
+        Command::Modules => {
+            let response = send(&resolve_socket(), Request::Modules).await?;
+
+            match response {
+                Response::Modules(modules) => {
+                    for module in modules.modules {
+                        println!(
+                            "{} {} (api v{}) - {}",
+                            module.id, module.version, module.api_version, module.description
+                        );
+                    }
+                }
+                Response::Error(message) => anyhow::bail!(message),
+                other => println!("{other:?}"),
+            }
+        }
+
+        Command::Search { query, limit } => {
+            let request = Request::Search(SearchRequest {
+                query,
+                limit: Some(limit),
+            });
+
+            match send(&resolve_socket(), request).await? {
+                Response::Search(search) => {
+                    for hit in search.results {
+                        match hit.subtitle {
+                            Some(subtitle) => println!(
+                                "{:>5}  [{}] {} - {}",
+                                hit.score, hit.kind, hit.title, subtitle
+                            ),
+                            None => println!("{:>5}  [{}] {}", hit.score, hit.kind, hit.title),
+                        }
+                    }
+                }
+                Response::Error(message) => anyhow::bail!(message),
+                other => println!("{other:?}"),
+            }
         }
 
         Command::Daemon { socket } => {

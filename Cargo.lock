@@ -112,6 +112,7 @@ dependencies = [
  "aujar-config",
  "aujar-core",
  "aujar-ipc",
+ "aujar-launcher",
  "aujar-platform",
  "aujar-rename",
  "aujar-runtime",
@@ -137,6 +138,9 @@ dependencies = [
 [[package]]
 name = "aujar-launcher"
 version = "0.1.1"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "aujar-launcher-app"

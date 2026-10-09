@@ -23,7 +23,7 @@ or screen capture, so each feature lists its backend per session type.
 |---|---|---|---|
 | Module runtime (lifecycle, registry, API versioning) | `aujar-runtime` | ✅ | Only `core` module registered so far |
 | Capability model (declared per module) | `aujar-runtime` | 🚧 | Declared, **not yet enforced** |
-| Versioned Unix-socket IPC | `aujar-ipc` | ✅ | JSON line protocol v1; 64 KB request cap |
+| Versioned Unix-socket IPC | `aujar-ipc` | ✅ | JSON line protocol v1 (additive variants: `Modules`, `Search`); 64 KB request cap |
 | Daemon (graceful shutdown, 0600 socket) | `aujar-daemon` | ✅ | SIGTERM + Ctrl-C |
 | IPC peer authentication (peer-uid check) | `aujar-daemon` | ✅ | Per-client capability grants 📅 |
 | Typed configuration (TOML) | `aujar-config` | 🚧 | Load only; no hot-reload/validation |
@@ -39,7 +39,7 @@ or screen capture, so each feature lists its backend per session type.
 
 | Module | PowerToys analogue | Crate | Status | X11 | Wayland: Sway / Hyprland | Wayland: KDE | Wayland: GNOME | Backend |
 |---|---|---|---|---|---|---|---|---|
-| Launcher | PowerToys Run | `modules/launcher` | 🚧 stub | 📅 | 📅 (layer-shell) | 📅 (layer-shell) | 📅 (window) | Providers: apps (`.desktop`), files, calculator, commands |
+| Launcher engine | PowerToys Run | `modules/launcher` | 🚧 engine done: apps + calculator providers, ranking, IPC `Search`; no execute/UI yet | ✅ | ✅ | ✅ | ✅ | Session-independent; files and commands providers 📅, launching apps 📅 |
 | Batch Rename | PowerRename | `modules/rename` | ✅ engine + CLI | ✅ | ✅ | ✅ | ✅ | Pure filesystem; GUI/file-manager integration 📅 |
 | Window management | — | `modules/window` | 🚧 trait only | 📅 (EWMH / `x11rb`) | 📅 compositor IPC; list/activate only on generic wlroots | 📅 (KWin scripting, DBus) | ⚠️ (GNOME Shell extension) | |
 | Zones (FancyZones) | FancyZones | `modules/zones` | 🚧 grid math | 📅 | 📅 (Sway/Hyprland IPC) | 📅 (KWin script) | ⚠️ (extension) | Depends on Window management |
@@ -60,7 +60,7 @@ or screen capture, so each feature lists its backend per session type.
 
 | Front-end | Status | Notes |
 |---|---|---|
-| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `rename`, `daemon` (`modules` request exists in IPC) |
+| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `rename`, `daemon` |
 | Settings app | 📅 | v0.4+; GPUI (proposed, [ADR 0002](adr/0002-ui-framework-gpui.md)) |
 | Launcher UI | 📅 | v0.2; GPUI, GPU-accelerated via wgpu (Vulkan/GL) with software fallback; see [UI_UX](UI_UX.md) |
 | Tray / status indicator | 📅 | StatusNotifierItem |

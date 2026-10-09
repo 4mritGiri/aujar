@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
 use aujar_core::{Health, WindowId};
-use aujar_ipc::{ModuleInfo, ModulesResponse, PROTOCOL_VERSION, RenameResponse, Request, Response};
+use aujar_ipc::{
+    ModuleInfo, ModulesResponse, PROTOCOL_VERSION, RenameResponse, Request, Response, SearchHit,
+    SearchResponse,
+};
+use aujar_launcher::Launcher;
 use aujar_platform::detect_session;
 use aujar_rename::{RenameOptions, RenamePlanner};
 use aujar_runtime::{ModuleContext, ModuleRegistry};
@@ -32,6 +36,14 @@ struct Envelope<T> {
     payload: T,
 }
 
+/// State shared by every client connection.
+struct Shared {
+    health: Health,
+    registry: Arc<ModuleRegistry>,
+    launcher: Launcher,
+    owner_uid: u32,
+}
+
 pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
     let socket_path = socket_path.as_ref();
 
@@ -50,11 +62,11 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
 
     let session = detect_session();
 
-    let health = Arc::new(Health {
+    let health = Health {
         name: "Aujar".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         session,
-    });
+    };
 
     let registry = initialize_runtime().await?;
 
@@ -64,7 +76,14 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
         "Aujar daemon listening"
     );
 
-    run_server(listener, health, Arc::clone(&registry), owner_uid).await?;
+    let shared = Arc::new(Shared {
+        health,
+        registry: Arc::clone(&registry),
+        launcher: Launcher::with_default_providers(),
+        owner_uid,
+    });
+
+    run_server(listener, shared).await?;
 
     registry
         .stop_all()
@@ -121,12 +140,7 @@ async fn initialize_runtime() -> Result<Arc<ModuleRegistry>> {
     Ok(Arc::new(registry))
 }
 
-async fn run_server(
-    listener: UnixListener,
-    health: Arc<Health>,
-    registry: Arc<ModuleRegistry>,
-    owner_uid: u32,
-) -> Result<()> {
+async fn run_server(listener: UnixListener, shared: Arc<Shared>) -> Result<()> {
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("failed to install SIGTERM handler")?;
 
@@ -134,11 +148,10 @@ async fn run_server(
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
-                let health = Arc::clone(&health);
-                let registry = Arc::clone(&registry);
+                let shared = Arc::clone(&shared);
 
                 tokio::spawn(async move {
-                    if let Err(error) = handle_client(stream, health, registry, owner_uid).await {
+                    if let Err(error) = handle_client(stream, shared).await {
                         tracing::warn!(%error, "IPC client failed");
                     }
                 });
@@ -160,22 +173,20 @@ async fn run_server(
         }
     }
 
-    tracing::debug!(modules = registry.len(), "Aujar runtime shutdown requested");
+    tracing::debug!(
+        modules = shared.registry.len(),
+        "Aujar runtime shutdown requested"
+    );
 
     Ok(())
 }
 
-async fn handle_client(
-    stream: UnixStream,
-    health: Arc<Health>,
-    registry: Arc<ModuleRegistry>,
-    owner_uid: u32,
-) -> Result<()> {
+async fn handle_client(stream: UnixStream, shared: Arc<Shared>) -> Result<()> {
     let peer = stream
         .peer_cred()
         .context("failed to read IPC peer credentials")?;
 
-    if peer.uid() != owner_uid && peer.uid() != 0 {
+    if peer.uid() != shared.owner_uid && peer.uid() != 0 {
         anyhow::bail!("rejected IPC client with uid {}", peer.uid());
     }
 
@@ -193,7 +204,7 @@ async fn handle_client(
     let payload = if envelope.version != PROTOCOL_VERSION {
         Response::Error(format!("unsupported protocol version {}", envelope.version))
     } else {
-        dispatch(envelope.payload, &health, &registry).await
+        dispatch(envelope.payload, &shared).await
     };
 
     let response = serde_json::to_vec(&Envelope {
@@ -207,16 +218,17 @@ async fn handle_client(
     Ok(())
 }
 
-async fn dispatch(request: Request, health: &Health, registry: &ModuleRegistry) -> Response {
+async fn dispatch(request: Request, shared: &Shared) -> Response {
     match request {
         Request::Ping => Response::Pong,
 
-        Request::Health => Response::Health(health.clone()),
+        Request::Health => Response::Health(shared.health.clone()),
 
         Request::Windows => Response::Windows(Vec::<WindowId>::new()),
 
         Request::Modules => Response::Modules(ModulesResponse {
-            modules: registry
+            modules: shared
+                .registry
                 .metadata()
                 .into_iter()
                 .map(|module| ModuleInfo {
@@ -233,6 +245,25 @@ async fn dispatch(request: Request, health: &Health, registry: &ModuleRegistry) 
                 })
                 .collect(),
         }),
+
+        Request::Search(request) => {
+            let limit = request.limit.unwrap_or(10).clamp(1, 50);
+
+            let results = shared
+                .launcher
+                .search(&request.query, limit)
+                .into_iter()
+                .map(|result| SearchHit {
+                    id: result.id,
+                    title: result.title,
+                    subtitle: result.subtitle,
+                    kind: result.kind.as_str().to_owned(),
+                    score: result.score,
+                })
+                .collect();
+
+            Response::Search(SearchResponse { results })
+        }
 
         Request::Rename(request) => {
             let options = RenameOptions {

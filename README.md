@@ -61,6 +61,13 @@ cargo run -p aujar-launcher-app -- health
 cargo run -p aujar-launcher-app -- windows
 ```
 
+Search apps and calculations:
+
+```bash
+cargo run -p aujar-launcher-app -- search fire
+cargo run -p aujar-launcher-app -- search '2*(3+4)'
+```
+
 Rename preview:
 
 ```bash

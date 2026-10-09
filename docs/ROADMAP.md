@@ -15,14 +15,15 @@
 
 ## v0.2 — Launcher
 - GPUI spike across X11/KDE/GNOME/Sway/Hyprland (ADR 0002)
-- IPC event stream and search/execute requests
-- Application discovery
-- File provider
-- Calculator provider
-- Command provider
-- Keyboard shortcut integration
-- Search ranking
-- Native desktop UI
+- [ ] IPC event stream and execute request
+- [x] IPC search request
+- [x] Application discovery (`.desktop`, XDG + Flatpak dirs)
+- [ ] File provider
+- [x] Calculator provider
+- [ ] Command provider
+- [ ] Keyboard shortcut integration
+- [x] Search ranking (tiered match scoring)
+- [ ] Native desktop UI
 
 ## v0.3 — Window & Workspace
 - X11 window backend

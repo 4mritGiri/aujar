@@ -10,6 +10,7 @@ async-trait.workspace = true
 aujar-config = { path = "../aujar-config" }
 aujar-core = { path = "../aujar-core" }
 aujar-ipc = { path = "../aujar-ipc" }
+aujar-launcher = { path = "../../modules/launcher" }
 aujar-platform = { path = "../aujar-platform" }
 aujar-rename = { path = "../../modules/rename" }
 aujar-runtime = { path = "../aujar-runtime" }

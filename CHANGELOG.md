@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- Launcher engine: provider trait, application (`.desktop`) and calculator providers, tiered ranking.
+- IPC `Search` request/response (protocol v1, additive) and CLI `aujar search` / `aujar modules`.
 - ADR 0002 (GPUI UI proposal) and UI/UX design doc.
 - Feature matrix, threat model, packaging notes, ADR process.
 - Governance, security policy, code of conduct, contributing guide, issue/PR templates.

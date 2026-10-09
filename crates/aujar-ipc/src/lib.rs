@@ -16,6 +16,15 @@ pub enum Request {
     Windows,
     Modules,
     Rename(RenameRequest),
+    Search(SearchRequest),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchRequest {
+    pub query: String,
+    /// Maximum results (daemon clamps to 1..=50, default 10).
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +43,23 @@ pub enum Response {
     Windows(Vec<WindowId>),
     Modules(ModulesResponse),
     Rename(RenameResponse),
+    Search(SearchResponse),
     Error(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResponse {
+    pub results: Vec<SearchHit>,
+}
+
+/// Wire format of a launcher result (kept independent of the launcher crate).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub kind: String,
+    pub score: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
