@@ -2,14 +2,14 @@
 resolver = "2"
 
 members = [
-    "crates/nexora-core",
-    "crates/nexora-config",
-    "crates/nexora-ipc",
-    "crates/nexora-platform",
-    "crates/nexora-daemon",
-    "crates/nexora-plugin",
-    "crates/nexora-runtime",
-    "apps/nexora-launcher",
+    "crates/aujar-core",
+    "crates/aujar-config",
+    "crates/aujar-ipc",
+    "crates/aujar-platform",
+    "crates/aujar-daemon",
+    "crates/aujar-plugin",
+    "crates/aujar-runtime",
+    "apps/aujar-launcher",
     "modules/launcher",
     "modules/window",
     "modules/zones",
@@ -20,13 +20,13 @@ members = [
 ]
 
 default-members = [
-    "crates/nexora-core",
-    "crates/nexora-config",
-    "crates/nexora-ipc",
-    "crates/nexora-platform",
-    "crates/nexora-daemon",
-    "crates/nexora-plugin",
-    "apps/nexora-launcher",
+    "crates/aujar-core",
+    "crates/aujar-config",
+    "crates/aujar-ipc",
+    "crates/aujar-platform",
+    "crates/aujar-daemon",
+    "crates/aujar-plugin",
+    "apps/aujar-launcher",
     "modules/launcher",
     "modules/window",
     "modules/zones",
@@ -41,8 +41,8 @@ version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
-authors = ["Nexora Contributors"]
-repository = "https://github.com/nexora-project/nexora"
+authors = ["Nujar Contributors"]
+repository = "https://github.com/aujar-project/aujar"
 
 [workspace.dependencies]
 anyhow = "1"

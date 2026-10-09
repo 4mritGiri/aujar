@@ -1,4 +1,4 @@
-# Nexora Roadmap
+# Nujar Roadmap
 
 ## v0.1 — Foundation
 - [x] Cargo workspace
@@ -14,6 +14,8 @@
 - [ ] Persistent daemon state
 
 ## v0.2 — Launcher
+- GPUI spike across X11/KDE/GNOME/Sway/Hyprland (ADR 0002)
+- IPC event stream and search/execute requests
 - Application discovery
 - File provider
 - Calculator provider

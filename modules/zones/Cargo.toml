@@ -1,8 +1,8 @@
 [package]
-name = "nexora-zones"
+name = "aujar-zones"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-nexora-core = { path = "../../crates/nexora-core" }
+aujar-core = { path = "../../crates/aujar-core" }

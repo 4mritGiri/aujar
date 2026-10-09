@@ -1,4 +1,4 @@
-# Nexora Architecture
+# Nujar Architecture
 
 ## Principles
 
@@ -23,7 +23,7 @@ docs/       architecture, ADRs, feature matrix, threat model
 
 ## Request flow
 
-`nexora` CLI → versioned JSON over Unix socket → `nexora-daemon` → module → response.
+`aujar` CLI → versioned JSON over Unix socket → `aujar-daemon` → module → response.
 
 ## Backends
 
@@ -35,8 +35,12 @@ runtime from the detected session/compositor (see [FEATURE_MATRIX](FEATURE_MATRI
 `RenamePlanner` → `RenamePlan` (per-item status) → `execute` (two-phase). The CLI only
 translates arguments into a request.
 
+## UI
+
+The UI is a separate GPUI process that talks to the daemon over IPC; see [UI_UX](UI_UX.md) and
+[ADR 0002](adr/0002-ui-framework-gpui.md).
+
 ## Known debt
 
-- `Capability` is defined in both `nexora-core` and `nexora-runtime`; consolidate.
-- `nexora-ipc` depends on `nexora-rename`; move protocol types out of domain crates.
+- `aujar-ipc` depends on `aujar-rename`; move protocol types out of domain crates.
 - Capabilities are declared but not enforced.

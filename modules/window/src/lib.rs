@@ -1,4 +1,4 @@
-use nexora_core::{Position, Rect, Size, WindowId};
+use aujar_core::{Position, Rect, Size, WindowId};
 
 pub trait WindowManager {
     fn list_windows(&self) -> Vec<WindowId>;

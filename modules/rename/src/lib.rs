@@ -21,7 +21,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("nexora-rename-test-{stamp}"))
+        std::env::temp_dir().join(format!("aujar-rename-test-{stamp}"))
     }
 
     #[test]
@@ -79,7 +79,7 @@ mod tests {
         });
 
         let plan = planner
-            .plan(&["/definitely/not/a/real/nexora-file.txt".into()])
+            .plan(&["/definitely/not/a/real/aujar-file.txt".into()])
             .unwrap();
 
         assert!(plan.has_errors());

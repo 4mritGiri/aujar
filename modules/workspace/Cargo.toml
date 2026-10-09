@@ -1,5 +1,5 @@
 [package]
-name = "nexora-workspace"
+name = "aujar-workspace"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

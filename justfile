@@ -12,4 +12,4 @@ audit:
     cargo deny check
 
 run-daemon:
-    cargo run -p nexora-launcher-app -- daemon
+    cargo run -p aujar-launcher-app -- daemon

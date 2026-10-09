@@ -1,0 +1,19 @@
+name: UI
+
+# Enabled once apps/aujar-ui exists (see docs/adr/0002-ui-framework-gpui.md).
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: ${{ hashFiles('apps/aujar-ui/Cargo.toml') != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install windowing/GPU headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libvulkan-dev mesa-vulkan-drivers libfontconfig-dev
+      - run: cargo check --manifest-path apps/aujar-ui/Cargo.toml

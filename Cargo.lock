@@ -79,6 +79,131 @@ dependencies = [
 ]
 
 [[package]]
+name = "aujar-clipboard"
+version = "0.1.1"
+
+[[package]]
+name = "aujar-color"
+version = "0.1.1"
+
+[[package]]
+name = "aujar-config"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "aujar-core"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "uuid",
+]
+
+[[package]]
+name = "aujar-daemon"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aujar-config",
+ "aujar-core",
+ "aujar-ipc",
+ "aujar-platform",
+ "aujar-rename",
+ "aujar-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "aujar-ipc"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "aujar-core",
+ "aujar-rename",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "aujar-launcher"
+version = "0.1.1"
+
+[[package]]
+name = "aujar-launcher-app"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "aujar-core",
+ "aujar-daemon",
+ "aujar-ipc",
+ "aujar-rename",
+ "clap",
+ "tokio",
+]
+
+[[package]]
+name = "aujar-platform"
+version = "0.1.1"
+dependencies = [
+ "aujar-core",
+]
+
+[[package]]
+name = "aujar-plugin"
+version = "0.1.1"
+dependencies = [
+ "aujar-core",
+ "serde",
+]
+
+[[package]]
+name = "aujar-rename"
+version = "0.1.1"
+dependencies = [
+ "regex",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "aujar-ruler"
+version = "0.1.1"
+
+[[package]]
+name = "aujar-runtime"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "aujar-core",
+ "thiserror",
+]
+
+[[package]]
+name = "aujar-window"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "aujar-core",
+]
+
+[[package]]
+name = "aujar-zones"
+version = "0.1.1"
+dependencies = [
+ "aujar-core",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -280,130 +405,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys",
-]
-
-[[package]]
-name = "nexora-clipboard"
-version = "0.1.1"
-
-[[package]]
-name = "nexora-color"
-version = "0.1.1"
-
-[[package]]
-name = "nexora-config"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "nexora-core"
-version = "0.1.1"
-dependencies = [
- "serde",
- "uuid",
-]
-
-[[package]]
-name = "nexora-daemon"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "nexora-config",
- "nexora-core",
- "nexora-ipc",
- "nexora-platform",
- "nexora-rename",
- "nexora-runtime",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "nexora-ipc"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "nexora-core",
- "nexora-rename",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "nexora-launcher"
-version = "0.1.1"
-
-[[package]]
-name = "nexora-launcher-app"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "clap",
- "nexora-core",
- "nexora-daemon",
- "nexora-ipc",
- "nexora-rename",
- "tokio",
-]
-
-[[package]]
-name = "nexora-platform"
-version = "0.1.1"
-dependencies = [
- "nexora-core",
-]
-
-[[package]]
-name = "nexora-plugin"
-version = "0.1.1"
-dependencies = [
- "nexora-core",
- "serde",
-]
-
-[[package]]
-name = "nexora-rename"
-version = "0.1.1"
-dependencies = [
- "regex",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "nexora-ruler"
-version = "0.1.1"
-
-[[package]]
-name = "nexora-runtime"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "thiserror",
-]
-
-[[package]]
-name = "nexora-window"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "nexora-core",
-]
-
-[[package]]
-name = "nexora-zones"
-version = "0.1.1"
-dependencies = [
- "nexora-core",
 ]
 
 [[package]]

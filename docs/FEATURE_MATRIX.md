@@ -1,6 +1,6 @@
 # Feature Matrix
 
-Nexora is a Linux productivity toolkit inspired by the utilities Windows users get from
+Nujar is a Linux productivity toolkit inspired by the utilities Windows users get from
 Microsoft PowerToys. It is an independent project and is not affiliated with Microsoft.
 
 **Legend**
@@ -21,18 +21,18 @@ or screen capture, so each feature lists its backend per session type.
 
 | Capability | Crate | Status | Notes |
 |---|---|---|---|
-| Module runtime (lifecycle, registry, API versioning) | `nexora-runtime` | ✅ | Only `core` module registered so far |
-| Capability model (declared per module) | `nexora-runtime` | 🚧 | Declared, **not yet enforced** |
-| Versioned Unix-socket IPC | `nexora-ipc` | ✅ | JSON line protocol v1; 64 KB request cap |
-| Daemon (graceful shutdown, 0600 socket) | `nexora-daemon` | ✅ | SIGTERM + Ctrl-C |
-| IPC peer authentication (peer-uid check) | `nexora-daemon` | ✅ | Per-client capability grants 📅 |
-| Typed configuration (TOML) | `nexora-config` | 🚧 | Load only; no hot-reload/validation |
-| X11 / Wayland session detection | `nexora-platform` | ✅ | Env-based |
-| Compositor detection (GNOME/KDE/Sway/Hyprland) | `nexora-platform` | 📅 | v0.3 |
-| Persistent state | `nexora-daemon` | 📅 | |
-| Event bus | `nexora-runtime` | 📅 | |
-| Plugin manifests / extension SDK | `nexora-plugin` | 🚧 | Manifest type only |
-| Enterprise policy (`/etc/nexora/policy.toml`) | `nexora-config` | 📅 | Admin-enforced module/capability lockdown |
+| Module runtime (lifecycle, registry, API versioning) | `aujar-runtime` | ✅ | Only `core` module registered so far |
+| Capability model (declared per module) | `aujar-runtime` | 🚧 | Declared, **not yet enforced** |
+| Versioned Unix-socket IPC | `aujar-ipc` | ✅ | JSON line protocol v1; 64 KB request cap |
+| Daemon (graceful shutdown, 0600 socket) | `aujar-daemon` | ✅ | SIGTERM + Ctrl-C |
+| IPC peer authentication (peer-uid check) | `aujar-daemon` | ✅ | Per-client capability grants 📅 |
+| Typed configuration (TOML) | `aujar-config` | 🚧 | Load only; no hot-reload/validation |
+| X11 / Wayland session detection | `aujar-platform` | ✅ | Env-based |
+| Compositor detection (GNOME/KDE/Sway/Hyprland) | `aujar-platform` | 📅 | v0.3 |
+| Persistent state | `aujar-daemon` | 📅 | |
+| Event bus | `aujar-runtime` | 📅 | |
+| Plugin manifests / extension SDK | `aujar-plugin` | 🚧 | Manifest type only |
+| Enterprise policy (`/etc/aujar/policy.toml`) | `aujar-config` | 📅 | Admin-enforced module/capability lockdown |
 | Telemetry | — | — | None, by design |
 
 ## 2. Modules
@@ -48,7 +48,7 @@ or screen capture, so each feature lists its backend per session type.
 | Clipboard history | Advanced Paste / Win+V | `modules/clipboard` | 🚧 in-memory store | 📅 | 📅 (`wlr-data-control`) | 📅 (`ext-data-control`) | ⚠️ (no data-control; needs extension) | Sensitive-app exclusion planned |
 | Color picker | Color Picker | `modules/color` | 🚧 stub | 📅 | 📅 (portal `PickColor`) | 📅 (portal) | 📅 (portal) | `xdg-desktop-portal` Screenshot |
 | Screen ruler | Screen Ruler | `modules/ruler` | 🚧 stub | 📅 | 📅 (portal screencast) | 📅 | 📅 | Requires screen-capture permission |
-| Global hotkeys | (all modules) | `nexora-runtime` | 📅 | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
+| Global hotkeys | (all modules) | `aujar-runtime` | 📅 | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
 | Quick preview | Peek | — | 📅 | 📅 | 📅 | 📅 | 📅 | |
 | Image utilities | Image Resizer | — | 📅 | 📅 | 📅 | 📅 | 📅 | Pure Rust, no session dependency |
 | Keyboard remapping | Keyboard Manager | — | ⚠️ | ⚠️ (evdev/uinput, needs privileges) | ⚠️ | ⚠️ | ⚠️ | Privileged helper; design under review |
@@ -60,10 +60,12 @@ or screen capture, so each feature lists its backend per session type.
 
 | Front-end | Status | Notes |
 |---|---|---|
-| CLI (`nexora`) | ✅ | `ping`, `health`, `windows`, `rename`, `daemon` (`modules` request exists in IPC) |
-| Settings app | 📅 | v0.4+; toolkit TBD (see ADR process) |
-| Launcher UI | 📅 | v0.2 |
+| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `rename`, `daemon` (`modules` request exists in IPC) |
+| Settings app | 📅 | v0.4+; GPUI (proposed, [ADR 0002](adr/0002-ui-framework-gpui.md)) |
+| Launcher UI | 📅 | v0.2; GPUI, GPU-accelerated via wgpu (Vulkan/GL) with software fallback; see [UI_UX](UI_UX.md) |
 | Tray / status indicator | 📅 | StatusNotifierItem |
+| IPC event stream (daemon → UI) | 📅 | Prerequisite for UI; see UI_UX |
+| GPU renderer selection / software fallback | 📅 | Part of the UI spike |
 
 ## 4. Distribution & Quality
 

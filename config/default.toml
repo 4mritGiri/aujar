@@ -1,2 +1,2 @@
-socket_path = "/run/user/1000/nexora.sock"
+socket_path = "/run/user/1000/aujar.sock"
 log_level = "info"

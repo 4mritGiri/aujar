@@ -26,7 +26,7 @@ fn socket() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("nexora.sock")
+        .join("aujar.sock")
 }
 #[tokio::main]
 async fn main() -> Result<()> {

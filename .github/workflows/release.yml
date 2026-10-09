@@ -17,8 +17,8 @@ jobs:
       - name: Package
         run: |
           mkdir dist
-          tar -czf dist/nexora-${GITHUB_REF_NAME}-linux-x86_64.tar.gz \
-            -C target/release nexora \
+          tar -czf dist/aujar-${GITHUB_REF_NAME}-linux-x86_64.tar.gz \
+            -C target/release aujar \
             -C ../../packaging systemd desktop
           cd dist && sha256sum * > SHA256SUMS
       - uses: softprops/action-gh-release@v2

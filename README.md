@@ -1,10 +1,10 @@
-# Nexora
+# Nujar
 
 **Native Linux Productivity Platform** — an open-source, modular toolkit for Linux desktops,
 inspired by the utilities Windows users get from PowerToys. Independent project; not
 affiliated with Microsoft.
 
-[![CI](https://github.com/nexora-project/nexora/actions/workflows/ci.yml/badge.svg)](https://github.com/nexora-project/nexora/actions/workflows/ci.yml)
+[![CI](https://github.com/aujar-project/aujar/actions/workflows/ci.yml/badge.svg)](https://github.com/aujar-project/aujar/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
 
@@ -47,19 +47,19 @@ cargo clippy --workspace --all-targets --all-features
 
 ## CLI
 
-The CLI communicates with the Nexora daemon through the Unix socket.
+The CLI communicates with the Nujar daemon through the Unix socket.
 
 ```bash
-cargo run -p nexora-launcher-app -- daemon   # terminal 1
-cargo run -p nexora-launcher-app -- ping     # terminal 2
-cargo run -p nexora-launcher-app -- health
-cargo run -p nexora-launcher-app -- windows
+cargo run -p aujar-launcher-app -- daemon   # terminal 1
+cargo run -p aujar-launcher-app -- ping     # terminal 2
+cargo run -p aujar-launcher-app -- health
+cargo run -p aujar-launcher-app -- windows
 ```
 
 Rename preview:
 
 ```bash
-cargo run -p nexora-launcher-app -- rename \
+cargo run -p aujar-launcher-app -- rename \
   --pattern old \
   --replacement new \
   old_report.txt old_data.txt
@@ -68,7 +68,7 @@ cargo run -p nexora-launcher-app -- rename \
 Apply:
 
 ```bash
-cargo run -p nexora-launcher-app -- rename \
+cargo run -p aujar-launcher-app -- rename \
   --pattern old \
   --replacement new \
   old_report.txt old_data.txt \
@@ -78,7 +78,7 @@ cargo run -p nexora-launcher-app -- rename \
 Regex:
 
 ```bash
-cargo run -p nexora-launcher-app -- rename \
+cargo run -p aujar-launcher-app -- rename \
   --regex \
   --pattern '^(.+)\\.jpeg$' \
   --replacement '${1}.jpg' \
@@ -88,7 +88,7 @@ cargo run -p nexora-launcher-app -- rename \
 ## Architecture
 
 ```text
-Nexora
+Nujar
 ├── Core
 ├── Config
 ├── IPC

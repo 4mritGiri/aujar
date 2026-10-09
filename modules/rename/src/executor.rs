@@ -79,7 +79,7 @@ fn temporary_path(source: &Path, nonce: u128, index: usize) -> PathBuf {
     source
         .parent()
         .unwrap_or_else(|| Path::new(""))
-        .join(format!(".nexora-rename-{nonce}-{index}-{file_name}"))
+        .join(format!(".aujar-rename-{nonce}-{index}-{file_name}"))
 }
 
 fn restore_path(source: &Path) -> PathBuf {
@@ -91,5 +91,5 @@ fn restore_path(source: &Path) -> PathBuf {
     source
         .parent()
         .unwrap_or_else(|| Path::new(""))
-        .join(format!(".nexora-restore-{file_name}"))
+        .join(format!(".aujar-restore-{file_name}"))
 }

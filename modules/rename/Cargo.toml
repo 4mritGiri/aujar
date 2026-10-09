@@ -1,5 +1,5 @@
 [package]
-name = "nexora-rename"
+name = "aujar-rename"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

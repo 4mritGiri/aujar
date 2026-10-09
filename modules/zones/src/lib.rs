@@ -1,4 +1,4 @@
-use nexora_core::{Position, Rect, Size};
+use aujar_core::{Position, Rect, Size};
 
 #[derive(Debug, Clone)]
 pub struct ZoneGrid {

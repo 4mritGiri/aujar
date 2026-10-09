@@ -12,7 +12,7 @@ fn socket_path() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("nexora.sock")
+        .join("aujar.sock")
 }
 async fn handle(s: UnixStream) -> Result<()> {
     let (r, mut w) = s.into_split();
