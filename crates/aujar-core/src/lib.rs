@@ -51,6 +51,24 @@ pub enum Capability {
 }
 
 impl Capability {
+    pub const ALL: [Capability; 8] = [
+        Self::ReadClipboard,
+        Self::WriteClipboard,
+        Self::ReadWindows,
+        Self::ControlWindows,
+        Self::ScreenCapture,
+        Self::GlobalHotkeys,
+        Self::ExecuteCommand,
+        Self::FileSystem,
+    ];
+
+    /// Parse the stable snake_case name produced by [`Capability::as_str`].
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|capability| capability.as_str() == name)
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReadClipboard => "read_clipboard",
@@ -68,5 +86,19 @@ impl Capability {
 impl std::fmt::Display for Capability {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Capability;
+
+    #[test]
+    fn capability_names_round_trip() {
+        for capability in Capability::ALL {
+            assert_eq!(Capability::parse(capability.as_str()), Some(capability));
+        }
+
+        assert_eq!(Capability::parse("nope"), None);
     }
 }

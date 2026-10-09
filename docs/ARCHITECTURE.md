@@ -43,4 +43,4 @@ The UI is a separate GPUI process that talks to the daemon over IPC; see [UI_UX]
 ## Known debt
 
 - `aujar-ipc` depends on `aujar-rename`; move protocol types out of domain crates.
-- Capabilities are declared but not enforced.
+- Capability enforcement is policy-wide only; per-client grants are not implemented.

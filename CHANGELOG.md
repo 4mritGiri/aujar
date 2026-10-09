@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- `Execute` IPC request and `aujar run <id>`: launches indexed applications (no shell, field codes dropped, own process group).
+- Capability enforcement: each request maps to a capability; `/etc/aujar/policy.toml` can deny capabilities (fail-closed).
+- `Capability::ALL` / `Capability::parse`; `tokio` `process` feature.
 - Launcher engine: provider trait, application (`.desktop`) and calculator providers, tiered ranking.
 - IPC `Search` request/response (protocol v1, additive) and CLI `aujar search` / `aujar modules`.
 - ADR 0002 (GPUI UI proposal) and UI/UX design doc.

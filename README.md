@@ -68,6 +68,12 @@ cargo run -p aujar-launcher-app -- search fire
 cargo run -p aujar-launcher-app -- search '2*(3+4)'
 ```
 
+Launch an app from a search result id:
+
+```bash
+cargo run -p aujar-launcher-app -- run apps:firefox.desktop
+```
+
 Rename preview:
 
 ```bash

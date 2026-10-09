@@ -1,17 +1,22 @@
 use anyhow::{Context, Result};
-use aujar_core::{Health, WindowId};
+use aujar_core::{Capability, Health, WindowId};
 use aujar_ipc::{
-    ModuleInfo, ModulesResponse, PROTOCOL_VERSION, RenameResponse, Request, Response, SearchHit,
-    SearchResponse,
+    ExecuteResponse, ModuleInfo, ModulesResponse, PROTOCOL_VERSION, RenameResponse, Request,
+    Response, SearchHit, SearchResponse,
 };
-use aujar_launcher::Launcher;
+use aujar_launcher::{LaunchSpec, Launcher};
 use aujar_platform::detect_session;
 use aujar_rename::{RenameOptions, RenamePlanner};
 use aujar_runtime::{ModuleContext, ModuleRegistry};
 use serde::{Deserialize, Serialize};
 use std::{
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    collections::HashSet,
+    os::unix::{
+        fs::{MetadataExt, PermissionsExt},
+        process::CommandExt,
+    },
     path::Path,
+    process::Stdio,
     sync::Arc,
     time::Duration,
 };
@@ -28,6 +33,9 @@ const MAX_REQUEST_BYTES: u64 = 64 * 1024;
 /// Maximum time a client may take to send its request line.
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// System policy file; a missing file means no restrictions.
+const POLICY_PATH: &str = "/etc/aujar/policy.toml";
+
 use modules::CoreModule;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,10 +50,50 @@ struct Shared {
     registry: Arc<ModuleRegistry>,
     launcher: Launcher,
     owner_uid: u32,
+    denied: HashSet<Capability>,
+}
+
+fn load_denied_capabilities() -> Result<HashSet<Capability>> {
+    let policy = aujar_config::Policy::load_optional(POLICY_PATH)
+        .with_context(|| format!("failed to load policy {POLICY_PATH}"))?;
+
+    policy
+        .denied_capabilities
+        .iter()
+        .map(|name| {
+            Capability::parse(name)
+                .ok_or_else(|| anyhow::anyhow!("unknown capability `{name}` in {POLICY_PATH}"))
+        })
+        .collect()
+}
+
+fn spawn_detached(spec: &LaunchSpec) -> std::io::Result<Option<u32>> {
+    let mut command = std::process::Command::new(&spec.program);
+
+    command
+        .args(&spec.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        // Own process group: stopping the daemon must not kill launched apps.
+        .process_group(0);
+
+    let mut child = tokio::process::Command::from(command).spawn()?;
+    let pid = child.id();
+
+    // Reap the child when it exits so it does not become a zombie.
+    tokio::spawn(async move {
+        let _ = child.wait().await;
+    });
+
+    Ok(pid)
 }
 
 pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
     let socket_path = socket_path.as_ref();
+
+    // Fail before touching the socket if the policy is invalid.
+    let denied = load_denied_capabilities()?;
 
     prepare_socket(socket_path).await?;
 
@@ -81,6 +129,7 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
         registry: Arc::clone(&registry),
         launcher: Launcher::with_default_providers(),
         owner_uid,
+        denied,
     });
 
     run_server(listener, shared).await?;
@@ -219,6 +268,13 @@ async fn handle_client(stream: UnixStream, shared: Arc<Shared>) -> Result<()> {
 }
 
 async fn dispatch(request: Request, shared: &Shared) -> Response {
+    if let Some(capability) = request
+        .required_capability()
+        .filter(|capability| shared.denied.contains(capability))
+    {
+        return Response::Error(format!("capability `{capability}` is denied by policy"));
+    }
+
     match request {
         Request::Ping => Response::Pong,
 
@@ -245,6 +301,23 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
                 })
                 .collect(),
         }),
+
+        Request::Execute(request) => match shared.launcher.resolve(&request.id) {
+            Ok(spec) => match spawn_detached(&spec) {
+                Ok(pid) => {
+                    tracing::info!(id = %request.id, program = %spec.program, ?pid, "launched application");
+
+                    Response::Executed(ExecuteResponse {
+                        title: spec.title,
+                        pid,
+                    })
+                }
+                Err(error) => {
+                    Response::Error(format!("failed to launch `{}`: {error}", spec.title))
+                }
+            },
+            Err(message) => Response::Error(message),
+        },
 
         Request::Search(request) => {
             let limit = request.limit.unwrap_or(10).clamp(1, 50);

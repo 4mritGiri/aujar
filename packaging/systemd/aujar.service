@@ -13,6 +13,9 @@ ExecStart=%h/.local/bin/aujar daemon
 Restart=on-failure
 RestartSec=2
 Environment=RUST_LOG=info
+# Launched apps need the graphical session environment (DISPLAY, WAYLAND_DISPLAY, ...).
+# Run `systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP`
+# from your session startup, or start the daemon from the session itself.
 
 [Install]
 WantedBy=default.target

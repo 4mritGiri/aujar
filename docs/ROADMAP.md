@@ -15,7 +15,8 @@
 
 ## v0.2 — Launcher
 - GPUI spike across X11/KDE/GNOME/Sway/Hyprland (ADR 0002)
-- [ ] IPC event stream and execute request
+- [ ] IPC event stream
+- [x] IPC execute request (indexed apps only, policy-gated)
 - [x] IPC search request
 - [x] Application discovery (`.desktop`, XDG + Flatpak dirs)
 - [ ] File provider

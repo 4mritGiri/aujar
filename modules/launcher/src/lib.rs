@@ -3,9 +3,9 @@ mod calculator;
 mod model;
 mod ranking;
 
-pub use apps::{AppsProvider, DesktopEntry, default_dirs, parse_desktop_entry};
+pub use apps::{AppsProvider, DesktopEntry, default_dirs, parse_desktop_entry, parse_exec};
 pub use calculator::{CalculatorProvider, evaluate};
-pub use model::{Provider, ResultKind, SearchResult};
+pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
 pub use ranking::score;
 
 #[derive(Debug, Clone)]
@@ -49,6 +49,20 @@ impl Launcher {
 
     pub fn register(&mut self, provider: Box<dyn Provider>) {
         self.providers.push(provider);
+    }
+
+    /// Resolve a result id into a launch command. Only ids that a registered
+    /// provider recognises can be launched; arbitrary commands are impossible.
+    pub fn resolve(&self, id: &str) -> Result<LaunchSpec, String> {
+        let (provider_id, _) = id
+            .split_once(':')
+            .ok_or_else(|| format!("malformed result id `{id}`"))?;
+
+        self.providers
+            .iter()
+            .filter(|provider| provider.id() == provider_id)
+            .find_map(|provider| provider.resolve(id))
+            .unwrap_or_else(|| Err(format!("result `{id}` cannot be launched")))
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {

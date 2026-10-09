@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use aujar_core::{Health, WindowId};
+use aujar_core::{Capability, Health, WindowId};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::{
@@ -17,6 +17,31 @@ pub enum Request {
     Modules,
     Rename(RenameRequest),
     Search(SearchRequest),
+    Execute(ExecuteRequest),
+}
+
+impl Request {
+    /// Capability the daemon must grant before serving this request.
+    pub fn required_capability(&self) -> Option<Capability> {
+        match self {
+            Self::Windows => Some(Capability::ReadWindows),
+            Self::Rename(_) => Some(Capability::FileSystem),
+            Self::Execute(_) => Some(Capability::ExecuteCommand),
+            Self::Ping | Self::Health | Self::Modules | Self::Search(_) => None,
+        }
+    }
+}
+
+/// Launch a previously returned search result by its id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecuteRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecuteResponse {
+    pub title: String,
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +69,7 @@ pub enum Response {
     Modules(ModulesResponse),
     Rename(RenameResponse),
     Search(SearchResponse),
+    Executed(ExecuteResponse),
     Error(String),
 }
 
@@ -117,4 +143,26 @@ pub async fn send(socket: impl AsRef<Path>, request: Request) -> Result<Response
     }
 
     Ok(response.payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execute_requires_capability_and_search_does_not() {
+        let execute = Request::Execute(ExecuteRequest {
+            id: "apps:x".into(),
+        });
+        let search = Request::Search(SearchRequest {
+            query: "x".into(),
+            limit: None,
+        });
+
+        assert_eq!(
+            execute.required_capability(),
+            Some(Capability::ExecuteCommand)
+        );
+        assert_eq!(search.required_capability(), None);
+    }
 }

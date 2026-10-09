@@ -1,5 +1,5 @@
 use crate::{
-    model::{Provider, ResultKind, SearchResult},
+    model::{LaunchSpec, Provider, ResultKind, SearchResult},
     ranking::score,
 };
 use std::{
@@ -17,6 +17,7 @@ pub struct DesktopEntry {
     pub name: String,
     pub comment: Option<String>,
     pub exec: String,
+    pub terminal: bool,
 }
 
 /// Parse a freedesktop `.desktop` file. Returns `None` for entries that
@@ -29,6 +30,7 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
     let mut exec = None;
     let mut kind = None;
     let mut hidden = false;
+    let mut terminal = false;
 
     for raw in content.lines() {
         let line = raw.trim();
@@ -57,11 +59,8 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
             "Comment" => comment = Some(value.to_owned()),
             "Exec" => exec = Some(value.to_owned()),
             "Type" => kind = Some(value.to_owned()),
-            "NoDisplay" | "Hidden" => {
-                if value.eq_ignore_ascii_case("true") {
-                    hidden = true;
-                }
-            }
+            "Terminal" => terminal = value.eq_ignore_ascii_case("true"),
+            "NoDisplay" | "Hidden" if value.eq_ignore_ascii_case("true") => hidden = true,
             _ => {}
         }
     }
@@ -75,7 +74,70 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
         name: name?,
         comment: comment.filter(|value: &String| !value.is_empty()),
         exec: exec?,
+        terminal,
     })
+}
+
+/// Split a desktop-entry `Exec` value into arguments **without a shell**.
+///
+/// Handles double quotes and backslash escapes inside quotes, `%%`, and drops
+/// field codes such as `%u`/`%F` (no files or URLs are passed).
+pub fn parse_exec(exec: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut has_token = false;
+    let mut in_quotes = false;
+    let mut chars = exec.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                in_quotes = !in_quotes;
+                has_token = true;
+            }
+            '\\' if in_quotes => {
+                match chars.peek().copied() {
+                    Some(next) if matches!(next, '"' | '`' | '$' | '\\') => {
+                        current.push(next);
+                        chars.next();
+                    }
+                    _ => current.push('\\'),
+                }
+
+                has_token = true;
+            }
+            '%' => match chars.peek().copied() {
+                Some('%') => {
+                    chars.next();
+                    current.push('%');
+                    has_token = true;
+                }
+                Some(code) if code.is_ascii_alphabetic() => {
+                    chars.next();
+                }
+                _ => {
+                    current.push('%');
+                    has_token = true;
+                }
+            },
+            c if c.is_whitespace() && !in_quotes => {
+                if has_token {
+                    args.push(std::mem::take(&mut current));
+                    has_token = false;
+                }
+            }
+            _ => {
+                current.push(c);
+                has_token = true;
+            }
+        }
+    }
+
+    if has_token {
+        args.push(current);
+    }
+
+    args
 }
 
 /// XDG application directories, highest priority first.
@@ -216,6 +278,30 @@ impl Provider for AppsProvider {
             })
             .collect()
     }
+
+    fn resolve(&self, id: &str) -> Option<Result<LaunchSpec, String>> {
+        let key = id.strip_prefix("apps:")?;
+        let entry = self.entries.iter().find(|entry| entry.id == key)?;
+
+        if entry.terminal {
+            return Some(Err(format!(
+                "`{}` needs a terminal, which is not supported yet",
+                entry.name
+            )));
+        }
+
+        let mut parts = parse_exec(&entry.exec).into_iter();
+
+        let Some(program) = parts.next() else {
+            return Some(Err(format!("`{}` has an empty Exec line", entry.name)));
+        };
+
+        Some(Ok(LaunchSpec {
+            title: entry.name.clone(),
+            program,
+            args: parts.collect(),
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -278,6 +364,52 @@ Exec=firefox --new-window
         let results = provider.search("fire");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "apps:firefox.desktop");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn exec_parsing_has_no_shell_semantics() {
+        assert_eq!(parse_exec("firefox %u"), ["firefox"]);
+        assert_eq!(
+            parse_exec(r#"env FOO=1 "my app" --file=%f"#),
+            ["env", "FOO=1", "my app", "--file="]
+        );
+        assert_eq!(
+            parse_exec(r#"sh -c "echo \"hi\"""#),
+            ["sh", "-c", r#"echo "hi""#]
+        );
+        assert_eq!(parse_exec("app 100%%"), ["app", "100%"]);
+        // Shell metacharacters are plain text, never interpreted.
+        assert_eq!(parse_exec("app ; rm -rf ~"), ["app", ";", "rm", "-rf", "~"]);
+    }
+
+    #[test]
+    fn resolves_only_indexed_applications() {
+        let dir = std::env::temp_dir().join(format!(
+            "aujar-resolve-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("firefox.desktop"), FIREFOX).unwrap();
+        fs::write(
+            dir.join("htop.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Htop\nExec=htop\nTerminal=true\n",
+        )
+        .unwrap();
+
+        let provider = AppsProvider::from_dirs(std::slice::from_ref(&dir));
+
+        let spec = provider.resolve("apps:firefox.desktop").unwrap().unwrap();
+        assert_eq!(spec.program, "firefox");
+        assert!(spec.args.is_empty());
+
+        assert!(provider.resolve("apps:htop.desktop").unwrap().is_err());
+        assert!(provider.resolve("apps:missing.desktop").is_none());
+        assert!(provider.resolve("calc:4").is_none());
 
         fs::remove_dir_all(dir).unwrap();
     }

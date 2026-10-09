@@ -22,7 +22,7 @@ or screen capture, so each feature lists its backend per session type.
 | Capability | Crate | Status | Notes |
 |---|---|---|---|
 | Module runtime (lifecycle, registry, API versioning) | `aujar-runtime` | ✅ | Only `core` module registered so far |
-| Capability model (declared per module) | `aujar-runtime` | 🚧 | Declared, **not yet enforced** |
+| Capability model | `aujar-runtime` / `aujar-ipc` | 🚧 | Each request maps to a capability; admin policy can deny capabilities ([POLICY](POLICY.md)). Per-client grants 📅 |
 | Versioned Unix-socket IPC | `aujar-ipc` | ✅ | JSON line protocol v1 (additive variants: `Modules`, `Search`); 64 KB request cap |
 | Daemon (graceful shutdown, 0600 socket) | `aujar-daemon` | ✅ | SIGTERM + Ctrl-C |
 | IPC peer authentication (peer-uid check) | `aujar-daemon` | ✅ | Per-client capability grants 📅 |
@@ -32,14 +32,14 @@ or screen capture, so each feature lists its backend per session type.
 | Persistent state | `aujar-daemon` | 📅 | |
 | Event bus | `aujar-runtime` | 📅 | |
 | Plugin manifests / extension SDK | `aujar-plugin` | 🚧 | Manifest type only |
-| Enterprise policy (`/etc/aujar/policy.toml`) | `aujar-config` | 📅 | Admin-enforced module/capability lockdown |
+| Enterprise policy (`/etc/aujar/policy.toml`) | `aujar-config` | ✅ | Denied capabilities, fail-closed; module lockdown 📅 |
 | Telemetry | — | — | None, by design |
 
 ## 2. Modules
 
 | Module | PowerToys analogue | Crate | Status | X11 | Wayland: Sway / Hyprland | Wayland: KDE | Wayland: GNOME | Backend |
 |---|---|---|---|---|---|---|---|---|
-| Launcher engine | PowerToys Run | `modules/launcher` | 🚧 engine done: apps + calculator providers, ranking, IPC `Search`; no execute/UI yet | ✅ | ✅ | ✅ | ✅ | Session-independent; files and commands providers 📅, launching apps 📅 |
+| Launcher engine | PowerToys Run | `modules/launcher` | 🚧 engine done: apps + calculator providers, ranking, IPC `Search` and `Execute` (apps only); no UI yet | ✅ | ✅ | ✅ | ✅ | Session-independent; files and commands providers 📅; terminal apps 📅 |
 | Batch Rename | PowerRename | `modules/rename` | ✅ engine + CLI | ✅ | ✅ | ✅ | ✅ | Pure filesystem; GUI/file-manager integration 📅 |
 | Window management | — | `modules/window` | 🚧 trait only | 📅 (EWMH / `x11rb`) | 📅 compositor IPC; list/activate only on generic wlroots | 📅 (KWin scripting, DBus) | ⚠️ (GNOME Shell extension) | |
 | Zones (FancyZones) | FancyZones | `modules/zones` | 🚧 grid math | 📅 | 📅 (Sway/Hyprland IPC) | 📅 (KWin script) | ⚠️ (extension) | Depends on Window management |
@@ -60,7 +60,7 @@ or screen capture, so each feature lists its backend per session type.
 
 | Front-end | Status | Notes |
 |---|---|---|
-| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `rename`, `daemon` |
+| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `rename`, `daemon` |
 | Settings app | 📅 | v0.4+; GPUI (proposed, [ADR 0002](adr/0002-ui-framework-gpui.md)) |
 | Launcher UI | 📅 | v0.2; GPUI, GPU-accelerated via wgpu (Vulkan/GL) with software fallback; see [UI_UX](UI_UX.md) |
 | Tray / status indicator | 📅 | StatusNotifierItem |

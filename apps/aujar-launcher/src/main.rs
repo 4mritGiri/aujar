@@ -1,6 +1,6 @@
 use anyhow::Result;
 use aujar_core::{Health, Session};
-use aujar_ipc::{RenameRequest, Request, Response, SearchRequest, send};
+use aujar_ipc::{ExecuteRequest, RenameRequest, Request, Response, SearchRequest, send};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -40,6 +40,12 @@ enum Command {
         /// Maximum number of results.
         #[arg(long, default_value_t = 10)]
         limit: usize,
+    },
+
+    /// Launch a search result by id (see `aujar search`).
+    Run {
+        /// Result id, e.g. `apps:firefox.desktop`.
+        id: String,
     },
 
     /// Run the Aujar daemon.
@@ -125,13 +131,29 @@ async fn main() -> Result<()> {
                     for hit in search.results {
                         match hit.subtitle {
                             Some(subtitle) => println!(
-                                "{:>5}  [{}] {} - {}",
-                                hit.score, hit.kind, hit.title, subtitle
+                                "{:>5}  [{}] {} - {}  ({})",
+                                hit.score, hit.kind, hit.title, subtitle, hit.id
                             ),
-                            None => println!("{:>5}  [{}] {}", hit.score, hit.kind, hit.title),
+                            None => println!(
+                                "{:>5}  [{}] {}  ({})",
+                                hit.score, hit.kind, hit.title, hit.id
+                            ),
                         }
                     }
                 }
+                Response::Error(message) => anyhow::bail!(message),
+                other => println!("{other:?}"),
+            }
+        }
+
+        Command::Run { id } => {
+            let request = Request::Execute(ExecuteRequest { id });
+
+            match send(&resolve_socket(), request).await? {
+                Response::Executed(done) => match done.pid {
+                    Some(pid) => println!("Launched {} (pid {pid})", done.title),
+                    None => println!("Launched {}", done.title),
+                },
                 Response::Error(message) => anyhow::bail!(message),
                 other => println!("{other:?}"),
             }
