@@ -1,16 +1,21 @@
-# Nujar
+# Aujar
 
 **Native Linux Productivity Platform** — an open-source, modular toolkit for Linux desktops,
 inspired by the utilities Windows users get from PowerToys. Independent project; not
 affiliated with Microsoft.
 
-[![CI](https://github.com/aujar-project/aujar/actions/workflows/ci.yml/badge.svg)](https://github.com/aujar-project/aujar/actions/workflows/ci.yml)
+[![CI](https://github.com/4mritGiri/aujar/actions/workflows/ci.yml/badge.svg)](https://github.com/4mritGiri/aujar/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
 
 > **Status: early development (v0.1.x).** Only the platform foundation and the batch-rename
 > engine are functional. See the [feature matrix](docs/FEATURE_MATRIX.md) for exactly what
 > works on X11, Sway/Hyprland, KDE and GNOME.
+
+## About the name
+
+*Aujar* (औजार) means "tool" in Nepali and Hindi, a nod to what the project is: a toolkit of
+small, sharp desktop utilities.
 
 ## Documentation
 
@@ -47,7 +52,7 @@ cargo clippy --workspace --all-targets --all-features
 
 ## CLI
 
-The CLI communicates with the Nujar daemon through the Unix socket.
+The CLI communicates with the Aujar daemon through the Unix socket.
 
 ```bash
 cargo run -p aujar-launcher-app -- daemon   # terminal 1
@@ -88,7 +93,7 @@ cargo run -p aujar-launcher-app -- rename \
 ## Architecture
 
 ```text
-Nujar
+Aujar
 ├── Core
 ├── Config
 ├── IPC

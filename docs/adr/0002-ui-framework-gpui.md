@@ -4,7 +4,7 @@
 
 ## Context
 
-Nujar needs a fast, GPU-rendered UI for the launcher, zones editor, overlays and settings.
+Aujar needs a fast, GPU-rendered UI for the launcher, zones editor, overlays and settings.
 GPUI (the framework behind the Zed editor) renders through wgpu on Linux (Vulkan, with a GL
 fallback) and has native Wayland and X11 backends.
 
@@ -26,7 +26,7 @@ Known constraints:
    crates does not require GPU/windowing system libraries. UI has its own CI job.
 4. Global hotkeys, tray and window control stay in the daemon (portals, X11 grabs, compositor
    IPC), not in the UI toolkit. The daemon tells the UI to show/hide via IPC events.
-5. No Nujar logic in the UI: it renders state and sends requests.
+5. No Aujar logic in the UI: it renders state and sends requests.
 
 ## Consequences
 

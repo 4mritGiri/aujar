@@ -1,11 +1,11 @@
-# Contributing to Nujar
+# Contributing to Aujar
 
 Thanks for helping! Please read this and the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Getting started
 
 ```bash
-git clone https://github.com/aujar-project/aujar && cd aujar
+git clone https://github.com/4mritGiri/aujar && cd aujar
 cargo install just cargo-deny   # optional helpers
 just check                      # fmt + clippy + tests
 ```

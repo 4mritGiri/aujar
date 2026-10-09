@@ -41,8 +41,8 @@ version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
-authors = ["Nujar Contributors"]
-repository = "https://github.com/aujar-project/aujar"
+authors = ["Aujar Contributors"]
+repository = "https://github.com/4mritGiri/aujar"
 
 [workspace.dependencies]
 anyhow = "1"

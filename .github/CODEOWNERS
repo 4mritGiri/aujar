@@ -1,6 +1,6 @@
-# Replace with real GitHub handles/teams before publishing.
-*                       @aujar-project/maintainers
-/crates/aujar-ipc/     @aujar-project/maintainers @aujar-project/security
-/crates/aujar-runtime/ @aujar-project/maintainers @aujar-project/security
-/packaging/             @aujar-project/packagers
-/docs/                  @aujar-project/docs
+# Default owner for everything
+*                        @4mritGiri
+/crates/aujar-ipc/       @4mritGiri
+/crates/aujar-runtime/   @4mritGiri
+/packaging/              @4mritGiri
+/docs/                   @4mritGiri

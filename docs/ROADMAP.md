@@ -1,4 +1,4 @@
-# Nujar Roadmap
+# Aujar Roadmap
 
 ## v0.1 — Foundation
 - [x] Cargo workspace

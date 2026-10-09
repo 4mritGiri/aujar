@@ -1,6 +1,6 @@
 # Feature Matrix
 
-Nujar is a Linux productivity toolkit inspired by the utilities Windows users get from
+Aujar is a Linux productivity toolkit inspired by the utilities Windows users get from
 Microsoft PowerToys. It is an independent project and is not affiliated with Microsoft.
 
 **Legend**

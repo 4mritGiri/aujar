@@ -1,4 +1,4 @@
-# Nujar Architecture
+# Aujar Architecture
 
 ## Principles
 
