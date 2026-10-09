@@ -1,0 +1,13 @@
+# Aujar administrator policy.
+# Install as /etc/aujar/policy.toml (root-owned, mode 0644).
+#
+# Capabilities: read_clipboard, write_clipboard, read_windows, control_windows,
+#               screen_capture, global_hotkeys, execute_command, filesystem
+#
+# Requests that need a denied capability are refused by the daemon.
+# Unknown names or unknown keys make the daemon refuse to start (fail closed).
+
+denied_capabilities = [
+  # "execute_command",   # forbid launching applications
+  # "filesystem",        # forbid batch rename
+]
