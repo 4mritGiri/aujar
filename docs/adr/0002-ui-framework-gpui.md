@@ -5,13 +5,19 @@
 ## Context
 
 Aujar needs a fast, GPU-rendered UI for the launcher, zones editor, overlays and settings.
-GPUI (the framework behind the Zed editor) renders through wgpu on Linux (Vulkan, with a GL
-fallback) and has native Wayland and X11 backends.
+GPUI (the framework behind the Zed editor) is GPU-accelerated on Linux and has native Wayland and
+X11 backends. Current Zed `main` renders through wgpu (Vulkan/GL); the older 0.2.x release used a
+different renderer.
 
 Known constraints:
 
-- GPUI is not a conventional, stable, semver-managed library. Upstream is consumed as a git
-  dependency pinned to a commit; community snapshots and forks exist on crates.io. APIs change.
+- The official `gpui` 0.2.2 on crates.io did not build on a current toolchain (`xattr 0.2.3` vs
+  `libc`), and a git dependency on Zed `main` failed to resolve. The spike therefore uses the
+  community-published `gpui-pre*` snapshots of Zed `main` (zed@5b055fa), whose API differs from
+  0.2.x (separate `gpui_platform`, `application()` entry point).
+- **Supply chain:** these crates are published by a third party (a GPUI contributor), not by
+  Zed. Before shipping: review the publisher and diff the snapshot against the upstream commit
+  recorded in its metadata, and switch to an official Zed release as soon as one builds.
 - GPUI has no global-hotkey support on Wayland (protocol limitation) and, in at least some
   builds, no `wlr-layer-shell`, which a launcher/overlay wants on Sway, Hyprland and KDE.
 - GPU rendering needs a working Vulkan/GL driver. Headless, VM and very old hardware need a
@@ -21,7 +27,8 @@ Known constraints:
 
 1. Build the UI with GPUI, in a **separate process** (`aujar-ui`) that talks to the daemon
    over the existing IPC. The daemon stays headless and toolkit-free.
-2. Pin GPUI to an exact git revision in `apps/aujar-ui/Cargo.toml`; upgrade deliberately via PR.
+2. Pin GPUI to exact versions (`gpui-pre =0.3.3`, `gpui-pre-platform =0.3.3`) in
+   `apps/aujar-ui/Cargo.toml` and commit its `Cargo.lock`; upgrade deliberately via PR.
 3. Keep `aujar-ui` **outside the default workspace members** so `cargo check` for the platform
    crates does not require GPU/windowing system libraries. UI has its own CI job.
 4. Global hotkeys, tray and window control stay in the daemon (portals, X11 grabs, compositor

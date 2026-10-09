@@ -3,6 +3,8 @@ name: UI
 # Enabled once apps/aujar-ui exists (see docs/adr/0002-ui-framework-gpui.md).
 on:
   workflow_dispatch:
+  pull_request:
+    paths: ["apps/aujar-ui/**", "crates/aujar-ipc/**"]
 
 jobs:
   build:

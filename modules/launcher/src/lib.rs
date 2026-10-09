@@ -54,9 +54,7 @@ impl Launcher {
     /// Resolve a result id into a launch command. Only ids that a registered
     /// provider recognises can be launched; arbitrary commands are impossible.
     pub fn resolve(&self, id: &str) -> Result<LaunchSpec, String> {
-        let (provider_id, _) = id
-            .split_once(':')
-            .ok_or_else(|| format!("malformed result id `{id}`"))?;
+        let (provider_id, _) = id.split_once(':').ok_or_else(|| format!("malformed result id `{id}`"))?;
 
         self.providers
             .iter()

@@ -28,7 +28,8 @@ Status: design only. Framework decision: [ADR 0002](adr/0002-ui-framework-gpui.m
 
 ## Hardware acceleration
 
-- Rendering path: GPUI → wgpu → Vulkan (preferred) → OpenGL fallback → software (llvmpipe/lavapipe).
+- Rendering path: GPUI → wgpu → Vulkan (preferred) / OpenGL fallback → software Vulkan
+  (llvmpipe/lavapipe) as the no-GPU fallback. Confirm the active backend in the spike.
 - Settings show the active renderer ("Vulkan – <GPU name>" / "Software") so users can diagnose.
 - A **"Software rendering"** setting/flag must exist for broken drivers and VMs.
 - Budget: idle UI process uses ~0% GPU (no continuous redraw); redraw only on input/animation.

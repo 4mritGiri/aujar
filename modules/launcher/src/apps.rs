@@ -163,7 +163,9 @@ pub fn default_dirs() -> Vec<PathBuf> {
         dirs.push(Path::new(dir).join("applications"));
     }
 
-    dirs.push(PathBuf::from("/var/lib/flatpak/exports/share/applications"));
+    dirs.push(PathBuf::from(
+        "/var/lib/flatpak/exports/share/applications",
+    ));
 
     if let Some(home) = home {
         dirs.push(home.join(".local/share/flatpak/exports/share/applications"));

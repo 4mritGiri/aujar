@@ -1,0 +1,25 @@
+[package]
+name = "aujar-ui"
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Aujar launcher UI (GPUI spike)"
+
+# Standalone workspace: keeps GPUI and its system libraries out of the main build.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+async-channel = "2"
+aujar-ipc = { path = "../../crates/aujar-ipc" }
+# GPUI snapshot of Zed `main` (zed@5b055fa), published to crates.io by a GPUI contributor
+# (huacnlee) as `gpui-pre*`. Chosen because:
+#  - the crates.io `gpui 0.2.2` pulls `xattr 0.2.3`, which no longer compiles against recent `libc`;
+#  - a git dependency on Zed `main` fails to resolve (`gpui_platform` vs `windows-manifest`).
+# Third-party snapshot: see the supply-chain note in docs/adr/0002-ui-framework-gpui.md.
+# Exact pins: GPUI's API changes between releases. Upgrade deliberately.
+gpui = { package = "gpui-pre", version = "=0.3.3" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.3", features = ["font-kit", "wayland", "x11"] }
+tokio = { version = "1", features = ["rt", "time"] }

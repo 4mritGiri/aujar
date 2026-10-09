@@ -1,14 +1,19 @@
 use anyhow::{Context, Result};
 use aujar_core::{Capability, Health, WindowId};
 use aujar_ipc::{
-    Envelope, Event, ExecuteResponse, ModuleInfo, ModulesResponse, PROTOCOL_VERSION,
-    RenameResponse, Request, Response, SearchHit, SearchResponse, encode_line,
+    Envelope, Event, ExecuteResponse, ModuleInfo, ModulesResponse, PROTOCOL_VERSION, RenameResponse, Request,
+    Response, SearchHit, SearchResponse, encode_line,
 };
 use aujar_launcher::{LaunchSpec, Launcher};
 use aujar_platform::detect_session;
 use aujar_rename::{RenameOptions, RenamePlanner};
 use aujar_runtime::{ModuleContext, ModuleRegistry};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::{
+    io::Take,
+    net::unix::{OwnedReadHalf, OwnedWriteHalf},
+    sync::broadcast,
+};
 use std::{
     collections::HashSet,
     os::unix::{
@@ -19,11 +24,6 @@ use std::{
     process::Stdio,
     sync::Arc,
     time::Duration,
-};
-use tokio::{
-    io::Take,
-    net::unix::{OwnedReadHalf, OwnedWriteHalf},
-    sync::broadcast,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -315,9 +315,7 @@ async fn stream_events(
     // Subscribe before acknowledging so no event can slip in between.
     let mut events = shared.events.subscribe();
 
-    writer
-        .write_all(&encode_line(Response::Subscribed)?)
-        .await?;
+    writer.write_all(&encode_line(Response::Subscribed)?).await?;
 
     let mut ignored = String::new();
 
@@ -400,9 +398,7 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
                         pid,
                     })
                 }
-                Err(error) => {
-                    Response::Error(format!("failed to launch `{}`: {error}", spec.title))
-                }
+                Err(error) => Response::Error(format!("failed to launch `{}`: {error}", spec.title)),
             },
             Err(message) => Response::Error(message),
         },

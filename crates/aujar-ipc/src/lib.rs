@@ -234,9 +234,7 @@ mod tests {
 
     #[test]
     fn execute_requires_capability_and_search_does_not() {
-        let execute = Request::Execute(ExecuteRequest {
-            id: "apps:x".into(),
-        });
+        let execute = Request::Execute(ExecuteRequest { id: "apps:x".into() });
         let search = Request::Search(SearchRequest {
             query: "x".into(),
             limit: None,

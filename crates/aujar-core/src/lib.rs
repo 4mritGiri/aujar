@@ -64,9 +64,7 @@ impl Capability {
 
     /// Parse the stable snake_case name produced by [`Capability::as_str`].
     pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|capability| capability.as_str() == name)
+        Self::ALL.into_iter().find(|capability| capability.as_str() == name)
     }
 
     pub const fn as_str(self) -> &'static str {

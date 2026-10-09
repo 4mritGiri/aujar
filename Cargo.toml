@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 
+# GPUI spike: built separately so the platform crates need no GPU/windowing libraries.
+exclude = ["apps/aujar-ui"]
+
 members = [
     "crates/aujar-core",
     "crates/aujar-config",

@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- GPUI spike (`apps/aujar-ui`, pinned `gpui-pre =0.3.3` snapshot, separate workspace): toggles a window from daemon events and shows search results. See docs/UI_SPIKE.md.
 - IPC event stream: `Subscribe` connections, `Launcher` show/hide/toggle broadcast, `Shutdown` event; `aujar launcher` and `aujar events`.
 - `aujar_ipc::{encode_line, decode_line, Envelope, subscribe, EventStream}`; daemon and client share one framing implementation.
 - Daemon integration tests for the event stream. Docs: IPC protocol and keyboard-shortcut recipes.
