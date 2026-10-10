@@ -3,7 +3,7 @@
 //! Design: the UI holds **no logic**. A background thread (tokio) talks to the
 //! daemon over IPC; the GPUI thread only renders state and forwards keystrokes.
 //!
-//! Keys: type to search, Up/Down to select, Enter to launch, Esc to close.
+//! Keys: type to search, Up/Down to select, Enter to launch (or copy a calculation), Esc to close.
 //! Limitation: plain key events only (no IME / composition yet).
 
 use anyhow::{Result, bail};
@@ -12,7 +12,7 @@ use aujar_ipc::{
     subscribe,
 };
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, Window, WindowBounds,
+    App, Bounds, ClipboardItem, Context, FocusHandle, Focusable, KeyDownEvent, Window, WindowBounds,
     WindowHandle, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
@@ -127,9 +127,11 @@ impl LauncherView {
             return;
         };
 
+        // Calculations are not launchable: copy the answer instead. The UI process stays
+        // alive, so it keeps owning the Wayland clipboard after the window closes.
         if hit.kind == "calculation" {
-            self.status = Some("Calculation results can't be launched (clipboard is planned)".into());
-            cx.notify();
+            cx.write_to_clipboard(ClipboardItem::new_string(hit.title.clone()));
+            window.remove_window();
             return;
         }
 

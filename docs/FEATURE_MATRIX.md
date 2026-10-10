@@ -60,7 +60,7 @@ or screen capture, so each feature lists its backend per session type.
 
 | Front-end | Status | Notes |
 |---|---|---|
-| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `launcher`, `events`, `color`, `rename`, `daemon` |
+| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `launcher`, `events`, `color`, `doctor`, `rename`, `daemon` |
 | Settings app | 📅 | v0.4+; GPUI (proposed, [ADR 0002](adr/0002-ui-framework-gpui.md)) |
 | Launcher UI | 🚧 spike in `apps/aujar-ui` (`gpui-pre` snapshot of Zed `main`): window + daemon events + typing, selection, launch (no IME yet) | See [UI_SPIKE](UI_SPIKE.md), [UI_UX](UI_UX.md) |
 | Tray / status indicator | 📅 | StatusNotifierItem |

@@ -24,6 +24,8 @@ pub enum Request {
     Launcher(LauncherCommand),
     /// Let the user pick a color on screen; the response arrives once they choose or cancel.
     PickColor,
+    /// Daemon diagnostics: connected UIs and global-shortcut state (see `aujar doctor`).
+    Status,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,9 +56,18 @@ impl Request {
             | Self::Modules
             | Self::Search(_)
             | Self::Subscribe
+            | Self::Status
             | Self::Launcher(_) => None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusResponse {
+    /// UIs currently subscribed to events.
+    pub subscribers: usize,
+    /// Human-readable state of the native global shortcut.
+    pub hotkeys: String,
 }
 
 /// A picked color in the formats Aujar supports.
@@ -108,6 +119,7 @@ pub enum Response {
     /// Acknowledges [`Request::Subscribe`]; events follow on the same connection.
     Subscribed,
     Color(ColorResponse),
+    Status(StatusResponse),
     /// A launcher command was broadcast to this many subscribers.
     Delivered {
         subscribers: usize,

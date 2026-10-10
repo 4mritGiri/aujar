@@ -3,7 +3,8 @@ use aujar_core::{Capability, Health, WindowId};
 use aujar_hotkeys::{HotkeyEvent, ShortcutSpec};
 use aujar_ipc::{
     ColorResponse, Envelope, Event, ExecuteResponse, LauncherCommand, ModuleInfo, ModulesResponse,
-    PROTOCOL_VERSION, RenameResponse, Request, Response, SearchHit, SearchResponse, encode_line,
+    PROTOCOL_VERSION, RenameResponse, Request, Response, SearchHit, SearchResponse, StatusResponse,
+    encode_line,
 };
 use aujar_launcher::{LaunchSpec, Launcher};
 use aujar_platform::detect_session;
@@ -59,6 +60,14 @@ struct Shared {
     denied: HashSet<Capability>,
     events: broadcast::Sender<Event>,
     subscribers: AtomicUsize,
+    hotkey_status: std::sync::Mutex<String>,
+}
+
+fn set_hotkey_status(shared: &Shared, status: String) {
+    *shared
+        .hotkey_status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = status;
 }
 
 /// Counts a subscriber for as long as it is alive.
@@ -101,6 +110,7 @@ const TOGGLE_LAUNCHER_SHORTCUT: &str = "toggle-launcher";
 fn start_hotkeys(shared: Arc<Shared>) {
     if shared.denied.contains(&Capability::GlobalHotkeys) {
         tracing::info!("global hotkeys are disabled by policy");
+        set_hotkey_status(&shared, "disabled by policy (global_hotkeys)".to_owned());
 
         return;
     }
@@ -114,13 +124,23 @@ fn start_hotkeys(shared: Arc<Shared>) {
     tokio::spawn(async move {
         while let Some(event) = events.recv().await {
             match event {
+                HotkeyEvent::Bound { id, trigger } => {
+                    tracing::info!(%id, %trigger, "global shortcut bound");
+                    set_hotkey_status(&shared, format!("bound: {id} = {trigger}"));
+                }
                 HotkeyEvent::Activated(id) if id == TOGGLE_LAUNCHER_SHORTCUT => {
-                    let _ = shared.events.send(Event::Launcher(LauncherCommand::Toggle));
+                    let subscribers = shared
+                        .events
+                        .send(Event::Launcher(LauncherCommand::Toggle))
+                        .unwrap_or(0);
+
+                    tracing::info!(subscribers, "global shortcut pressed");
                 }
                 HotkeyEvent::Activated(id) => {
                     tracing::debug!(%id, "unknown global shortcut activated");
                 }
                 HotkeyEvent::Unavailable(reason) => {
+                    set_hotkey_status(&shared, format!("unavailable: {reason}"));
                     tracing::warn!(
                         %reason,
                         "global shortcuts unavailable; bind `aujar launcher toggle` in your desktop settings instead"
@@ -229,6 +249,11 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
         denied,
         events: broadcast::channel(EVENT_BUFFER).0,
         subscribers: AtomicUsize::new(0),
+        hotkey_status: std::sync::Mutex::new(if options.hotkeys {
+            "waiting for the desktop portal".to_owned()
+        } else {
+            "disabled by daemon option".to_owned()
+        }),
     });
 
     if options.hotkeys {
@@ -452,6 +477,15 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
                         .collect(),
                 })
                 .collect(),
+        }),
+
+        Request::Status => Response::Status(StatusResponse {
+            subscribers: shared.subscribers.load(Ordering::SeqCst),
+            hotkeys: shared
+                .hotkey_status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone(),
         }),
 
         Request::PickColor => match aujar_color::pick().await {

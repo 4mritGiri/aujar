@@ -22,6 +22,9 @@ Disable native shortcuts by denying `global_hotkeys` in the [policy](POLICY.md).
 
 ## Manual binding (works everywhere)
 
+Use a manual binding **instead of** the native one, or on different keys: two bindings on the same
+key conflict. Not working? See [TROUBLESHOOTING](TROUBLESHOOTING.md) or run `aujar doctor`.
+
 Linux has no universal way for an app to grab a global hotkey, especially on Wayland. Until Aujar
 implements the portal `GlobalShortcuts` API and X11 key grabs natively, bind **your desktop's own
 shortcut** to a command. It works on every compositor, because the compositor owns the key.

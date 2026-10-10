@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- `aujar doctor` and IPC `Status`: reports daemon reachability, session, subscribed UIs and global-shortcut state (bound trigger or the reason it is unavailable); daemon logs each shortcut press; troubleshooting guide.
+- UI: Enter on a calculation result copies the answer to the clipboard.
 - Color picker: `aujar color pick` (desktop portal `PickColor`, via the daemon, gated by `screen_capture`) and `aujar color convert <hex>`; hex/RGB/HSL conversion in `aujar-color` with tests.
 - Packaging: `.deb` (cargo-deb), `.rpm` (cargo-generate-rpm), tarball for x86_64 and aarch64, Arch PKGBUILD, per-user `install-local.sh`; CI builds and installs the deb on every PR; tag-triggered release workflow.
 - Native global hotkey (`aujar-hotkeys`): registers Ctrl+Alt+Space through the `GlobalShortcuts` portal and toggles the launcher; falls back with a log message when the portal is missing. `Options::hotkeys` (tests disable it); policy `global_hotkeys` disables it.

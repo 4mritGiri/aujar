@@ -35,6 +35,8 @@ pub struct ShortcutSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HotkeyEvent {
+    /// The desktop bound a shortcut; `trigger` is its human-readable key combination.
+    Bound { id: String, trigger: String },
     /// The shortcut with this id was pressed.
     Activated(String),
     /// Global shortcuts cannot be used; the reason is meant for logs.
@@ -107,12 +109,17 @@ async fn listen(specs: &[ShortcutSpec], tx: &UnboundedSender<HotkeyEvent>) -> Re
         .response()
         .context("the desktop did not accept the shortcuts")?;
 
-    for shortcut in bound.shortcuts() {
-        tracing::info!(
-            id = shortcut.id(),
-            trigger = shortcut.trigger_description(),
-            "global shortcut bound"
+    if bound.shortcuts().is_empty() {
+        anyhow::bail!(
+            "the desktop did not bind any shortcut (was the dialog dismissed, or is the key already taken?)"
         );
+    }
+
+    for shortcut in bound.shortcuts() {
+        let _ = tx.send(HotkeyEvent::Bound {
+            id: shortcut.id().to_string(),
+            trigger: shortcut.trigger_description().to_string(),
+        });
     }
 
     let mut activated = portal

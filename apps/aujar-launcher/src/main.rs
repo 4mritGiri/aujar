@@ -86,6 +86,9 @@ enum Command {
         action: LauncherAction,
     },
 
+    /// Diagnose the daemon, UI connection and global shortcut.
+    Doctor,
+
     /// Color tools.
     Color {
         #[command(subcommand)]
@@ -235,6 +238,8 @@ async fn main() -> Result<()> {
             }
         }
 
+        Command::Doctor => doctor().await?,
+
         Command::Color { action } => match action {
             ColorAction::Pick => match send(&resolve_socket(), Request::PickColor).await? {
                 Response::Color(color) => println!("{}\n{}\n{}", color.hex, color.rgb, color.hsl),
@@ -292,6 +297,55 @@ async fn main() -> Result<()> {
                 }
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn doctor() -> anyhow::Result<()> {
+    let socket = resolve_socket();
+
+    println!("socket:     {}", socket.display());
+
+    let health = match send(&socket, Request::Health).await {
+        Ok(Response::Health(health)) => health,
+        Ok(other) => anyhow::bail!("unexpected response: {other:?}"),
+        Err(error) => {
+            println!("daemon:     NOT REACHABLE ({error:#})");
+            println!("\nStart it with `systemctl --user start aujar` (or run `aujar daemon`).");
+
+            return Ok(());
+        }
+    };
+
+    println!("daemon:     running, v{}", health.version);
+    println!("session:    {:?}", health.session);
+
+    let Ok(Response::Status(status)) = send(&socket, Request::Status).await else {
+        println!("status:     the daemon is older than this client; restart it");
+
+        return Ok(());
+    };
+
+    println!("UI clients: {}", status.subscribers);
+    println!("hotkey:     {}", status.hotkeys);
+    println!();
+
+    if status.subscribers == 0 {
+        println!(
+            "! No UI is subscribed. A shortcut can only show a UI that is running: start `aujar-ui`."
+        );
+    }
+
+    if !status.hotkeys.starts_with("bound") {
+        let exe = std::env::current_exe()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "aujar".to_owned());
+
+        println!(
+            "! No native shortcut is active. Bind this command in your desktop's keyboard settings:"
+        );
+        println!("    {exe} launcher toggle");
     }
 
     Ok(())

@@ -26,6 +26,8 @@ See [docs/PACKAGING.md](docs/PACKAGING.md): `.deb`, `.rpm`, tarball and PKGBUILD
 systemctl --user enable --now aujar
 ```
 
+Something not working? Run `aujar doctor` and see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
 ## Documentation
 
 | | |

@@ -6,7 +6,7 @@ The spike lives in `apps/aujar-ui` and is built **separately** from the main wor
 What it does: a GPUI window opens, renders on the GPU, is shown/hidden by daemon events
 (`aujar launcher show|hide|toggle`), and lets you **type a query, pick a result and launch it**.
 
-Keys: type to search, `Up`/`Down` to select, `Enter` to launch (calculations are not launchable yet),
+Keys: type to search, `Up`/`Down` to select, `Enter` to launch an app (on a calculation it copies the answer to the clipboard),
 `Esc` to close.
 
 ## Build and run
