@@ -22,6 +22,8 @@ pub enum Request {
     Subscribe,
     /// Ask every subscribed UI to show, hide or toggle the launcher.
     Launcher(LauncherCommand),
+    /// Let the user pick a color on screen; the response arrives once they choose or cancel.
+    PickColor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +48,7 @@ impl Request {
             Self::Windows => Some(Capability::ReadWindows),
             Self::Rename(_) => Some(Capability::FileSystem),
             Self::Execute(_) => Some(Capability::ExecuteCommand),
+            Self::PickColor => Some(Capability::ScreenCapture),
             Self::Ping
             | Self::Health
             | Self::Modules
@@ -54,6 +57,14 @@ impl Request {
             | Self::Launcher(_) => None,
         }
     }
+}
+
+/// A picked color in the formats Aujar supports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColorResponse {
+    pub hex: String,
+    pub rgb: String,
+    pub hsl: String,
 }
 
 /// Launch a previously returned search result by its id.
@@ -96,6 +107,7 @@ pub enum Response {
     Executed(ExecuteResponse),
     /// Acknowledges [`Request::Subscribe`]; events follow on the same connection.
     Subscribed,
+    Color(ColorResponse),
     /// A launcher command was broadcast to this many subscribers.
     Delivered {
         subscribers: usize,
@@ -258,6 +270,14 @@ mod tests {
 
         let wrong = r#"{"version":999,"payload":"Shutdown"}"#;
         assert!(decode_line::<Event>(wrong).is_err());
+    }
+
+    #[test]
+    fn picking_a_color_needs_screen_capture() {
+        assert_eq!(
+            Request::PickColor.required_capability(),
+            Some(Capability::ScreenCapture)
+        );
     }
 
     #[test]

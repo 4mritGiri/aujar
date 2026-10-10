@@ -26,6 +26,7 @@ One request per connection, one response, then the daemon closes it.
 | `Search{query, limit?}` | `Search{results}` | — |
 | `Execute{id}` | `Executed{title, pid}` | `execute_command` |
 | `Rename{...}` | `Rename{...}` | `filesystem` |
+| `PickColor` | `Color{hex, rgb, hsl}` (waits until the user picks or cancels) | `screen_capture` |
 | `Launcher("Show"\|"Hide"\|"Toggle")` | `Delivered{subscribers}` | — |
 | `Subscribe` | `Subscribed`, then events | — |
 

@@ -80,6 +80,13 @@ cargo run -p aujar-launcher-app -- search '2*(3+4)'
 Bind your desktop shortcut to `aujar launcher toggle` ([guide](docs/HOTKEYS.md)); watch events with
 `aujar events`.
 
+Pick a color from the screen, or convert one:
+
+```bash
+cargo run -p aujar-launcher-app -- color pick
+cargo run -p aujar-launcher-app -- color convert '#FF8800'
+```
+
 Launch an app from a search result id:
 
 ```bash

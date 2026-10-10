@@ -39,6 +39,18 @@ impl From<LauncherAction> for LauncherCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum ColorAction {
+    /// Pick a color from the screen with the desktop's color picker.
+    Pick,
+
+    /// Show a hex color in every supported format.
+    Convert {
+        /// A hex color such as `#FF8800` or `f80`.
+        value: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Check whether the Aujar daemon is reachable.
     Ping,
@@ -72,6 +84,12 @@ enum Command {
     Launcher {
         #[arg(value_enum)]
         action: LauncherAction,
+    },
+
+    /// Color tools.
+    Color {
+        #[command(subcommand)]
+        action: ColorAction,
     },
 
     /// Print daemon events as they happen (debugging and scripting).
@@ -216,6 +234,26 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        Command::Color { action } => match action {
+            ColorAction::Pick => match send(&resolve_socket(), Request::PickColor).await? {
+                Response::Color(color) => println!("{}\n{}\n{}", color.hex, color.rgb, color.hsl),
+                Response::Error(message) => anyhow::bail!(message),
+                other => println!("{other:?}"),
+            },
+            ColorAction::Convert { value } => {
+                let color = aujar_color::Rgb::parse_hex(&value).ok_or_else(|| {
+                    anyhow::anyhow!("`{value}` is not a hex color (try #FF8800 or f80)")
+                })?;
+
+                println!(
+                    "{}\n{}\n{}",
+                    color.to_hex(),
+                    color.to_rgb_string(),
+                    color.to_hsl_string()
+                );
+            }
+        },
 
         Command::Daemon { socket } => {
             let socket_path = socket.unwrap_or_else(resolve_socket);

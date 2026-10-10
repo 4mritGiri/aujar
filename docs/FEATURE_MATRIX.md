@@ -46,7 +46,7 @@ or screen capture, so each feature lists its backend per session type.
 | Workspace manager | Workspaces | `modules/workspace` | 🚧 stub (not in workspace) | 📅 | 📅 | 📅 | ⚠️ | Save/restore app layouts |
 | Always on top | Always On Top | `modules/window` | 📅 | 📅 (`_NET_WM_STATE_ABOVE`) | ⚠️ (Hyprland pin / Sway sticky) | 📅 (KWin) | ⚠️ (extension) | ❌ on generic Wayland |
 | Clipboard history | Advanced Paste / Win+V | `modules/clipboard` | 🚧 in-memory store | 📅 | 📅 (`wlr-data-control`) | 📅 (`ext-data-control`) | ⚠️ (no data-control; needs extension) | Sensitive-app exclusion planned |
-| Color picker | Color Picker | `modules/color` | 🚧 stub | 📅 | 📅 (portal `PickColor`) | 📅 (portal) | 📅 (portal) | `xdg-desktop-portal` Screenshot |
+| Color picker | Color Picker | `modules/color` | 🚧 CLI + IPC: portal screen pick, hex/rgb/hsl conversion; overlay UI and history 📅 | 🚧 (portal) | 🚧 (portal) | 🚧 (portal) | 🚧 (portal) | `xdg-desktop-portal` Screenshot |
 | Screen ruler | Screen Ruler | `modules/ruler` | 🚧 stub | 📅 | 📅 (portal screencast) | 📅 | 📅 | Requires screen-capture permission |
 | Global hotkeys | (all modules) | `aujar-hotkeys` | 🚧 native via portal (daemon, unverified on real desktops) + manual binding fallback ([HOTKEYS](HOTKEYS.md)) | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
 | Quick preview | Peek | — | 📅 | 📅 | 📅 | 📅 | 📅 | |
@@ -60,7 +60,7 @@ or screen capture, so each feature lists its backend per session type.
 
 | Front-end | Status | Notes |
 |---|---|---|
-| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `launcher`, `events`, `rename`, `daemon` |
+| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `launcher`, `events`, `color`, `rename`, `daemon` |
 | Settings app | 📅 | v0.4+; GPUI (proposed, [ADR 0002](adr/0002-ui-framework-gpui.md)) |
 | Launcher UI | 🚧 spike in `apps/aujar-ui` (`gpui-pre` snapshot of Zed `main`): window + daemon events + typing, selection, launch (no IME yet) | See [UI_SPIKE](UI_SPIKE.md), [UI_UX](UI_UX.md) |
 | Tray / status indicator | 📅 | StatusNotifierItem |

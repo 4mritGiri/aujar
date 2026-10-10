@@ -9,6 +9,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 aujar-config = { path = "../aujar-config" }
 aujar-core = { path = "../aujar-core" }
+aujar-color = { path = "../../modules/color" }
 aujar-hotkeys = { path = "../aujar-hotkeys" }
 aujar-ipc = { path = "../aujar-ipc" }
 aujar-launcher = { path = "../../modules/launcher" }

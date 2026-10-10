@@ -2,6 +2,11 @@
 name = "aujar-color"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+# Portal bindings (same pinned version as aujar-hotkeys).
+ashpd = { version = "=0.13.13", features = ["screenshot"] }
+tokio.workspace = true

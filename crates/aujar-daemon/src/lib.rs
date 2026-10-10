@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use aujar_core::{Capability, Health, WindowId};
 use aujar_hotkeys::{HotkeyEvent, ShortcutSpec};
 use aujar_ipc::{
-    Envelope, Event, ExecuteResponse, LauncherCommand, ModuleInfo, ModulesResponse,
+    ColorResponse, Envelope, Event, ExecuteResponse, LauncherCommand, ModuleInfo, ModulesResponse,
     PROTOCOL_VERSION, RenameResponse, Request, Response, SearchHit, SearchResponse, encode_line,
 };
 use aujar_launcher::{LaunchSpec, Launcher};
@@ -170,7 +170,23 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
     run_with(socket_path, Options::default()).await
 }
 
+/// Send `tracing` output to stderr (journald when run by systemd). `RUST_LOG` overrides the
+/// default `info` level. Harmless if a subscriber is already installed (tests).
+fn init_logging() {
+    use std::io::IsTerminal;
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(std::io::stderr().is_terminal())
+        .try_init();
+}
+
 pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result<()> {
+    init_logging();
+
     let socket_path = socket_path.as_ref();
 
     // Fail before touching the socket if the policy is invalid.
@@ -437,6 +453,15 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
                 })
                 .collect(),
         }),
+
+        Request::PickColor => match aujar_color::pick().await {
+            Ok(color) => Response::Color(ColorResponse {
+                hex: color.to_hex(),
+                rgb: color.to_rgb_string(),
+                hsl: color.to_hsl_string(),
+            }),
+            Err(error) => Response::Error(format!("{error:#}")),
+        },
 
         Request::Subscribe => {
             Response::Error("Subscribe is handled by the connection layer".into())
