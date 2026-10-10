@@ -17,6 +17,15 @@ affiliated with Microsoft.
 *Aujar* (औजार) means "tool" in Nepali and Hindi, a nod to what the project is: a toolkit of
 small, sharp desktop utilities.
 
+## Install
+
+See [docs/PACKAGING.md](docs/PACKAGING.md): `.deb`, `.rpm`, tarball and PKGBUILD, or
+`scripts/install-local.sh` to build and install for your user. Then:
+
+```bash
+systemctl --user enable --now aujar
+```
+
 ## Documentation
 
 | | |

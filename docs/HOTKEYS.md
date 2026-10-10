@@ -1,5 +1,27 @@
 # Keyboard Shortcuts
 
+## Native shortcut (automatic)
+
+The daemon asks your desktop for a global shortcut through the `GlobalShortcuts` portal,
+suggesting **Ctrl+Alt+Space**. On first start your desktop may show a dialog (or a new entry in
+its shortcut settings) where you accept or change the key. The portal is provided by KDE Plasma,
+GNOME 48 or newer, and Hyprland's portal backend; it is not provided by `xdg-desktop-portal-wlr`
+(Sway) or on X11-only setups, and older GNOME versions lack it. Check yours.
+
+If the portal is missing, the daemon logs `global shortcuts unavailable` and keeps working: use
+the manual binding below.
+
+GNOME and some other backends identify the app by its desktop file. Install it once for source
+builds (packages do this for you):
+
+```bash
+install -Dm644 packaging/desktop/dev.aujar.Aujar.desktop ~/.local/share/applications/dev.aujar.Aujar.desktop
+```
+
+Disable native shortcuts by denying `global_hotkeys` in the [policy](POLICY.md).
+
+## Manual binding (works everywhere)
+
 Linux has no universal way for an app to grab a global hotkey, especially on Wayland. Until Aujar
 implements the portal `GlobalShortcuts` API and X11 key grabs natively, bind **your desktop's own
 shortcut** to a command. It works on every compositor, because the compositor owns the key.

@@ -19,7 +19,10 @@ async fn launcher_commands_reach_subscribers() {
 
     let server = tokio::spawn({
         let socket = socket.clone();
-        async move { aujar_daemon::run(socket).await }
+        async move {
+            // Never trigger the desktop's shortcut dialog from tests.
+            aujar_daemon::run_with(socket, aujar_daemon::Options { hotkeys: false }).await
+        }
     });
 
     for _ in 0..100 {
@@ -57,7 +60,7 @@ async fn launcher_command_without_subscribers_reports_zero() {
 
     let server = tokio::spawn({
         let socket = socket.clone();
-        async move { aujar_daemon::run(socket).await }
+        async move { aujar_daemon::run_with(socket, aujar_daemon::Options { hotkeys: false }).await }
     });
 
     for _ in 0..100 {

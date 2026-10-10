@@ -1,21 +1,20 @@
 [Unit]
 Description=Aujar Desktop Productivity Platform
+Documentation=https://github.com/4mritGiri/aujar
+PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
-# Hardening (user unit)
-NoNewPrivileges=true
-ProtectKernelTunables=true
-ProtectControlGroups=true
-LockPersonality=true
 Type=simple
-ExecStart=%h/.local/bin/aujar daemon
+# Packaged path. Source installs use scripts/install-local.sh, which rewrites this line.
+ExecStart=/usr/bin/aujar daemon
 Restart=on-failure
 RestartSec=2
 Environment=RUST_LOG=info
-# Launched apps need the graphical session environment (DISPLAY, WAYLAND_DISPLAY, ...).
-# Run `systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP`
-# from your session startup, or start the daemon from the session itself.
+# Light hardening that works in unprivileged user units (mount-namespace options such as
+# ProtectSystem= need user namespaces, which some distros restrict).
+NoNewPrivileges=true
+LockPersonality=true
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

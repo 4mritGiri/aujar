@@ -22,7 +22,7 @@
 - [ ] File provider
 - [x] Calculator provider
 - [ ] Command provider
-- [x] Keyboard shortcut integration (interim: DE binding to `aujar launcher toggle`; native hotkeys 📅)
+- [x] Keyboard shortcut integration (native via `GlobalShortcuts` portal; manual fallback `aujar launcher toggle`)
 - [x] Search ranking (tiered match scoring)
 - [ ] Native desktop UI
 

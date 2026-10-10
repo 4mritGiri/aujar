@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- Packaging: `.deb` (cargo-deb), `.rpm` (cargo-generate-rpm), tarball for x86_64 and aarch64, Arch PKGBUILD, per-user `install-local.sh`; CI builds and installs the deb on every PR; tag-triggered release workflow.
+- Native global hotkey (`aujar-hotkeys`): registers Ctrl+Alt+Space through the `GlobalShortcuts` portal and toggles the launcher; falls back with a log message when the portal is missing. `Options::hotkeys` (tests disable it); policy `global_hotkeys` disables it.
 - GPUI spike: keyboard-driven launcher (type, Up/Down, Enter to launch, Esc to close).
 - GPUI spike (`apps/aujar-ui`, pinned `gpui-pre =0.3.3` snapshot, separate workspace): toggles a window from daemon events and shows search results. See docs/UI_SPIKE.md.
 - IPC event stream: `Subscribe` connections, `Launcher` show/hide/toggle broadcast, `Shutdown` event; `aujar launcher` and `aujar events`.
@@ -22,6 +24,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Daemon handles `Request::Modules`.
 
 ### Changed
+- systemd unit now targets `/usr/bin/aujar` and `graphical-session.target`; removed mount-namespace hardening that fails in unprivileged user units.
 - `Capability` now has a single definition in `aujar-core` (re-exported by `aujar-runtime`).
 - Daemon rejects IPC clients whose uid is neither the daemon's owner nor root; 5 s request read timeout.
 - Default socket path uses `XDG_RUNTIME_DIR` instead of a hard-coded uid.

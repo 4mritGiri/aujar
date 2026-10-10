@@ -60,3 +60,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  package:
+    name: package (deb + rpm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install packaging tools
+        run: cargo install cargo-deb cargo-generate-rpm --locked
+      - run: cargo build --release -p aujar-launcher-app
+      - run: cargo deb -p aujar-launcher-app --no-build
+      - run: cargo generate-rpm -p apps/aujar-launcher
+      - name: Inspect packages
+        run: |
+          sudo apt-get install -y rpm
+          dpkg-deb --info target/debian/*.deb
+          dpkg-deb --contents target/debian/*.deb
+          rpm -qpi target/generate-rpm/*.rpm
+          rpm -qpl target/generate-rpm/*.rpm
+      - name: Install the deb
+        run: |
+          sudo apt-get install -y ./target/debian/*.deb
+          aujar --help
+          test -f /usr/lib/systemd/user/aujar.service
+          test -f /usr/share/applications/dev.aujar.Aujar.desktop
+

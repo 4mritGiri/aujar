@@ -1,19 +1,15 @@
 use anyhow::{Context, Result};
 use aujar_core::{Capability, Health, WindowId};
+use aujar_hotkeys::{HotkeyEvent, ShortcutSpec};
 use aujar_ipc::{
-    Envelope, Event, ExecuteResponse, ModuleInfo, ModulesResponse, PROTOCOL_VERSION, RenameResponse, Request,
-    Response, SearchHit, SearchResponse, encode_line,
+    Envelope, Event, ExecuteResponse, LauncherCommand, ModuleInfo, ModulesResponse,
+    PROTOCOL_VERSION, RenameResponse, Request, Response, SearchHit, SearchResponse, encode_line,
 };
 use aujar_launcher::{LaunchSpec, Launcher};
 use aujar_platform::detect_session;
 use aujar_rename::{RenameOptions, RenamePlanner};
 use aujar_runtime::{ModuleContext, ModuleRegistry};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::{
-    io::Take,
-    net::unix::{OwnedReadHalf, OwnedWriteHalf},
-    sync::broadcast,
-};
 use std::{
     collections::HashSet,
     os::unix::{
@@ -24,6 +20,11 @@ use std::{
     process::Stdio,
     sync::Arc,
     time::Duration,
+};
+use tokio::{
+    io::Take,
+    net::unix::{OwnedReadHalf, OwnedWriteHalf},
+    sync::broadcast,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -94,6 +95,42 @@ fn load_denied_capabilities() -> Result<HashSet<Capability>> {
         .collect()
 }
 
+const TOGGLE_LAUNCHER_SHORTCUT: &str = "toggle-launcher";
+
+/// Ask the desktop portal for global shortcuts and turn presses into launcher events.
+fn start_hotkeys(shared: Arc<Shared>) {
+    if shared.denied.contains(&Capability::GlobalHotkeys) {
+        tracing::info!("global hotkeys are disabled by policy");
+
+        return;
+    }
+
+    let mut events = aujar_hotkeys::start(vec![ShortcutSpec {
+        id: TOGGLE_LAUNCHER_SHORTCUT,
+        description: "Show or hide the Aujar launcher",
+        preferred_trigger: "CTRL+ALT+space",
+    }]);
+
+    tokio::spawn(async move {
+        while let Some(event) = events.recv().await {
+            match event {
+                HotkeyEvent::Activated(id) if id == TOGGLE_LAUNCHER_SHORTCUT => {
+                    let _ = shared.events.send(Event::Launcher(LauncherCommand::Toggle));
+                }
+                HotkeyEvent::Activated(id) => {
+                    tracing::debug!(%id, "unknown global shortcut activated");
+                }
+                HotkeyEvent::Unavailable(reason) => {
+                    tracing::warn!(
+                        %reason,
+                        "global shortcuts unavailable; bind `aujar launcher toggle` in your desktop settings instead"
+                    );
+                }
+            }
+        }
+    });
+}
+
 fn spawn_detached(spec: &LaunchSpec) -> std::io::Result<Option<u32>> {
     let mut command = std::process::Command::new(&spec.program);
 
@@ -116,7 +153,24 @@ fn spawn_detached(spec: &LaunchSpec) -> std::io::Result<Option<u32>> {
     Ok(pid)
 }
 
+/// Daemon behaviour switches.
+#[derive(Debug, Clone, Copy)]
+pub struct Options {
+    /// Register native global shortcuts through the desktop portal.
+    pub hotkeys: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self { hotkeys: true }
+    }
+}
+
 pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
+    run_with(socket_path, Options::default()).await
+}
+
+pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result<()> {
     let socket_path = socket_path.as_ref();
 
     // Fail before touching the socket if the policy is invalid.
@@ -160,6 +214,10 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
         events: broadcast::channel(EVENT_BUFFER).0,
         subscribers: AtomicUsize::new(0),
     });
+
+    if options.hotkeys {
+        start_hotkeys(Arc::clone(&shared));
+    }
 
     run_server(listener, Arc::clone(&shared)).await?;
 
@@ -315,7 +373,9 @@ async fn stream_events(
     // Subscribe before acknowledging so no event can slip in between.
     let mut events = shared.events.subscribe();
 
-    writer.write_all(&encode_line(Response::Subscribed)?).await?;
+    writer
+        .write_all(&encode_line(Response::Subscribed)?)
+        .await?;
 
     let mut ignored = String::new();
 
@@ -398,7 +458,9 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
                         pid,
                     })
                 }
-                Err(error) => Response::Error(format!("failed to launch `{}`: {error}", spec.title)),
+                Err(error) => {
+                    Response::Error(format!("failed to launch `{}`: {error}", spec.title))
+                }
             },
             Err(message) => Response::Error(message),
         },

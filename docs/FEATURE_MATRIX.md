@@ -48,7 +48,7 @@ or screen capture, so each feature lists its backend per session type.
 | Clipboard history | Advanced Paste / Win+V | `modules/clipboard` | 🚧 in-memory store | 📅 | 📅 (`wlr-data-control`) | 📅 (`ext-data-control`) | ⚠️ (no data-control; needs extension) | Sensitive-app exclusion planned |
 | Color picker | Color Picker | `modules/color` | 🚧 stub | 📅 | 📅 (portal `PickColor`) | 📅 (portal) | 📅 (portal) | `xdg-desktop-portal` Screenshot |
 | Screen ruler | Screen Ruler | `modules/ruler` | 🚧 stub | 📅 | 📅 (portal screencast) | 📅 | 📅 | Requires screen-capture permission |
-| Global hotkeys | (all modules) | `aujar-runtime` | 🚧 interim: bind `aujar launcher toggle` in your DE ([HOTKEYS](HOTKEYS.md)); native 📅 | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
+| Global hotkeys | (all modules) | `aujar-hotkeys` | 🚧 native via portal (daemon, unverified on real desktops) + manual binding fallback ([HOTKEYS](HOTKEYS.md)) | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
 | Quick preview | Peek | — | 📅 | 📅 | 📅 | 📅 | 📅 | |
 | Image utilities | Image Resizer | — | 📅 | 📅 | 📅 | 📅 | 📅 | Pure Rust, no session dependency |
 | Keyboard remapping | Keyboard Manager | — | ⚠️ | ⚠️ (evdev/uinput, needs privileges) | ⚠️ | ⚠️ | ⚠️ | Privileged helper; design under review |
@@ -74,7 +74,8 @@ or screen capture, so each feature lists its backend per session type.
 | CI: fmt, clippy, tests (Ubuntu / Fedora / Arch), MSRV 1.85, `cargo-deny` | ✅ configured | See `.github/workflows/ci.yml` |
 | Release tarball + checksums on tag | ✅ configured | `.github/workflows/release.yml` |
 | systemd user unit, `.desktop` entry | ✅ | `packaging/` |
-| `.deb`, `.rpm`, Flatpak, AppImage, AUR | 📅 | See [PACKAGING](PACKAGING.md) |
+| `.deb`, `.rpm`, tarball, Arch PKGBUILD | ✅ configured (CI builds them; unverified until the first run) | See [PACKAGING](PACKAGING.md) |
+| Flatpak, AppImage, Nix | 📅 | Need the UI first |
 | Signed releases / SBOM / provenance | 📅 | v1.0 |
 | Integration tests (daemon + CLI) | 📅 | Only unit tests today (rename) |
 | Fuzzing (IPC parser, rename planner) | 📅 | |
