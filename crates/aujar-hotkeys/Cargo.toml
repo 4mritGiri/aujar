@@ -1,0 +1,14 @@
+[package]
+name = "aujar-hotkeys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+# Portal bindings. The default `tokio` feature matches the daemon's runtime.
+ashpd = { version = "=0.13.13", features = ["global_shortcuts"] }
+futures-util = "0.3"
+tokio.workspace = true
+tracing.workspace = true
