@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- `aujar shortcut install|remove`: adds/removes a GNOME custom shortcut (Ctrl+Alt+Space) running `aujar launcher toggle` via `gsettings`; works where the portal route fails (GNOME 50: "app id required"). Docs record the portal findings.
+- Color picker gives up after 120 s instead of waiting forever; `aujar doctor` explains the "app id required" portal failure; troubleshooting steps for it.
+- Clearer version-skew handling: the daemon answers unparseable requests with an error, and the client explains an empty reply; `install-local.sh` now restarts the daemon.
 - `aujar doctor` and IPC `Status`: reports daemon reachability, session, subscribed UIs and global-shortcut state (bound trigger or the reason it is unavailable); daemon logs each shortcut press; troubleshooting guide.
 - UI: Enter on a calculation result copies the answer to the clipboard.
 - Color picker: `aujar color pick` (desktop portal `PickColor`, via the daemon, gated by `screen_capture`) and `aujar color convert <hex>`; hex/RGB/HSL conversion in `aujar-color` with tests.

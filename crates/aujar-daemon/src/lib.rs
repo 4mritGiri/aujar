@@ -380,7 +380,18 @@ async fn handle_client(stream: UnixStream, shared: Arc<Shared>) -> Result<()> {
         .await
         .context("timed out reading IPC request")??;
 
-    let envelope: Envelope<Request> = serde_json::from_str(&line)?;
+    let envelope: Envelope<Request> = match serde_json::from_str(&line) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            // Most likely a newer client talking to this daemon: say so instead of hanging up.
+            let reply = Response::Error(format!(
+                "unrecognised request (is the daemon older than the client?): {error}"
+            ));
+            write_half.write_all(&encode_line(reply)?).await?;
+
+            return Ok(());
+        }
+    };
 
     if envelope.version == PROTOCOL_VERSION && matches!(envelope.payload, Request::Subscribe) {
         return stream_events(reader, write_half, &shared).await;

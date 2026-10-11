@@ -7,6 +7,11 @@ cd "$(dirname "$0")/.."
 cargo build --release -p aujar-launcher-app
 
 install -Dm755 target/release/aujar "$HOME/.local/bin/aujar"
+
+# The launcher UI is a separate GPUI build (it is excluded from the main workspace).
+# Without it running, the shortcut has nothing to show ("0 subscribers").
+(cd apps/aujar-ui && cargo build --release)
+install -Dm755 apps/aujar-ui/target/release/aujar-ui "$HOME/.local/bin/aujar-ui"
 install -Dm644 packaging/desktop/dev.aujar.Aujar.desktop \
     "$HOME/.local/share/applications/dev.aujar.Aujar.desktop"
 
@@ -14,8 +19,19 @@ mkdir -p "$HOME/.config/systemd/user"
 sed 's#^ExecStart=.*#ExecStart=%h/.local/bin/aujar daemon#' packaging/systemd/aujar.service \
     > "$HOME/.config/systemd/user/aujar.service"
 
+sed 's#^ExecStart=.*#ExecStart=%h/.local/bin/aujar-ui#' packaging/systemd/aujar-ui.service \
+    > "$HOME/.config/systemd/user/aujar-ui.service"
+
+# Shell completions (bash picks these up automatically; zsh needs the dir on fpath).
+"$HOME/.local/bin/aujar" completions bash | install -Dm644 /dev/stdin "$HOME/.local/share/bash-completion/completions/aujar"
+"$HOME/.local/bin/aujar" completions zsh  | install -Dm644 /dev/stdin "$HOME/.local/share/zsh/site-functions/_aujar"
+"$HOME/.local/bin/aujar" completions fish | install -Dm644 /dev/stdin "$HOME/.config/fish/completions/aujar.fish"
+
 systemctl --user daemon-reload
-systemctl --user enable --now aujar.service
+systemctl --user enable aujar.service aujar-ui.service
+# `restart` (not `enable --now`): a daemon that is already running keeps its old code otherwise.
+systemctl --user restart aujar.service aujar-ui.service
 
 echo "Installed to ~/.local/bin/aujar (make sure ~/.local/bin is on your PATH)."
-echo "Daemon status: systemctl --user status aujar"
+echo "Daemon status: systemctl --user status aujar aujar-ui"
+echo "zsh completion: add  fpath=(~/.local/share/zsh/site-functions \$fpath)  before compinit / oh-my-zsh in ~/.zshrc"

@@ -206,14 +206,25 @@ async fn open(socket: impl AsRef<Path>, request: Request) -> Result<UnixStream> 
     Ok(stream)
 }
 
+async fn read_reply(reader: &mut BufReader<UnixStream>) -> Result<String> {
+    let mut line = String::new();
+
+    if reader.read_line(&mut line).await? == 0 {
+        anyhow::bail!(
+            "the daemon closed the connection without answering; it may be an older version \
+             (try `systemctl --user restart aujar`)"
+        );
+    }
+
+    Ok(line)
+}
+
 /// Send one request and wait for its single response.
 pub async fn send(socket: impl AsRef<Path>, request: Request) -> Result<Response> {
     let stream = open(socket, request).await?;
 
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-
-    reader.read_line(&mut line).await?;
+    let line = read_reply(&mut reader).await?;
 
     decode_line(&line)
 }
@@ -241,9 +252,7 @@ pub async fn subscribe(socket: impl AsRef<Path>) -> Result<EventStream> {
     let stream = open(socket, Request::Subscribe).await?;
 
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-
-    reader.read_line(&mut line).await?;
+    let line = read_reply(&mut reader).await?;
 
     match decode_line::<Response>(&line)? {
         Response::Subscribed => Ok(EventStream { reader }),

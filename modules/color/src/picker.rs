@@ -1,6 +1,10 @@
 use crate::Rgb;
 use anyhow::{Context, Result};
 use ashpd::desktop::Color;
+use std::time::Duration;
+
+/// How long to wait for the user to pick (or cancel) before giving up.
+const PICK_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Let the user pick a pixel on screen through the desktop's color picker
 /// (`org.freedesktop.portal.Screenshot.PickColor`). Resolves when the user picks
@@ -15,7 +19,13 @@ pub async fn pick() -> Result<Rgb> {
             .build()
             .context("failed to start a runtime for the color picker")?;
 
-        runtime.block_on(pick_inner())
+        runtime.block_on(async {
+            tokio::time::timeout(PICK_TIMEOUT, pick_inner())
+                .await
+                .context(
+                    "timed out waiting for a color to be picked (did the picker overlay appear?)",
+                )?
+        })
     })
     .await
     .context("the color picker task failed")?

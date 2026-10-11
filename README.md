@@ -79,7 +79,8 @@ cargo run -p aujar-launcher-app -- search fire
 cargo run -p aujar-launcher-app -- search '2*(3+4)'
 ```
 
-Bind your desktop shortcut to `aujar launcher toggle` ([guide](docs/HOTKEYS.md)); watch events with
+On GNOME, `aujar shortcut install` adds Ctrl+Alt+Space for the launcher; elsewhere bind your
+desktop shortcut to `aujar launcher toggle` ([guide](docs/HOTKEYS.md)). Watch events with
 `aujar events`.
 
 Pick a color from the screen, or convert one:

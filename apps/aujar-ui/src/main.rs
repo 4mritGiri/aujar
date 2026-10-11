@@ -395,7 +395,11 @@ fn main() {
 
     spawn_bridge(socket_path(), message_tx, request_rx);
 
-    application().run(move |cx: &mut App| {
+    // Closing the launcher window (Esc / Enter) must not end the process: the UI has to
+    // stay alive to receive the next toggle. By default GPUI quits with the last window.
+    application()
+        .with_quit_mode(gpui::QuitMode::Explicit)
+        .run(move |cx: &mut App| {
         cx.spawn(async move |cx| {
             let mut window: Option<WindowHandle<LauncherView>> = None;
 

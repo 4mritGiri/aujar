@@ -40,6 +40,63 @@ Work through these in order.
    opened window keyboard focus (focus-stealing prevention). Click the window once and type; report
    your compositor and version if this happens every time.
 
+## `hotkey: unavailable: ... An app id is required`
+
+**Short answer (GNOME):** run `aujar shortcut install`. It uses GNOME's own shortcut settings and
+needs no app id. The rest of this section explains the portal failure and what we tried.
+
+
+GNOME (and some other desktops) only bind a global shortcut for a program they can *identify*.
+A daemon started by systemd is anonymous unless it is identified in one of two ways.
+
+**1. Make the desktop file visible to the portal.** The daemon registers the id `dev.aujar.Aujar`;
+the log line `App info not found for 'dev.aujar.Aujar'` means the portal could not find
+`dev.aujar.Aujar.desktop`. Check:
+
+```bash
+ls -l ~/.local/share/applications/dev.aujar.Aujar.desktop
+gtk-launch dev.aujar.Aujar            # runs `aujar health`; "no such application" = not found
+```
+
+If the file exists but is not found, the portal service probably started before the folder or file
+existed: log out and back in (or reboot), then `systemctl --user restart aujar`.
+
+**2. Name the service after the app id** (tried on GNOME 50.1: no effect) (the convention portals understand for systemd-launched
+apps: `app-<application-id>.service`). Quick experiment without touching the repo:
+
+```bash
+systemctl --user stop aujar
+cp ~/.config/systemd/user/aujar.service ~/.config/systemd/user/app-dev.aujar.Aujar.service
+systemctl --user daemon-reload
+systemctl --user start app-dev.aujar.Aujar.service
+sleep 2; aujar doctor                  # hotkey: bound: ... ?
+```
+
+Undo with `systemctl --user stop app-dev.aujar.Aujar.service`, delete that file, and
+`systemctl --user start aujar`. If it works, the packaged unit will be renamed accordingly.
+
+**Workaround that works:** `aujar shortcut install`, or bind `aujar launcher toggle` manually with
+the absolute path `aujar doctor` prints. Neither needs the portal.
+
+## `aujar color pick` seems to hang
+
+It waits for you: the desktop shows a picker overlay (crosshair); click a pixel to choose it, or
+press Esc to cancel. If nothing appears it now gives up after 120 seconds with an error. If the
+overlay never shows, check `journalctl --user -u aujar` for portal errors and tell us your desktop
+version.
+
+## `EOF while parsing a value` / "daemon closed the connection" / "daemon is older than this client"
+
+The running daemon is an older build than the `aujar` command you just ran: it does not know the
+newer request and hangs up. Restart it:
+
+```bash
+systemctl --user restart aujar
+```
+
+`scripts/install-local.sh` does this for you. (Newer daemons answer with an explicit
+"unrecognised request" error instead.)
+
 ## `aujar doctor` says the daemon is not reachable
 
 ```bash

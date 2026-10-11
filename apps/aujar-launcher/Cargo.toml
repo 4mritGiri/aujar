@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 aujar-core = { path = "../../crates/aujar-core" }
 aujar-color = { path = "../../modules/color" }
 aujar-daemon = { path = "../../crates/aujar-daemon" }

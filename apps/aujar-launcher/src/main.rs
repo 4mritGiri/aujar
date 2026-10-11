@@ -4,8 +4,11 @@ use aujar_ipc::{
     Event, ExecuteRequest, LauncherCommand, RenameRequest, Request, Response, SearchRequest, send,
     subscribe,
 };
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use std::path::PathBuf;
+
+mod shortcut;
 
 const DEFAULT_SOCKET_NAME: &str = "aujar.sock";
 const FALLBACK_SOCKET: &str = "/tmp/aujar.sock";
@@ -36,6 +39,19 @@ impl From<LauncherAction> for LauncherCommand {
             LauncherAction::Toggle => Self::Toggle,
         }
     }
+}
+
+#[derive(Debug, Subcommand)]
+enum ShortcutAction {
+    /// Add a GNOME custom shortcut that runs `aujar launcher toggle`.
+    Install {
+        /// Key combination in GNOME accelerator syntax.
+        #[arg(long, default_value = shortcut::DEFAULT_KEYS)]
+        keys: String,
+    },
+
+    /// Remove the Aujar shortcut again.
+    Remove,
 }
 
 #[derive(Debug, Subcommand)]
@@ -89,6 +105,12 @@ enum Command {
     /// Diagnose the daemon, UI connection and global shortcut.
     Doctor,
 
+    /// Manage the keyboard shortcut that shows the launcher (GNOME).
+    Shortcut {
+        #[command(subcommand)]
+        action: ShortcutAction,
+    },
+
     /// Color tools.
     Color {
         #[command(subcommand)]
@@ -97,6 +119,12 @@ enum Command {
 
     /// Print daemon events as they happen (debugging and scripting).
     Events,
+
+    /// Print a shell completion script (bash, zsh, fish, elvish, powershell).
+    Completions {
+        /// Shell to generate completions for.
+        shell: Shell,
+    },
 
     /// Run the Aujar daemon.
     Daemon {
@@ -238,7 +266,16 @@ async fn main() -> Result<()> {
             }
         }
 
+        Command::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "aujar", &mut std::io::stdout());
+        }
+
         Command::Doctor => doctor().await?,
+
+        Command::Shortcut { action } => match action {
+            ShortcutAction::Install { keys } => shortcut::install(&keys)?,
+            ShortcutAction::Remove => shortcut::remove()?,
+        },
 
         Command::Color { action } => match action {
             ColorAction::Pick => match send(&resolve_socket(), Request::PickColor).await? {
@@ -337,14 +374,20 @@ async fn doctor() -> anyhow::Result<()> {
         );
     }
 
+    if status.hotkeys.contains("app id") {
+        println!(
+            "! The desktop could not identify Aujar (\"app id required\"). See docs/TROUBLESHOOTING.md."
+        );
+    }
+
     if !status.hotkeys.starts_with("bound") {
         let exe = std::env::current_exe()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|_| "aujar".to_owned());
 
-        println!(
-            "! No native shortcut is active. Bind this command in your desktop's keyboard settings:"
-        );
+        println!("! The native (portal) shortcut is not active. On GNOME, run:");
+        println!("    aujar shortcut install");
+        println!("  On other desktops, bind this command in the keyboard settings:");
         println!("    {exe} launcher toggle");
     }
 

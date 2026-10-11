@@ -1,6 +1,23 @@
 # Keyboard Shortcuts
 
-## Native shortcut (automatic)
+## GNOME: one command
+
+```bash
+aujar shortcut install            # Ctrl+Alt+Space; or: --keys '<Super>period'
+aujar shortcut remove
+```
+
+This adds a GNOME custom shortcut running `aujar launcher toggle` through GNOME's own settings.
+It needs no portal and no app id, so it works where the native route below does not. Run it from
+the **installed** `aujar` (not `cargo run`), because the shortcut stores that binary's path. The
+launcher UI must be running to show anything.
+
+## Native shortcut (automatic, experimental)
+
+> Status: on GNOME 50 the daemon's request fails with `An app id is required`: GNOME only binds
+> shortcuts for programs it can identify, and registering an unpackaged daemon was refused in
+> testing. Use `aujar shortcut install` above. The native route may work on KDE or once Aujar is
+> packaged as a Flatpak.
 
 The daemon asks your desktop for a global shortcut through the `GlobalShortcuts` portal,
 suggesting **Ctrl+Alt+Space**. On first start your desktop may show a dialog (or a new entry in

@@ -1,0 +1,17 @@
+[Unit]
+Description=Aujar launcher UI
+Documentation=https://github.com/4mritGiri/aujar
+PartOf=graphical-session.target
+After=graphical-session.target aujar.service
+Wants=aujar.service
+
+[Service]
+Type=simple
+# Packaged path. Source installs use scripts/install-local.sh, which rewrites this line.
+ExecStart=/usr/bin/aujar-ui
+# `always`, not `on-failure`: if the UI ever exits cleanly it must come back for the next shortcut.
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
