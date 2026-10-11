@@ -15,6 +15,8 @@ each time it opens, and the daemon reloads its plugins when the file changes (no
 | `fire` | Applications (with icons), then files and folders |
 | `2*(3+4)`, `2^10` | Calculator answer card. Enter copies it |
 | `10 km to mi`, `100 f to c`, `2 gb to mb` | Unit conversion (length, mass, volume, time, data, speed, area, temperature) |
+| `kind:pdf`, `kind:pdf invoice`, `kind:image`, `kind:folder`, `ext:rs` | Filter files by type (newest first when you type no name). Also `document`, `audio`, `video`, `archive`, `code` |
+| `kind:recent` | Your file history, from the desktop's recently-used list (the empty launcher shows it as "Recent Files") |
 | `report` | Files and folders by name (Ctrl+Enter shows the file in its folder, Ctrl+C copies the path) |
 | `lock`, `sleep`, `restart`, `shut down`, `log out` | System commands (restart, shut down and log out ask for a second Enter) |
 | `> ls -la` | Run a shell command (off by default, enable in Settings -> Search plugins) |
@@ -34,7 +36,16 @@ Clipboard history notes: on X11 (`xclip`) and wlroots/KDE Wayland (`wl-clipboard
 watcher records every copy. GNOME's Wayland session forbids that, so there the history only
 gains what is on the clipboard each time you open the launcher.
 
-Keys: Left/Right/Home/End/Delete edit the query (Ctrl+Left/Right jump words, Ctrl+A/E home/end);
+PDFs get a first-page thumbnail in the preview pane (needs `pdftoppm` from poppler-utils; cached in
+`~/.cache/aujar/thumbs`).
+
+Editing the query: Shift+Left/Right/Home/End select; Ctrl+Left/Right jump words and
+Ctrl+Shift+Left/Right select words; Ctrl+A selects all; Ctrl+C/X/V copy, cut, paste (Ctrl+C with
+nothing selected copies the selected result); Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y undo and redo.
+With the mouse: click to place the caret, drag to select, double-click a word, triple-click
+everything. Ctrl+B searches the web for the query, Ctrl+, opens settings, Esc clears then closes.
+
+Keys: Left/Right/Home/End/Delete edit the query (Ctrl+E end);
 Up/Down/Tab/Shift+Tab or Ctrl+N/P/J/K move; Enter runs; Alt+1..9 runs that row;
 Ctrl+U clears; Ctrl+W deletes a word; Ctrl+V pastes; Esc clears, then closes.
 

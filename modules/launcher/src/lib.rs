@@ -5,6 +5,7 @@ mod files;
 mod icons;
 mod model;
 mod ranking;
+mod recent;
 mod shell;
 mod system;
 mod units;

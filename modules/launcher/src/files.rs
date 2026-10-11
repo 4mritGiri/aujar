@@ -1,14 +1,22 @@
 //! File and folder search over a background-built in-memory name index.
 //!
+//! Besides names, the index knows modification times and the desktop's "recently used" list,
+//! so these work: `report`, `kind:pdf`, `kind:pdf invoice`, `kind:image`, `ext:rs`,
+//! `kind:folder`, and `kind:recent` (your file history).
+//!
 //! Only paths that are in the index can be opened, so a result id can never be forged
 //! into "open an arbitrary path".
 
-use crate::model::{LaunchSpec, Provider, ResultKind, SearchResult};
+use crate::{
+    model::{LaunchSpec, Provider, ResultKind, SearchResult},
+    recent,
+};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
 
 /// Hard cap so a huge home directory cannot exhaust memory.
@@ -35,6 +43,105 @@ struct Entry {
     name: String,
     name_lower: String,
     is_dir: bool,
+    /// Last modification, Unix seconds (0 when unknown).
+    modified: u64,
+    /// Last use according to the desktop's recent-files list, Unix seconds.
+    recent: Option<u64>,
+}
+
+impl Entry {
+    fn extension(&self) -> &str {
+        if self.is_dir {
+            return "";
+        }
+
+        self.name_lower.rsplit_once('.').map_or("", |(_, ext)| ext)
+    }
+
+    /// Newest of "modified" and "recently used": what "latest" means to a person.
+    fn activity(&self) -> u64 {
+        self.modified.max(self.recent.unwrap_or(0))
+    }
+}
+
+/// What a `kind:` / `ext:` token asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Filter {
+    Folder,
+    Recent,
+    Extensions(Vec<String>),
+}
+
+fn extensions(list: &[&str]) -> Filter {
+    Filter::Extensions(list.iter().map(|ext| (*ext).to_owned()).collect())
+}
+
+fn kind_filter(name: &str) -> Filter {
+    match name {
+        "folder" | "folders" | "directory" | "dir" => Filter::Folder,
+        "recent" | "history" => Filter::Recent,
+        "pdf" => extensions(&["pdf"]),
+        "image" | "images" | "photo" | "picture" => {
+            extensions(&["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "heic"])
+        }
+        "document" | "documents" | "doc" => extensions(&[
+            "pdf", "doc", "docx", "odt", "txt", "md", "rtf", "ppt", "pptx", "odp", "xls", "xlsx",
+            "ods", "csv",
+        ]),
+        "audio" | "music" => extensions(&["mp3", "flac", "wav", "ogg", "m4a", "opus"]),
+        "video" | "movie" => extensions(&["mp4", "mkv", "webm", "mov", "avi"]),
+        "archive" | "zip" => extensions(&["zip", "tar", "gz", "xz", "7z", "rar", "bz2", "zst"]),
+        "code" | "source" => extensions(&[
+            "rs", "py", "js", "ts", "c", "h", "cpp", "go", "java", "sh", "toml", "json", "yaml",
+            "yml", "html", "css",
+        ]),
+        other => Filter::Extensions(vec![other.trim_start_matches('.').to_owned()]),
+    }
+}
+
+/// Split `kind:pdf invoice` into `("invoice", [pdf filter])`.
+fn parse_query(query: &str) -> (String, Vec<Filter>) {
+    let mut text = Vec::new();
+    let mut filters = Vec::new();
+
+    for token in query.split_whitespace() {
+        let lower = token.to_lowercase();
+
+        match lower
+            .strip_prefix("kind:")
+            .or_else(|| lower.strip_prefix("type:"))
+            .or_else(|| lower.strip_prefix("ext:"))
+        {
+            Some(name) if !name.is_empty() => filters.push(kind_filter(name)),
+            _ => text.push(lower),
+        }
+    }
+
+    (text.join(" "), filters)
+}
+
+fn matches_filters(entry: &Entry, filters: &[Filter]) -> bool {
+    let mut wants_recent = false;
+    let mut kinds = Vec::new();
+
+    for filter in filters {
+        match filter {
+            Filter::Recent => wants_recent = true,
+            other => kinds.push(other),
+        }
+    }
+
+    if wants_recent && entry.recent.is_none() {
+        return false;
+    }
+
+    // Several kinds mean "any of these".
+    kinds.is_empty()
+        || kinds.iter().any(|kind| match kind {
+            Filter::Folder => entry.is_dir,
+            Filter::Extensions(list) => list.iter().any(|ext| ext == entry.extension()),
+            Filter::Recent => true,
+        })
 }
 
 pub struct FilesProvider {
@@ -53,6 +160,17 @@ fn expand_home(root: &str) -> Option<PathBuf> {
     let path = PathBuf::from(root);
 
     path.is_absolute().then_some(path)
+}
+
+fn make_entry(path: PathBuf, name: String, is_dir: bool, modified: u64) -> Entry {
+    Entry {
+        name_lower: name.to_lowercase(),
+        name,
+        path,
+        is_dir,
+        modified,
+        recent: None,
+    }
 }
 
 fn scan(roots: &[PathBuf], max_depth: usize) -> Vec<Entry> {
@@ -92,16 +210,50 @@ fn scan(roots: &[PathBuf], max_depth: usize) -> Vec<Entry> {
                 stack.push((path.clone(), depth + 1));
             }
 
-            entries.push(Entry {
-                name_lower: name.to_lowercase(),
-                name,
-                path,
-                is_dir,
-            });
+            let modified = item
+                .metadata()
+                .ok()
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |elapsed| elapsed.as_secs());
+
+            entries.push(make_entry(path, name, is_dir, modified));
         }
     }
 
     entries
+}
+
+/// Mark (or add) the files from the desktop's recent-files list.
+fn merge_recent(entries: &mut Vec<Entry>) {
+    let recents = recent::read_recent_files();
+
+    if recents.is_empty() {
+        return;
+    }
+
+    let positions: HashMap<PathBuf, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(position, entry)| (entry.path.clone(), position))
+        .collect();
+
+    for (path, stamp) in recents {
+        match positions.get(&path) {
+            Some(&position) => entries[position].recent = Some(stamp),
+            None => {
+                // Outside the indexed roots (or in a hidden directory): still your history.
+                let Some(name) = path.file_name().map(|name| name.to_string_lossy().into_owned())
+                else {
+                    continue;
+                };
+
+                let mut entry = make_entry(path, name, false, 0);
+                entry.recent = Some(stamp);
+                entries.push(entry);
+            }
+        }
+    }
 }
 
 impl FilesProvider {
@@ -115,7 +267,9 @@ impl FilesProvider {
             .name("aujar-files-index".into())
             .spawn(move || {
                 loop {
-                    let entries = scan(&roots, max_depth);
+                    let mut entries = scan(&roots, max_depth);
+
+                    merge_recent(&mut entries);
 
                     if let Ok(mut guard) = shared.write() {
                         *guard = entries;
@@ -140,22 +294,7 @@ impl FilesProvider {
     }
 
     #[cfg(test)]
-    fn from_entries(paths: &[(&str, bool)]) -> Self {
-        let entries = paths
-            .iter()
-            .map(|(path, is_dir)| {
-                let path = PathBuf::from(path);
-                let name = path.file_name().unwrap().to_string_lossy().into_owned();
-
-                Entry {
-                    name_lower: name.to_lowercase(),
-                    name,
-                    path,
-                    is_dir: *is_dir,
-                }
-            })
-            .collect();
-
+    fn from_entries(entries: Vec<Entry>) -> Self {
         Self {
             index: Arc::new(RwLock::new(entries)),
         }
@@ -179,10 +318,11 @@ impl Provider for FilesProvider {
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
-        let query = query.trim().to_lowercase();
+        let (text, filters) = parse_query(query);
 
-        // Two characters minimum, and never for expressions like `2+2`.
-        if query.chars().count() < 2 || query.contains(" to ") {
+        // Plain searches need two characters (and never fire for `10 km to mi`);
+        // filters like `kind:pdf` may stand alone.
+        if filters.is_empty() && (text.chars().count() < 2 || text.contains(" to ")) {
             return Vec::new();
         }
 
@@ -190,36 +330,45 @@ impl Provider for FilesProvider {
             return Vec::new();
         };
 
-        let mut hits: Vec<(u32, usize)> = index
+        let mut hits: Vec<(u64, usize)> = index
             .iter()
             .enumerate()
-            .filter_map(|(position, entry)| {
-                if !entry.name_lower.contains(&query) {
-                    return None;
-                }
-
-                let base = if entry.name_lower == query {
-                    520
-                } else if entry.name_lower.starts_with(&query) {
-                    480
+            .filter(|(_, entry)| matches_filters(entry, &filters))
+            .filter(|(_, entry)| text.is_empty() || entry.name_lower.contains(&text))
+            .map(|(position, entry)| {
+                let rank = if text.is_empty() {
+                    // Nothing typed: newest first.
+                    entry.activity()
                 } else {
-                    380
+                    let base: u64 = if entry.name_lower == text {
+                        520
+                    } else if entry.name_lower.starts_with(&text) {
+                        480
+                    } else {
+                        380
+                    };
+
+                    // Shorter names, shallower paths and files you used recently win.
+                    let brevity = 60u64.saturating_sub(entry.name.chars().count() as u64);
+                    let depth = (entry.path.components().count() as u64).min(30);
+                    let folder_bonus = if entry.is_dir { 10 } else { 0 };
+                    let recent_bonus = if entry.recent.is_some() { 40 } else { 0 };
+
+                    base + brevity + folder_bonus + recent_bonus - depth
                 };
 
-                // Shorter names and shallower paths are usually what you want.
-                let brevity = 60u32.saturating_sub(entry.name.chars().count() as u32);
-                let depth = entry.path.components().count() as u32;
-                let folder_bonus = if entry.is_dir { 10 } else { 0 };
-
-                Some((base + brevity + folder_bonus - depth.min(30), position))
+                (rank, position)
             })
             .collect();
 
         hits.sort_by(|a, b| b.0.cmp(&a.0));
         hits.truncate(MAX_RESULTS);
 
+        let count = hits.len() as u32;
+
         hits.into_iter()
-            .map(|(score, position)| {
+            .enumerate()
+            .map(|(order, (_, position))| {
                 let entry = &index[position];
 
                 SearchResult {
@@ -231,7 +380,9 @@ impl Provider for FilesProvider {
                     } else {
                         ResultKind::File
                     },
-                    score,
+                    // Results are already ordered; the score only has to keep that order and
+                    // stay below applications for plain searches.
+                    score: 560 + (count - order as u32),
                     icon: None,
                 }
             })
@@ -269,16 +420,26 @@ impl Provider for FilesProvider {
 mod tests {
     use super::*;
 
+    fn entry(path: &str, is_dir: bool, modified: u64, recent: Option<u64>) -> Entry {
+        let path = PathBuf::from(path);
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let mut entry = make_entry(path, name, is_dir, modified);
+        entry.recent = recent;
+        entry
+    }
+
     fn provider() -> FilesProvider {
-        FilesProvider::from_entries(&[
-            ("/home/u/Documents/report.pdf", false),
-            ("/home/u/Documents/reports", true),
-            ("/home/u/Music/song.mp3", false),
+        FilesProvider::from_entries(vec![
+            entry("/home/u/Documents/report.pdf", false, 100, None),
+            entry("/home/u/Documents/reports", true, 50, None),
+            entry("/home/u/Music/song.mp3", false, 10, None),
+            entry("/home/u/Downloads/invoice.pdf", false, 300, Some(900)),
+            entry("/home/u/Downloads/old.pdf", false, 5, None),
         ])
     }
 
     #[test]
-    fn finds_by_substring_and_prefers_exact_prefix() {
+    fn finds_by_substring() {
         let results = provider().search("report");
 
         assert_eq!(results.len(), 2);
@@ -286,8 +447,39 @@ mod tests {
     }
 
     #[test]
-    fn short_queries_return_nothing() {
+    fn short_plain_queries_return_nothing() {
         assert!(provider().search("r").is_empty());
+    }
+
+    #[test]
+    fn kind_filter_lists_newest_first_without_text() {
+        let results = provider().search("kind:pdf");
+
+        let titles: Vec<&str> = results.iter().map(|r| r.title.as_str()).collect();
+
+        assert_eq!(titles, ["invoice.pdf", "report.pdf", "old.pdf"]);
+    }
+
+    #[test]
+    fn kind_filter_combines_with_text() {
+        let results = provider().search("kind:pdf old");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "old.pdf");
+    }
+
+    #[test]
+    fn recent_filter_is_file_history() {
+        let results = provider().search("kind:recent");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "invoice.pdf");
+    }
+
+    #[test]
+    fn folder_and_extension_filters() {
+        assert_eq!(provider().search("kind:folder").len(), 1);
+        assert_eq!(provider().search("ext:mp3").len(), 1);
     }
 
     #[test]

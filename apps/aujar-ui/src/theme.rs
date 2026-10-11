@@ -14,6 +14,8 @@ pub struct Palette {
     pub accent: u32,
     pub on_accent: u32,
     pub on_accent_dim: u32,
+    /// Highlight behind selected text in the search field, `0xRRGGBBAA`.
+    pub selection: u32,
     pub hover: u32,
     /// Footer bar and keycap background.
     pub subtle: u32,
@@ -36,6 +38,7 @@ impl Palette {
                 accent,
                 on_accent: 0xffffff,
                 on_accent_dim: 0xffffffbb,
+                selection: (accent << 8) | 0x77,
                 hover: 0xffffff12,
                 subtle: 0xffffff0d,
                 keycap_border: 0xffffff26,
@@ -51,6 +54,7 @@ impl Palette {
                 accent,
                 on_accent: 0xffffff,
                 on_accent_dim: 0xffffffcc,
+                selection: (accent << 8) | 0x55,
                 hover: 0x0000000d,
                 subtle: 0x00000009,
                 keycap_border: 0x00000026,

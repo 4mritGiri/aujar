@@ -19,8 +19,9 @@ use aujar_ipc::{
 };
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, FocusHandle, Focusable, KeyDownEvent,
-    SharedString, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions,
-    div, img, prelude::*, px, rgb, rgba, size,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ScrollHandle, SharedString, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, div, img,
+    prelude::*, px, rgb, rgba, size,
 };
 use gpui_platform::application;
 use settings_view::SettingsView;
@@ -28,12 +29,14 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use theme::Palette;
 
 /// Window height; the card inside is content-sized and the rest is transparent.
-const WINDOW_H: f32 = 580.0;
+const WINDOW_H: f32 = 600.0;
+/// Tallest the results list gets before it scrolls.
+const LIST_MAX_H: f32 = 430.0;
 
 /// Bridge thread -> UI thread.
 enum UiMessage {
@@ -46,6 +49,10 @@ enum UiMessage {
     OpenSettings,
     /// New text on the system clipboard (from the watcher thread).
     Clipboard(String),
+    /// Recently used files (file history) for the empty launcher.
+    RecentFiles(Vec<SearchHit>),
+    /// A PDF thumbnail finished rendering; redraw the preview.
+    ThumbReady,
 }
 
 /// UI thread -> bridge thread.
@@ -53,6 +60,10 @@ enum UiRequest {
     Search(String),
     Execute(String),
     OpenSettings,
+    /// Ask the daemon for the file history (`kind:recent`).
+    Recents,
+    /// Render the first page of a PDF into the thumbnail cache.
+    Thumbnail(PathBuf),
 }
 
 // ---- Sections ---------------------------------------------------------------------------
@@ -61,8 +72,10 @@ enum UiRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Recent,
+    RecentFiles,
     Frequent,
     Answer,
+    TopHit,
     Clipboard,
     Applications,
     Commands,
@@ -70,7 +83,7 @@ enum Section {
     Web,
 }
 
-const SECTION_COUNT: usize = 8;
+const SECTION_COUNT: usize = 10;
 
 fn section_of(kind: &str) -> Section {
     match kind {
@@ -86,8 +99,10 @@ fn section_of(kind: &str) -> Section {
 fn section_title(section: Section) -> &'static str {
     match section {
         Section::Recent => "Recent",
+        Section::RecentFiles => "Recent Files",
         Section::Frequent => "Frequently used",
         Section::Answer => "Answer",
+        Section::TopHit => "Top Hit",
         Section::Clipboard => "Clipboard",
         Section::Applications => "Applications",
         Section::Commands => "Commands",
@@ -184,6 +199,66 @@ struct Preview {
     /// First lines of a text file, or the full text of a clipboard entry.
     text: Option<String>,
     image: Option<PathBuf>,
+    /// A PDF whose thumbnail is not cached yet; the view asks the bridge to render it.
+    thumb_request: Option<PathBuf>,
+}
+
+fn cache_dir() -> PathBuf {
+    std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("aujar")
+}
+
+fn modified_secs(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Cache file stem for a PDF thumbnail; changes when the file is modified.
+fn thumb_prefix(path: &Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+    path.hash(&mut hasher);
+    modified_secs(path).hash(&mut hasher);
+
+    cache_dir().join("thumbs").join(format!("{:016x}", hasher.finish()))
+}
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+        .unwrap_or(false)
+}
+
+/// Render page 1 of a PDF to `<cache>/thumbs/<hash>.png` with poppler's `pdftoppm`.
+/// Returns whether a thumbnail exists afterwards.
+fn generate_pdf_thumb(path: &Path) -> bool {
+    let prefix = thumb_prefix(path);
+    let png = prefix.with_extension("png");
+
+    if png.is_file() {
+        return true;
+    }
+
+    if let Some(parent) = prefix.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    let status = Command::new("pdftoppm")
+        .args(["-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", "560"])
+        .arg(path)
+        .arg(&prefix)
+        .status();
+
+    matches!(status, Ok(status) if status.success()) && png.is_file()
 }
 
 fn human_size(bytes: u64) -> String {
@@ -259,6 +334,7 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
         rows: Vec::new(),
         text: None,
         image: None,
+        thumb_request: None,
     };
 
     match hit.kind.as_str() {
@@ -294,7 +370,15 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
                         .map(str::to_ascii_lowercase)
                         .unwrap_or_default();
 
-                    if IMAGE_EXTENSIONS.contains(&extension.as_str()) && meta.len() < 15_000_000 {
+                    if extension == "pdf" {
+                        let png = thumb_prefix(&path).with_extension("png");
+
+                        if png.is_file() {
+                            preview.image = Some(png);
+                        } else if on_path("pdftoppm") {
+                            preview.thumb_request = Some(path.clone());
+                        }
+                    } else if IMAGE_EXTENSIONS.contains(&extension.as_str()) && meta.len() < 15_000_000 {
                         preview.image = Some(path.clone());
                     } else if TEXT_EXTENSIONS.contains(&extension.as_str()) && meta.len() < 1_000_000 {
                         preview.text = read_text_preview(&path);
@@ -340,11 +424,21 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
 
 struct LauncherView {
     query: String,
-    /// Caret position: a byte offset into `query`, always on a character boundary.
+    /// Selection anchor and caret: byte offsets into `query`, always on character boundaries.
+    /// They are equal when nothing is selected.
+    anchor: usize,
     cursor: usize,
+    /// Undo/redo snapshots of `(query, anchor, cursor)`.
+    undo: Vec<(String, usize, usize)>,
+    redo: Vec<(String, usize, usize)>,
+    /// Set while the left mouse button is held after pressing inside the search field.
+    drag_anchor: Option<usize>,
     results: Vec<SearchHit>,
     /// Section of each result, same length as `results`.
     sections: Vec<Section>,
+    /// Index of each result among the list's child elements (section headers count).
+    row_index: Vec<usize>,
+    scroll: ScrollHandle,
     selected: usize,
     status: Option<String>,
     /// A hint (not an error), shown dimmed.
@@ -355,11 +449,16 @@ struct LauncherView {
     settings: Settings,
     palette: Palette,
     history: History,
+    /// File history from the daemon (`kind:recent`), for the empty launcher.
+    recent_files: Vec<SearchHit>,
     /// Snapshot of the clipboard history taken when the launcher opened (newest first).
     clips: Vec<String>,
     requests: async_channel::Sender<UiRequest>,
     focus_handle: FocusHandle,
 }
+
+/// Longest query accepted, in characters.
+const MAX_QUERY_CHARS: usize = 300;
 
 impl LauncherView {
     fn new(
@@ -370,9 +469,15 @@ impl LauncherView {
     ) -> Self {
         let mut view = Self {
             query: String::new(),
+            anchor: 0,
             cursor: 0,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            drag_anchor: None,
             results: Vec::new(),
             sections: Vec::new(),
+            row_index: Vec::new(),
+            scroll: ScrollHandle::new(),
             selected: 0,
             status: None,
             notice: None,
@@ -380,6 +485,7 @@ impl LauncherView {
             preview: None,
             palette: Palette::from_settings(&settings),
             history: History::load_or_default(),
+            recent_files: Vec::new(),
             settings,
             clips,
             requests,
@@ -392,6 +498,20 @@ impl LauncherView {
     }
 
     // ---- Query editing ----
+
+    fn selection(&self) -> (usize, usize) {
+        (self.anchor.min(self.cursor), self.anchor.max(self.cursor))
+    }
+
+    fn has_selection(&self) -> bool {
+        self.anchor != self.cursor
+    }
+
+    fn selected_text(&self) -> &str {
+        let (start, end) = self.selection();
+
+        &self.query[start..end]
+    }
 
     fn prev_boundary(&self, from: usize) -> usize {
         self.query[..from]
@@ -424,21 +544,131 @@ impl LauncherView {
         from + skipped + length
     }
 
-    fn insert_text(&mut self, text: &str) {
-        self.query.insert_str(self.cursor, text);
-        self.cursor += text.len();
+    /// Start and end of the word around `index` (for double-click).
+    fn word_bounds(&self, index: usize) -> (usize, usize) {
+        let index = index.min(self.query.len());
+
+        let start = self.query[..index]
+            .rfind(char::is_whitespace)
+            .map_or(0, |at| at + self.query[at..].chars().next().map_or(1, char::len_utf8));
+        let end = self.query[index..]
+            .find(char::is_whitespace)
+            .map_or(self.query.len(), |at| index + at);
+
+        (start, end.max(start))
+    }
+
+    /// Move the caret; with `extend` the anchor stays, so the text in between is selected.
+    fn move_cursor(&mut self, to: usize, extend: bool, cx: &mut Context<Self>) {
+        self.cursor = to.min(self.query.len());
+
+        if !extend {
+            self.anchor = self.cursor;
+        }
+
+        cx.notify();
+    }
+
+    fn snapshot(&mut self) {
+        self.undo.push((self.query.clone(), self.anchor, self.cursor));
+
+        if self.undo.len() > 100 {
+            self.undo.remove(0);
+        }
+
+        self.redo.clear();
+    }
+
+    /// Replace the selection (or insert at the caret) and put the caret after the new text.
+    fn replace_selection(&mut self, text: &str) {
+        let room = MAX_QUERY_CHARS.saturating_sub(self.query.chars().count());
+        let (start, end) = self.selection();
+        let removed = self.query[start..end].chars().count();
+        let text: String = text.chars().take(room + removed).collect();
+
+        self.snapshot();
+        self.query.replace_range(start..end, &text);
+        self.cursor = start + text.len();
+        self.anchor = self.cursor;
     }
 
     fn delete_range(&mut self, start: usize, end: usize) {
+        self.snapshot();
         self.query.replace_range(start..end, "");
         self.cursor = start;
+        self.anchor = start;
+    }
+
+    fn restore(&mut self, state: (String, usize, usize)) {
+        self.query = state.0;
+        self.anchor = state.1.min(self.query.len());
+        self.cursor = state.2.min(self.query.len());
+    }
+
+    fn undo(&mut self, cx: &mut Context<Self>) {
+        if let Some(previous) = self.undo.pop() {
+            self.redo.push((self.query.clone(), self.anchor, self.cursor));
+            self.restore(previous);
+            self.edited(cx);
+        }
+    }
+
+    fn redo(&mut self, cx: &mut Context<Self>) {
+        if let Some(next) = self.redo.pop() {
+            self.undo.push((self.query.clone(), self.anchor, self.cursor));
+            self.restore(next);
+            self.edited(cx);
+        }
     }
 
     /// Call after the query text changed.
     fn edited(&mut self, cx: &mut Context<Self>) {
         self.cursor = self.cursor.min(self.query.len());
+        self.anchor = self.anchor.min(self.query.len());
         self.request_search();
         cx.notify();
+    }
+
+    // ---- Mouse in the search field ----
+
+    /// `index` is the byte offset the pointer is closest to (left or right half of a character).
+    fn mouse_down_at(&mut self, index: usize, clicks: usize, shift: bool, cx: &mut Context<Self>) {
+        match clicks {
+            0 | 1 => {
+                if shift {
+                    self.cursor = index;
+                } else {
+                    self.anchor = index;
+                    self.cursor = index;
+                }
+
+                self.drag_anchor = Some(self.anchor);
+            }
+            2 => {
+                // Double-click selects the word.
+                let (start, end) = self.word_bounds(index);
+
+                self.anchor = start;
+                self.cursor = end;
+                self.drag_anchor = None;
+            }
+            _ => {
+                // Triple-click selects everything.
+                self.anchor = 0;
+                self.cursor = self.query.len();
+                self.drag_anchor = None;
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn mouse_drag_to(&mut self, index: usize, left_button_down: bool, cx: &mut Context<Self>) {
+        if let (true, Some(anchor)) = (left_button_down, self.drag_anchor) {
+            self.anchor = anchor;
+            self.cursor = index;
+            cx.notify();
+        }
     }
 
     // ---- Searching ----
@@ -484,11 +714,40 @@ impl LauncherView {
     }
 
     fn install(&mut self, hits: Vec<SearchHit>, sections: Vec<Section>) {
+        // Where each result sits among the list's children (a header precedes each section).
+        let mut headers = 0;
+        let mut previous = None;
+        let mut row_index = Vec::with_capacity(sections.len());
+
+        for (index, section) in sections.iter().enumerate() {
+            if previous != Some(*section) {
+                headers += 1;
+                previous = Some(*section);
+            }
+
+            row_index.push(index + headers);
+        }
+
         self.results = hits;
         self.sections = sections;
+        self.row_index = row_index;
         self.selected = 0;
         self.confirming = None;
         self.refresh_preview();
+        self.scroll_to_selected();
+    }
+
+    fn scroll_to_selected(&self) {
+        if let Some(index) = self.row_index.get(self.selected) {
+            // Show the section header too when the first result of a section is selected.
+            let first_of_section = self
+                .selected
+                .checked_sub(1)
+                .is_none_or(|before| self.sections[before] != self.sections[self.selected]);
+
+            self.scroll
+                .scroll_to_item(if first_of_section { index - 1 } else { *index });
+        }
     }
 
     fn refresh_preview(&mut self) {
@@ -499,10 +758,19 @@ impl LauncherView {
         } else {
             None
         };
+
+        if let Some(path) = self.preview.as_mut().and_then(|preview| preview.thumb_request.take()) {
+            let _ = self.requests.try_send(UiRequest::Thumbnail(path));
+        }
     }
 
-    /// Empty search box: recently and frequently used things.
+    /// Empty search box: ask for the file history, and show what we already know.
     fn show_empty_state(&mut self) {
+        let _ = self.requests.try_send(UiRequest::Recents);
+        self.build_empty_state();
+    }
+
+    fn build_empty_state(&mut self) {
         if !self.settings.appearance.show_recents {
             self.install(Vec::new(), Vec::new());
             return;
@@ -517,7 +785,7 @@ impl LauncherView {
             icon: entry.icon.clone(),
         };
 
-        let recent = self.history.recent(6);
+        let recent = self.history.recent(5);
         let recent_ids: Vec<String> = recent.iter().map(|entry| entry.id.clone()).collect();
         let skip: Vec<&str> = recent_ids.iter().map(String::as_str).collect();
         let frequent = self.history.frequent(4, &skip);
@@ -528,6 +796,17 @@ impl LauncherView {
         for entry in recent {
             hits.push(as_hit(entry));
             sections.push(Section::Recent);
+        }
+
+        // File history from the desktop (includes PDFs opened in any app).
+        for hit in self
+            .recent_files
+            .iter()
+            .filter(|hit| !recent_ids.contains(&hit.id))
+            .take(5)
+        {
+            hits.push(hit.clone());
+            sections.push(Section::RecentFiles);
         }
 
         for entry in frequent {
@@ -654,14 +933,45 @@ impl LauncherView {
                 Section::Commands => 4,
                 Section::Files => apps_cap.min(6),
                 Section::Web => 3,
-                Section::Recent | Section::Frequent | Section::Clipboard => usize::MAX,
+                Section::Recent
+                | Section::RecentFiles
+                | Section::Frequent
+                | Section::TopHit
+                | Section::Clipboard => usize::MAX,
             };
 
             counts[section as usize] += 1;
             counts[section as usize] <= cap
         });
 
-        let sections = hits.iter().map(|hit| section_of(&hit.kind)).collect();
+        let mut sections: Vec<Section> = hits.iter().map(|hit| section_of(&hit.kind)).collect();
+
+        // Top Hit (like Spotlight): one strong application/command match, shown first.
+        // Skipped when there is an Answer: that already is the top result.
+        if !sections.contains(&Section::Answer) {
+            let best = hits
+                .iter()
+                .enumerate()
+                .filter(|(index, hit)| {
+                    matches!(sections[*index], Section::Applications | Section::Commands)
+                        && hit.score >= 600
+                })
+                .max_by_key(|(_, hit)| hit.score)
+                .map(|(index, _)| index);
+
+            if let Some(position) = best {
+                let hit = hits.remove(position);
+                sections.remove(position);
+
+                let slot = sections
+                    .iter()
+                    .take_while(|section| (**section as usize) < Section::TopHit as usize)
+                    .count();
+
+                hits.insert(slot, hit);
+                sections.insert(slot, Section::TopHit);
+            }
+        }
 
         self.install(hits, sections);
         self.status = None;
@@ -674,6 +984,7 @@ impl LauncherView {
             self.selected = (self.selected as isize + delta).rem_euclid(len) as usize;
             self.confirming = None;
             self.refresh_preview();
+            self.scroll_to_selected();
             cx.notify();
         }
     }
@@ -700,13 +1011,31 @@ impl LauncherView {
         hit.title.clone()
     }
 
+    /// Ctrl+B (Spotlight's Cmd+B): search the web for the query, whatever is selected.
+    fn open_web_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let url = self
+            .results
+            .iter()
+            .rev()
+            .find(|hit| hit.kind == "web")
+            .and_then(|hit| hit.id.strip_prefix("url:"))
+            .filter(|url| is_web_url(url))
+            .map(str::to_owned);
+
+        if let Some(url) = url {
+            cx.open_url(&url);
+            window.remove_window();
+        }
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let modifiers = &keystroke.modifiers;
         let key = keystroke.key.as_str();
+        let (ctrl, shift, alt) = (modifiers.control, modifiers.shift, modifiers.alt);
 
         // Alt+1..9 launches that row directly (Spotlight's Cmd+1..9).
-        if modifiers.alt {
+        if alt && !ctrl {
             if let Some(number) = key.parse::<usize>().ok().filter(|n| (1..=9).contains(n)) {
                 if number <= self.results.len() {
                     self.selected = number - 1;
@@ -716,43 +1045,111 @@ impl LauncherView {
             }
         }
 
-        // Emacs/readline-style chords, word movement and copy.
-        if modifiers.control {
+        // Caret movement and deletion. Shift extends the selection, Ctrl works on words, and
+        // the two combine (Ctrl+Shift+Left selects the previous word).
+        match key {
+            "left" => {
+                let target = if ctrl {
+                    self.word_left(self.cursor)
+                } else if !shift && self.has_selection() {
+                    self.selection().0
+                } else {
+                    self.prev_boundary(self.cursor)
+                };
+
+                self.move_cursor(target, shift, cx);
+                return;
+            }
+            "right" => {
+                let target = if ctrl {
+                    self.word_right(self.cursor)
+                } else if !shift && self.has_selection() {
+                    self.selection().1
+                } else {
+                    self.next_boundary(self.cursor)
+                };
+
+                self.move_cursor(target, shift, cx);
+                return;
+            }
+            "home" => {
+                self.move_cursor(0, shift, cx);
+                return;
+            }
+            "end" => {
+                self.move_cursor(self.query.len(), shift, cx);
+                return;
+            }
+            "backspace" => {
+                if self.has_selection() {
+                    let (start, end) = self.selection();
+                    self.delete_range(start, end);
+                } else if ctrl {
+                    let start = self.word_left(self.cursor);
+                    self.delete_range(start, self.cursor);
+                } else if self.cursor > 0 {
+                    let start = self.prev_boundary(self.cursor);
+                    self.delete_range(start, self.cursor);
+                } else {
+                    return;
+                }
+
+                self.edited(cx);
+                return;
+            }
+            "delete" => {
+                if self.has_selection() {
+                    let (start, end) = self.selection();
+                    self.delete_range(start, end);
+                } else if ctrl {
+                    let end = self.word_right(self.cursor);
+                    self.delete_range(self.cursor, end);
+                } else if self.cursor < self.query.len() {
+                    let end = self.next_boundary(self.cursor);
+                    self.delete_range(self.cursor, end);
+                } else {
+                    return;
+                }
+
+                self.edited(cx);
+                return;
+            }
+            _ => {}
+        }
+
+        // Ctrl chords (with or without Shift: Ctrl+Shift+C/V behave like Ctrl+C/V).
+        if ctrl {
             match key {
                 "n" | "j" => self.move_selection(1, cx),
                 "p" | "k" => self.move_selection(-1, cx),
                 "enter" => self.launch_selected(true, window, cx),
+                "a" => {
+                    self.anchor = 0;
+                    self.cursor = self.query.len();
+                    cx.notify();
+                }
+                "e" => self.move_cursor(self.query.len(), shift, cx),
                 "c" => {
-                    if let Some(hit) = self.results.get(self.selected) {
+                    if self.has_selection() {
+                        // Copy the selected text and keep the launcher open.
+                        cx.write_to_clipboard(ClipboardItem::new_string(
+                            self.selected_text().to_owned(),
+                        ));
+                    } else if let Some(hit) = self.results.get(self.selected) {
                         cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(hit)));
                         window.remove_window();
                     }
                 }
-                "a" => {
-                    self.cursor = 0;
-                    cx.notify();
-                }
-                "e" => {
-                    self.cursor = self.query.len();
-                    cx.notify();
-                }
-                "left" => {
-                    self.cursor = self.word_left(self.cursor);
-                    cx.notify();
-                }
-                "right" => {
-                    self.cursor = self.word_right(self.cursor);
-                    cx.notify();
-                }
-                "u" => {
-                    self.query.clear();
-                    self.cursor = 0;
-                    self.edited(cx);
-                }
-                "w" | "backspace" => {
-                    let start = self.word_left(self.cursor);
-                    self.delete_range(start, self.cursor);
-                    self.edited(cx);
+                "x" => {
+                    if self.has_selection() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(
+                            self.selected_text().to_owned(),
+                        ));
+
+                        let (start, end) = self.selection();
+                        self.delete_range(start, end);
+                        self.edited(cx);
+                    }
                 }
                 "v" => {
                     if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
@@ -764,9 +1161,29 @@ impl LauncherView {
                             .filter(|c| !c.is_control())
                             .collect();
 
-                        self.insert_text(&line);
+                        self.replace_selection(&line);
                         self.edited(cx);
                     }
+                }
+                "z" if shift => self.redo(cx),
+                "z" => self.undo(cx),
+                "y" => self.redo(cx),
+                "u" => {
+                    // Clear the whole query (readline's kill-line).
+                    if !self.query.is_empty() {
+                        self.delete_range(0, self.query.len());
+                        self.edited(cx);
+                    }
+                }
+                "w" => {
+                    let start = self.word_left(self.cursor);
+                    self.delete_range(start, self.cursor);
+                    self.edited(cx);
+                }
+                "b" => self.open_web_search(window, cx),
+                "," => {
+                    let _ = self.requests.try_send(UiRequest::OpenSettings);
+                    window.remove_window();
                 }
                 _ => {}
             }
@@ -779,8 +1196,7 @@ impl LauncherView {
                 if self.query.is_empty() {
                     window.remove_window();
                 } else {
-                    self.query.clear();
-                    self.cursor = 0;
+                    self.delete_range(0, self.query.len());
                     self.edited(cx);
                 }
                 return;
@@ -798,50 +1214,14 @@ impl LauncherView {
                 return;
             }
             "tab" => {
-                self.move_selection(if modifiers.shift { -1 } else { 1 }, cx);
-                return;
-            }
-            "left" => {
-                self.cursor = self.prev_boundary(self.cursor);
-                cx.notify();
-                return;
-            }
-            "right" => {
-                self.cursor = self.next_boundary(self.cursor);
-                cx.notify();
-                return;
-            }
-            "home" => {
-                self.cursor = 0;
-                cx.notify();
-                return;
-            }
-            "end" => {
-                self.cursor = self.query.len();
-                cx.notify();
-                return;
-            }
-            "backspace" => {
-                if self.cursor > 0 {
-                    let start = self.prev_boundary(self.cursor);
-                    self.delete_range(start, self.cursor);
-                    self.edited(cx);
-                }
-                return;
-            }
-            "delete" => {
-                if self.cursor < self.query.len() {
-                    let end = self.next_boundary(self.cursor);
-                    self.delete_range(self.cursor, end);
-                    self.edited(cx);
-                }
+                self.move_selection(if shift { -1 } else { 1 }, cx);
                 return;
             }
             _ => {}
         }
 
         // Other chords (Super, ...) are not text.
-        if modifiers.alt || modifiers.platform {
+        if alt || modifiers.platform {
             return;
         }
 
@@ -850,7 +1230,7 @@ impl LauncherView {
             .as_ref()
             .filter(|text| !text.chars().any(char::is_control))
         {
-            self.insert_text(text);
+            self.replace_selection(text);
             self.edited(cx);
         }
     }
@@ -1139,11 +1519,13 @@ impl LauncherView {
                 }
 
                 hints.push(("Alt+1-9", "Quick open"));
+                hints.push(("Ctrl+B", "Web search"));
             }
             None => {
                 hints.push(("g query", "Web shortcut"));
                 hints.push(("> cmd", "Run command"));
                 hints.push(("10 km to mi", "Convert"));
+                hints.push(("kind:pdf", "File type"));
 
                 if self.settings.plugins.clipboard {
                     hints.push(("clip", "Clipboard"));
@@ -1174,8 +1556,10 @@ impl LauncherView {
             }))
     }
 
-    /// The search field with a caret at the cursor position.
-    fn render_query(&self) -> AnyElement {
+    /// The search field: one element per character so the mouse can place the caret
+    /// (each character has a left and a right half), select by dragging, and double-click
+    /// a word or triple-click everything.
+    fn render_query(&self, cx: &mut Context<Self>) -> AnyElement {
         let pal = self.palette;
 
         let caret = || {
@@ -1186,7 +1570,33 @@ impl LauncherView {
                 .bg(rgb(pal.accent))
         };
 
-        let field = div().flex().flex_row().items_center().flex_1().text_2xl();
+        let field = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .flex_1()
+            .h(px(34.))
+            .overflow_hidden()
+            .cursor_text()
+            .text_2xl();
+
+        // Anywhere past the last character: caret to the end (double-click: select all).
+        let filler = div()
+            .flex_1()
+            .h_full()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                    let end = this.query.len();
+
+                    this.mouse_down_at(end, if event.click_count >= 2 { 3 } else { 1 }, event.modifiers.shift, cx);
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
+                let end = this.query.len();
+
+                this.mouse_drag_to(end, event.pressed_button == Some(MouseButton::Left), cx);
+            }));
 
         if self.query.is_empty() {
             return field
@@ -1197,17 +1607,62 @@ impl LauncherView {
                         .text_color(rgb(pal.text_dim))
                         .child("Search apps, files, math and the web"),
                 )
+                .child(filler)
                 .into_any_element();
         }
 
-        let (before, after) = self.query.split_at(self.cursor.min(self.query.len()));
+        let (selection_start, selection_end) = self.selection();
+        let show_caret = !self.has_selection();
 
-        field
-            .text_color(rgb(pal.text))
-            .child(before.to_owned())
-            .child(caret())
-            .child(after.to_owned())
-            .into_any_element()
+        // One half-character hit area: absolute, transparent, covers the left or right half.
+        let hit_area = |index: usize, left_half: bool| {
+            div()
+                .absolute()
+                .top_0()
+                .h_full()
+                .w_1_2()
+                .when(left_half, |this| this.left_0())
+                .when(!left_half, |this| this.right_0())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                        this.mouse_down_at(index, event.click_count, event.modifiers.shift, cx);
+                    }),
+                )
+                .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                    this.mouse_drag_to(index, event.pressed_button == Some(MouseButton::Left), cx);
+                }))
+        };
+
+        let mut parts: Vec<AnyElement> = Vec::new();
+
+        for (start, c) in self.query.char_indices() {
+            let end = start + c.len_utf8();
+
+            if show_caret && start == self.cursor {
+                parts.push(caret().into_any_element());
+            }
+
+            let selected = start >= selection_start && end <= selection_end && selection_start < selection_end;
+
+            parts.push(
+                div()
+                    .relative()
+                    .flex_shrink_0()
+                    .text_color(rgb(pal.text))
+                    .when(selected, |this| this.bg(rgba(pal.selection)))
+                    .child(c.to_string())
+                    .child(hit_area(start, true))
+                    .child(hit_area(end, false))
+                    .into_any_element(),
+            );
+        }
+
+        if show_caret && self.cursor >= self.query.len() {
+            parts.push(caret().into_any_element());
+        }
+
+        field.children(parts).child(filler).into_any_element()
     }
 }
 
@@ -1253,6 +1708,10 @@ impl Render for LauncherView {
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event, _window, _cx| this.drag_anchor = None),
+            )
             .flex()
             .flex_col()
             .w_full()
@@ -1278,7 +1737,7 @@ impl Render for LauncherView {
                             .border_2()
                             .border_color(rgb(pal.text_dim)),
                     )
-                    .child(self.render_query())
+                    .child(self.render_query(cx))
                     .child(self.keycap("Esc")),
             )
             .when(!rows.is_empty(), |this| {
@@ -1288,10 +1747,13 @@ impl Render for LauncherView {
                         .flex_row()
                         .child(
                             div()
+                                .id("results")
                                 .flex()
                                 .flex_col()
                                 .flex_1()
-                                .overflow_hidden()
+                                .max_h(px(LIST_MAX_H))
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll)
                                 .pb_2()
                                 .children(rows),
                         )
@@ -1487,6 +1949,27 @@ fn handle_message(
             }
         }
         UiMessage::Clipboard(text) => push_clip(&mut state.clips, text),
+        UiMessage::RecentFiles(files) => {
+            if let Some(handle) = state.launcher.as_ref() {
+                let _ = handle.update(cx, |view, _, cx| {
+                    view.recent_files = files;
+
+                    // Only the empty launcher shows file history.
+                    if view.query.trim().is_empty() {
+                        view.build_empty_state();
+                        cx.notify();
+                    }
+                });
+            }
+        }
+        UiMessage::ThumbReady => {
+            if let Some(handle) = state.launcher.as_ref() {
+                let _ = handle.update(cx, |view, _, cx| {
+                    view.refresh_preview();
+                    cx.notify();
+                });
+            }
+        }
         UiMessage::Failed(message) => {
             if let Some(handle) = state.launcher.as_ref() {
                 let _ = handle.update(cx, |view, _, cx| {
@@ -1565,6 +2048,26 @@ async fn serve_requests(
                 if tx.send(UiMessage::OpenSettings).await.is_err() {
                     break;
                 }
+            }
+            UiRequest::Recents => {
+                // File history: what the desktop says you opened recently, newest first.
+                if let Ok(mut results) = search(&socket, "kind:recent").await {
+                    results.retain(|hit| hit.kind == "file" || hit.kind == "folder");
+
+                    if tx.send(UiMessage::RecentFiles(results)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+            UiRequest::Thumbnail(path) => {
+                let tx = tx.clone();
+
+                // pdftoppm can take a moment; keep it off the async runtime's threads.
+                tokio::task::spawn_blocking(move || {
+                    if generate_pdf_thumb(&path) {
+                        let _ = tx.send_blocking(UiMessage::ThumbReady);
+                    }
+                });
             }
         }
     }
