@@ -250,6 +250,9 @@ impl Render for SettingsView {
                 stepper_row!(self, cx, "max", "Results per section", "Applications shown (other sections show fewer)", 1, "", appearance.max_results),
                 toggle_row!(self, cx, "icons", "App icons", "Show application icons next to results", appearance.show_icons),
                 toggle_row!(self, cx, "footer", "Keyboard hints", "Show the shortcut bar at the bottom", appearance.show_footer),
+                toggle_row!(self, cx, "preview", "Preview pane", "Details of the selected result on the right", appearance.show_preview),
+                toggle_row!(self, cx, "recents", "Recent & frequent", "Show what you use most when the search box is empty", appearance.show_recents),
+                toggle_row!(self, cx, "blur", "Close when clicking away", "Hide the launcher when it loses focus", appearance.close_on_blur),
             ],
         );
 
@@ -260,6 +263,8 @@ impl Render for SettingsView {
                 toggle_row!(self, cx, "p-apps", "Applications", "Installed desktop applications", plugins.applications),
                 toggle_row!(self, cx, "p-calc", "Calculator", "Math: 2*(3+4), 2^10, 10 % 3", plugins.calculator),
                 toggle_row!(self, cx, "p-units", "Unit converter", "10 km to mi, 100 f to c, 2 gb to mb", plugins.units),
+                toggle_row!(self, cx, "p-currency", "Currency converter", "100 usd to eur. Downloads exchange rates (curl) about twice a day", plugins.currency),
+                toggle_row!(self, cx, "p-clip", "Clipboard history", "Type clip or cb. Records what you copy (in memory only)", plugins.clipboard),
                 toggle_row!(self, cx, "p-files", "Files & folders", "Search file names under your home folder", plugins.files),
                 toggle_row!(self, cx, "p-system", "System commands", "Lock, sleep, restart, shut down, log out, settings", plugins.system),
                 toggle_row!(self, cx, "p-shell", "Shell commands", "> command runs it in a shell. Runs arbitrary commands: off by default", plugins.shell),
@@ -309,6 +314,16 @@ impl Render for SettingsView {
                     .spawn();
             }));
 
+        let clear_history = self
+            .pill("clear-history".into(), "Clear history", false)
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.status = Some(match aujar_config::History::default().save() {
+                    Ok(()) => "History cleared".to_owned(),
+                    Err(error) => format!("Could not clear: {error:#}"),
+                });
+                cx.notify();
+            }));
+
         let about = self.section(
             "Shortcut & config",
             vec![
@@ -318,6 +333,7 @@ impl Render for SettingsView {
                     div(),
                 ),
                 self.row("Config file", &Settings::path().display().to_string(), open_config),
+                self.row("Launch history", "Recent and frequent items (stored in ~/.local/state/aujar)", clear_history),
             ],
         );
 

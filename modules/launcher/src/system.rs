@@ -14,6 +14,24 @@ struct Action {
     args: Vec<String>,
 }
 
+fn action(
+    id: &'static str,
+    title: &'static str,
+    subtitle: &'static str,
+    keywords: &'static [&'static str],
+    program: &'static str,
+    args: &[&str],
+) -> Action {
+    Action {
+        id,
+        title,
+        subtitle,
+        keywords,
+        program,
+        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+    }
+}
+
 pub struct SystemProvider {
     actions: Vec<Action>,
 }
@@ -73,6 +91,85 @@ impl SystemProvider {
                     args: vec!["terminate-session".into(), session],
                 });
             }
+        }
+
+        if on_path("nmcli") {
+            actions.push(action(
+                "system:wifi-on",
+                "Turn Wi-Fi On",
+                "Enable the wireless radio",
+                &["wifi on", "wi-fi on", "enable wifi", "turn on wifi"],
+                "nmcli",
+                &["radio", "wifi", "on"],
+            ));
+            actions.push(action(
+                "system:wifi-off",
+                "Turn Wi-Fi Off",
+                "Disable the wireless radio",
+                &["wifi off", "wi-fi off", "disable wifi", "turn off wifi"],
+                "nmcli",
+                &["radio", "wifi", "off"],
+            ));
+        }
+
+        if on_path("bluetoothctl") {
+            actions.push(action(
+                "system:bluetooth-on",
+                "Turn Bluetooth On",
+                "Power on the Bluetooth adapter",
+                &["bluetooth on", "enable bluetooth", "turn on bluetooth"],
+                "bluetoothctl",
+                &["power", "on"],
+            ));
+            actions.push(action(
+                "system:bluetooth-off",
+                "Turn Bluetooth Off",
+                "Power off the Bluetooth adapter",
+                &["bluetooth off", "disable bluetooth", "turn off bluetooth"],
+                "bluetoothctl",
+                &["power", "off"],
+            ));
+        }
+
+        // PipeWire first, then PulseAudio.
+        if on_path("wpctl") {
+            actions.push(action(
+                "system:mute",
+                "Mute / Unmute Volume",
+                "Toggle the default output",
+                &["mute", "unmute", "toggle mute", "volume mute"],
+                "wpctl",
+                &["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"],
+            ));
+        } else if on_path("pactl") {
+            actions.push(action(
+                "system:mute",
+                "Mute / Unmute Volume",
+                "Toggle the default output",
+                &["mute", "unmute", "toggle mute", "volume mute"],
+                "pactl",
+                &["set-sink-mute", "@DEFAULT_SINK@", "toggle"],
+            ));
+        }
+
+        // GNOME appearance (a harmless no-op elsewhere: the schema is missing).
+        if on_path("gsettings") {
+            actions.push(action(
+                "system:dark-mode",
+                "Dark Mode",
+                "Switch the desktop to the dark style",
+                &["dark mode", "dark theme", "night mode"],
+                "gsettings",
+                &["set", "org.gnome.desktop.interface", "color-scheme", "prefer-dark"],
+            ));
+            actions.push(action(
+                "system:light-mode",
+                "Light Mode",
+                "Switch the desktop to the light style",
+                &["light mode", "light theme", "day mode"],
+                "gsettings",
+                &["set", "org.gnome.desktop.interface", "color-scheme", "default"],
+            ));
         }
 
         for (program, title) in [

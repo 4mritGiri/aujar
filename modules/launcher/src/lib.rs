@@ -1,5 +1,6 @@
 mod apps;
 mod calculator;
+mod currency;
 mod files;
 mod icons;
 mod model;
@@ -10,6 +11,7 @@ mod units;
 
 pub use apps::{AppsProvider, DesktopEntry, default_dirs, parse_desktop_entry, parse_exec};
 pub use calculator::{CalculatorProvider, evaluate};
+pub use currency::CurrencyProvider;
 pub use files::FilesProvider;
 pub use icons::resolve_icon;
 pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
@@ -24,6 +26,8 @@ pub struct LauncherOptions {
     pub applications: bool,
     pub calculator: bool,
     pub units: bool,
+    /// Downloads exchange rates, so it is opt-in.
+    pub currency: bool,
     pub files: bool,
     pub system: bool,
     /// Runs arbitrary commands, so it is opt-in.
@@ -38,6 +42,7 @@ impl Default for LauncherOptions {
             applications: true,
             calculator: true,
             units: true,
+            currency: false,
             files: true,
             system: true,
             shell: false,
@@ -90,6 +95,10 @@ impl Launcher {
 
         if options.units {
             launcher.register(Box::new(UnitsProvider));
+        }
+
+        if options.currency {
+            launcher.register(Box::new(CurrencyProvider::new()));
         }
 
         if options.applications {

@@ -2,8 +2,12 @@ default: check
 
 check:
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
-    cargo test --workspace
+    cargo clippy --workspace --exclude aujar-ui --all-targets --all-features -- -D warnings
+    cargo test --workspace --exclude aujar-ui
+
+# Needs the GPU/windowing headers listed in docs/UI_SPIKE.md.
+check-ui:
+    cargo clippy -p aujar-ui --all-targets -- -D warnings
 
 fmt:
     cargo fmt --all
@@ -13,6 +17,9 @@ audit:
 
 run-daemon:
     cargo run -p aujar-launcher-app -- daemon
+
+run-ui:
+    cargo run -p aujar-ui --release
 
 # ---- packaging (needs: cargo install cargo-deb cargo-generate-rpm) ----
 release:

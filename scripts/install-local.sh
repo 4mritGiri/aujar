@@ -4,14 +4,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# The launcher UI (aujar-ui, GPUI) is a workspace member but not a default one, so it is
+# named explicitly. Without it running, the shortcut has nothing to show ("0 subscribers").
+#
+# Two separate invocations on purpose: the daemon's `ashpd` uses the tokio runtime while GPUI's
+# uses async-io, and building both in one command unifies the features and fails to compile
+# ("You can't enable both async-io & tokio features at once").
 cargo build --release -p aujar-launcher-app
+cargo build --release -p aujar-ui
 
 install -Dm755 target/release/aujar "$HOME/.local/bin/aujar"
-
-# The launcher UI is a separate GPUI build (it is excluded from the main workspace).
-# Without it running, the shortcut has nothing to show ("0 subscribers").
-(cd apps/aujar-ui && cargo build --release)
-install -Dm755 apps/aujar-ui/target/release/aujar-ui "$HOME/.local/bin/aujar-ui"
+install -Dm755 target/release/aujar-ui "$HOME/.local/bin/aujar-ui"
 install -Dm644 packaging/desktop/dev.aujar.Aujar.desktop \
     "$HOME/.local/share/applications/dev.aujar.Aujar.desktop"
 

@@ -7,8 +7,8 @@ license = "Apache-2.0"
 publish = false
 description = "Aujar launcher UI (GPUI spike)"
 
-# Standalone workspace: keeps GPUI and its system libraries out of the main build.
-[workspace]
+# A workspace member, but not a default member (see the root Cargo.toml): GPUI and its
+# system libraries stay out of a plain `cargo build`.
 
 [dependencies]
 anyhow = "1"

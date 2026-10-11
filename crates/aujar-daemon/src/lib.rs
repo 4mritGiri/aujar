@@ -69,6 +69,7 @@ fn launcher_options(settings: &aujar_config::Settings) -> aujar_launcher::Launch
         applications: settings.plugins.applications,
         calculator: settings.plugins.calculator,
         units: settings.plugins.units,
+        currency: settings.plugins.currency,
         files: settings.plugins.files,
         system: settings.plugins.system,
         shell: settings.plugins.shell,

@@ -103,6 +103,12 @@ pub struct Appearance {
     pub show_icons: bool,
     /// Keyboard-hint bar at the bottom of the launcher.
     pub show_footer: bool,
+    /// Details panel on the right showing the selected result.
+    pub show_preview: bool,
+    /// Recent and frequently used items when the search box is empty.
+    pub show_recents: bool,
+    /// Hide the launcher when it loses focus (click elsewhere).
+    pub close_on_blur: bool,
 }
 
 impl Default for Appearance {
@@ -110,10 +116,13 @@ impl Default for Appearance {
         Self {
             theme: Theme::Dark,
             accent: Accent::Blue,
-            width: 680,
+            width: 860,
             max_results: 6,
             show_icons: true,
             show_footer: true,
+            show_preview: true,
+            show_recents: true,
+            close_on_blur: true,
         }
     }
 }
@@ -124,6 +133,12 @@ pub struct Plugins {
     pub applications: bool,
     pub calculator: bool,
     pub units: bool,
+    /// Currency conversion. Downloads exchange rates (via `curl`) about twice a day,
+    /// so it is off by default.
+    pub currency: bool,
+    /// Clipboard history (`clip` / `cb` in the launcher). Kept in memory only. Records
+    /// everything you copy, so it is off by default.
+    pub clipboard: bool,
     /// Files and folders under `files.roots`.
     pub files: bool,
     /// Lock, sleep, restart, shut down, log out, system settings.
@@ -138,6 +153,8 @@ impl Default for Plugins {
             applications: true,
             calculator: true,
             units: true,
+            currency: false,
+            clipboard: false,
             files: true,
             system: true,
             shell: false,

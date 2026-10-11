@@ -4,15 +4,15 @@
 //! Design: the UI holds **no search logic**. A background thread (tokio) talks to the
 //! daemon over IPC; the GPUI thread only renders state and forwards keystrokes.
 //!
-//! Keys: type to search, Up/Down/Tab to select, Enter to launch, Ctrl+Enter to show a
-//! file in its folder, Ctrl+C to copy, Alt+1..9 to launch a row, Esc to clear/close.
-//! Limitation: plain key events only (no IME / composition yet).
+//! Keys: type to search, Left/Right/Home/End to edit, Up/Down/Tab to select, Enter to
+//! launch, Ctrl+Enter to show a file in its folder, Ctrl+C to copy, Alt+1..9 to launch a
+//! row, Esc to clear/close. Limitation: plain key events only (no IME / composition yet).
 
 mod settings_view;
 mod theme;
 
 use anyhow::{Result, bail};
-use aujar_config::Settings;
+use aujar_config::{History, Settings};
 use aujar_ipc::{
     Event, ExecuteRequest, LauncherCommand, Request, Response, SearchHit, SearchRequest, send,
     subscribe,
@@ -25,8 +25,10 @@ use gpui::{
 use gpui_platform::application;
 use settings_view::SettingsView;
 use std::{
+    fs,
     path::{Path, PathBuf},
-    time::Duration,
+    process::Command,
+    time::{Duration, Instant, SystemTime},
 };
 use theme::Palette;
 
@@ -42,6 +44,8 @@ enum UiMessage {
     },
     Failed(String),
     OpenSettings,
+    /// New text on the system clipboard (from the watcher thread).
+    Clipboard(String),
 }
 
 /// UI thread -> bridge thread.
@@ -53,18 +57,25 @@ enum UiRequest {
 
 // ---- Sections ---------------------------------------------------------------------------
 
+/// Declaration order is display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
+    Recent,
+    Frequent,
     Answer,
+    Clipboard,
     Applications,
     Commands,
     Files,
     Web,
 }
 
+const SECTION_COUNT: usize = 8;
+
 fn section_of(kind: &str) -> Section {
     match kind {
         "calculation" => Section::Answer,
+        "clip" => Section::Clipboard,
         "application" => Section::Applications,
         "system" | "command" | "action" => Section::Commands,
         "file" | "folder" => Section::Files,
@@ -74,7 +85,10 @@ fn section_of(kind: &str) -> Section {
 
 fn section_title(section: Section) -> &'static str {
     match section {
+        Section::Recent => "Recent",
+        Section::Frequent => "Frequently used",
         Section::Answer => "Answer",
+        Section::Clipboard => "Clipboard",
         Section::Applications => "Applications",
         Section::Commands => "Commands",
         Section::Files => "Files & Folders",
@@ -87,6 +101,7 @@ fn kind_meta(kind: &str) -> (&'static str, &'static str) {
     match kind {
         "application" => ("App", "Open"),
         "calculation" => ("Answer", "Copy"),
+        "clip" => ("Clip", "Copy"),
         "file" => ("File", "Open"),
         "folder" => ("Folder", "Open"),
         "system" => ("System", "Run"),
@@ -159,17 +174,189 @@ fn web_hit(title: String, subtitle: String, url: String) -> SearchHit {
     }
 }
 
+// ---- Preview ----------------------------------------------------------------------------
+
+/// Details shown in the right-hand panel for the selected result.
+struct Preview {
+    title: String,
+    badge: &'static str,
+    rows: Vec<(&'static str, String)>,
+    /// First lines of a text file, or the full text of a clipboard entry.
+    text: Option<String>,
+    image: Option<PathBuf>,
+}
+
+fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+
+    let mut value = bytes as f64;
+    let mut unit = 0;
+
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+fn age_text(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+
+    match seconds {
+        0..=59 => "just now".to_owned(),
+        60..=3599 => format!("{} min ago", seconds / 60),
+        3600..=86_399 => format!("{} h ago", seconds / 3600),
+        _ => format!("{} days ago", seconds / 86_400),
+    }
+}
+
+fn first_chars(text: &str, limit: usize) -> String {
+    let mut out: String = text.chars().take(limit).collect();
+
+    if text.chars().count() > limit {
+        out.push('\u{2026}');
+    }
+
+    out
+}
+
+const TEXT_EXTENSIONS: [&str; 24] = [
+    "txt", "md", "rs", "py", "js", "ts", "json", "toml", "yaml", "yml", "sh", "c", "h", "cpp",
+    "css", "html", "csv", "log", "conf", "ini", "xml", "java", "go", "sql",
+];
+const IMAGE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
+
+/// First lines of a small text file; `None` for binary or unreadable files.
+fn read_text_preview(path: &Path) -> Option<String> {
+    use std::io::Read;
+
+    let mut buffer = Vec::new();
+
+    fs::File::open(path).ok()?.take(4096).read_to_end(&mut buffer).ok()?;
+
+    // A cut multi-byte character at the 4 KiB boundary is fine; NUL bytes mean binary.
+    if buffer.contains(&0) {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&buffer);
+    let lines: Vec<String> = text.lines().take(14).map(|line| first_chars(line, 70)).collect();
+
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
+    let (badge, _) = kind_meta(&hit.kind);
+
+    let mut preview = Preview {
+        title: hit.title.clone(),
+        badge,
+        rows: Vec::new(),
+        text: None,
+        image: None,
+    };
+
+    match hit.kind.as_str() {
+        "file" | "folder" => {
+            let Some(path) = hit.id.strip_prefix("files:open:").map(PathBuf::from) else {
+                return preview;
+            };
+
+            if let Some(parent) = hit.subtitle.clone() {
+                preview.rows.push(("Location", parent));
+            }
+
+            if let Ok(meta) = fs::metadata(&path) {
+                if meta.is_dir() {
+                    if let Ok(entries) = fs::read_dir(&path) {
+                        preview.rows.push(("Contains", format!("{} items", entries.count())));
+                    }
+                } else {
+                    preview.rows.push(("Size", human_size(meta.len())));
+                }
+
+                if let Ok(elapsed) = meta
+                    .modified()
+                    .and_then(|time| SystemTime::now().duration_since(time).map_err(std::io::Error::other))
+                {
+                    preview.rows.push(("Modified", age_text(elapsed)));
+                }
+
+                if meta.is_file() {
+                    let extension = path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .unwrap_or_default();
+
+                    if IMAGE_EXTENSIONS.contains(&extension.as_str()) && meta.len() < 15_000_000 {
+                        preview.image = Some(path.clone());
+                    } else if TEXT_EXTENSIONS.contains(&extension.as_str()) && meta.len() < 1_000_000 {
+                        preview.text = read_text_preview(&path);
+                    }
+                }
+            }
+        }
+        "clip" => {
+            let text = hit
+                .id
+                .strip_prefix("clip:")
+                .and_then(|index| index.parse::<usize>().ok())
+                .and_then(|index| clips.get(index));
+
+            if let Some(text) = text {
+                preview.rows.push(("Length", format!("{} characters", text.chars().count())));
+                preview.text = Some(first_chars(text, 700));
+            }
+        }
+        "calculation" => {
+            if let Some(expression) = &hit.subtitle {
+                preview.rows.push(("Input", expression.trim_start_matches("= ").to_owned()));
+            }
+
+            preview.rows.push(("Result", hit.title.clone()));
+        }
+        "web" => {
+            if let Some(url) = hit.id.strip_prefix("url:") {
+                preview.rows.push(("Address", url.to_owned()));
+            }
+        }
+        _ => {
+            if let Some(subtitle) = &hit.subtitle {
+                preview.rows.push(("About", subtitle.clone()));
+            }
+        }
+    }
+
+    preview
+}
+
 // ---- Launcher view ----------------------------------------------------------------------
 
 struct LauncherView {
     query: String,
+    /// Caret position: a byte offset into `query`, always on a character boundary.
+    cursor: usize,
     results: Vec<SearchHit>,
+    /// Section of each result, same length as `results`.
+    sections: Vec<Section>,
     selected: usize,
     status: Option<String>,
+    /// A hint (not an error), shown dimmed.
+    notice: Option<String>,
     /// Id of a dangerous result that is waiting for a second Enter.
     confirming: Option<String>,
+    preview: Option<Preview>,
     settings: Settings,
     palette: Palette,
+    history: History,
+    /// Snapshot of the clipboard history taken when the launcher opened (newest first).
+    clips: Vec<String>,
     requests: async_channel::Sender<UiRequest>,
     focus_handle: FocusHandle,
 }
@@ -178,32 +365,208 @@ impl LauncherView {
     fn new(
         requests: async_channel::Sender<UiRequest>,
         settings: Settings,
+        clips: Vec<String>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self {
+        let mut view = Self {
             query: String::new(),
+            cursor: 0,
             results: Vec::new(),
+            sections: Vec::new(),
             selected: 0,
             status: None,
+            notice: None,
             confirming: None,
+            preview: None,
             palette: Palette::from_settings(&settings),
+            history: History::load_or_default(),
             settings,
+            clips,
             requests,
             focus_handle: cx.focus_handle(),
+        };
+
+        view.show_empty_state();
+
+        view
+    }
+
+    // ---- Query editing ----
+
+    fn prev_boundary(&self, from: usize) -> usize {
+        self.query[..from]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(index, _)| index)
+    }
+
+    fn next_boundary(&self, from: usize) -> usize {
+        self.query[from..]
+            .chars()
+            .next()
+            .map_or(from, |c| from + c.len_utf8())
+    }
+
+    fn word_left(&self, from: usize) -> usize {
+        let head = self.query[..from].trim_end();
+
+        head.rfind(char::is_whitespace).map_or(0, |index| {
+            index + head[index..].chars().next().map_or(1, char::len_utf8)
+        })
+    }
+
+    fn word_right(&self, from: usize) -> usize {
+        let rest = &self.query[from..];
+        let skipped = rest.len() - rest.trim_start().len();
+        let word = &rest[skipped..];
+        let length = word.find(char::is_whitespace).unwrap_or(word.len());
+
+        from + skipped + length
+    }
+
+    fn insert_text(&mut self, text: &str) {
+        self.query.insert_str(self.cursor, text);
+        self.cursor += text.len();
+    }
+
+    fn delete_range(&mut self, start: usize, end: usize) {
+        self.query.replace_range(start..end, "");
+        self.cursor = start;
+    }
+
+    /// Call after the query text changed.
+    fn edited(&mut self, cx: &mut Context<Self>) {
+        self.cursor = self.cursor.min(self.query.len());
+        self.request_search();
+        cx.notify();
+    }
+
+    // ---- Searching ----
+
+    /// `clip foo` / `cb foo`: the text after the keyword, when clipboard history is on.
+    fn clip_filter(&self) -> Option<String> {
+        if !self.settings.plugins.clipboard {
+            return None;
         }
+
+        let lower = self.query.trim().to_lowercase();
+
+        for keyword in ["clip", "cb"] {
+            if lower == keyword {
+                return Some(String::new());
+            }
+
+            if let Some(rest) = lower.strip_prefix(keyword).filter(|rest| rest.starts_with(' ')) {
+                return Some(rest.trim().to_owned());
+            }
+        }
+
+        None
     }
 
     fn request_search(&mut self) {
         self.selected = 0;
         self.status = None;
+        self.notice = None;
         self.confirming = None;
 
         if self.query.trim().is_empty() {
-            self.results.clear();
+            self.show_empty_state();
+            return;
+        }
+
+        if let Some(filter) = self.clip_filter() {
+            self.show_clips(&filter);
             return;
         }
 
         let _ = self.requests.try_send(UiRequest::Search(self.query.clone()));
+    }
+
+    fn install(&mut self, hits: Vec<SearchHit>, sections: Vec<Section>) {
+        self.results = hits;
+        self.sections = sections;
+        self.selected = 0;
+        self.confirming = None;
+        self.refresh_preview();
+    }
+
+    fn refresh_preview(&mut self) {
+        self.preview = if self.settings.appearance.show_preview {
+            self.results
+                .get(self.selected)
+                .map(|hit| build_preview(hit, &self.clips))
+        } else {
+            None
+        };
+    }
+
+    /// Empty search box: recently and frequently used things.
+    fn show_empty_state(&mut self) {
+        if !self.settings.appearance.show_recents {
+            self.install(Vec::new(), Vec::new());
+            return;
+        }
+
+        let as_hit = |entry: &aujar_config::HistoryEntry| SearchHit {
+            id: entry.id.clone(),
+            title: entry.title.clone(),
+            subtitle: entry.subtitle.clone(),
+            kind: entry.kind.clone(),
+            score: 0,
+            icon: entry.icon.clone(),
+        };
+
+        let recent = self.history.recent(6);
+        let recent_ids: Vec<String> = recent.iter().map(|entry| entry.id.clone()).collect();
+        let skip: Vec<&str> = recent_ids.iter().map(String::as_str).collect();
+        let frequent = self.history.frequent(4, &skip);
+
+        let mut hits = Vec::new();
+        let mut sections = Vec::new();
+
+        for entry in recent {
+            hits.push(as_hit(entry));
+            sections.push(Section::Recent);
+        }
+
+        for entry in frequent {
+            hits.push(as_hit(entry));
+            sections.push(Section::Frequent);
+        }
+
+        self.install(hits, sections);
+    }
+
+    fn show_clips(&mut self, filter: &str) {
+        let filter = filter.to_lowercase();
+
+        let hits: Vec<SearchHit> = self
+            .clips
+            .iter()
+            .enumerate()
+            .filter(|(_, text)| filter.is_empty() || text.to_lowercase().contains(&filter))
+            .take(8)
+            .map(|(index, text)| SearchHit {
+                id: format!("clip:{index}"),
+                title: first_chars(text.lines().next().unwrap_or_default().trim(), 90),
+                subtitle: Some(format!("{} characters", text.chars().count())),
+                kind: "clip".to_owned(),
+                score: 0,
+                icon: None,
+            })
+            .collect();
+
+        if self.clips.is_empty() {
+            self.notice = Some(
+                "Nothing here yet. Clipboard history records what you copy while Aujar's UI is running."
+                    .to_owned(),
+            );
+        }
+
+        let sections = vec![Section::Clipboard; hits.len()];
+
+        self.install(hits, sections);
     }
 
     /// Add the UI-side results (settings, web), group into sections and cap each section.
@@ -267,11 +630,21 @@ impl LauncherView {
             hits.extend(web);
         }
 
-        // Stable sort keeps the daemon's ranking inside each section.
-        hits.sort_by_key(|hit| section_of(&hit.kind) as u8);
+        // Stable sort: sections in display order; inside a section, things you launch often
+        // float up (a nudge, not an override of the daemon's ranking).
+        let history = &self.history;
+
+        hits.sort_by_key(|hit| {
+            let boost = 150 * history.count_of(&hit.id).min(5);
+
+            (
+                section_of(&hit.kind) as usize,
+                std::cmp::Reverse(hit.score + boost),
+            )
+        });
 
         let apps_cap = self.settings.appearance.max_results as usize;
-        let mut counts = [0usize; 5];
+        let mut counts = [0usize; SECTION_COUNT];
 
         hits.retain(|hit| {
             let section = section_of(&hit.kind);
@@ -281,16 +654,17 @@ impl LauncherView {
                 Section::Commands => 4,
                 Section::Files => apps_cap.min(6),
                 Section::Web => 3,
+                Section::Recent | Section::Frequent | Section::Clipboard => usize::MAX,
             };
 
             counts[section as usize] += 1;
             counts[section as usize] <= cap
         });
 
-        self.results = hits;
-        self.selected = 0;
+        let sections = hits.iter().map(|hit| section_of(&hit.kind)).collect();
+
+        self.install(hits, sections);
         self.status = None;
-        self.confirming = None;
     }
 
     fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -299,18 +673,28 @@ impl LauncherView {
         if len > 0 {
             self.selected = (self.selected as isize + delta).rem_euclid(len) as usize;
             self.confirming = None;
+            self.refresh_preview();
             cx.notify();
         }
     }
 
-    /// What Ctrl+C copies for a result: a path, a URL, or the answer itself.
-    fn copy_text(hit: &SearchHit) -> String {
+    /// What Ctrl+C copies for a result: a path, a URL, a clipboard entry or the answer.
+    fn copy_text(&self, hit: &SearchHit) -> String {
         if let Some(path) = hit.id.strip_prefix("files:open:") {
             return path.to_owned();
         }
 
         if let Some(url) = hit.id.strip_prefix("url:") {
             return url.to_owned();
+        }
+
+        if let Some(text) = hit
+            .id
+            .strip_prefix("clip:")
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| self.clips.get(index))
+        {
+            return text.clone();
         }
 
         hit.title.clone()
@@ -332,7 +716,7 @@ impl LauncherView {
             }
         }
 
-        // Emacs/readline-style chords and copy.
+        // Emacs/readline-style chords, word movement and copy.
         if modifiers.control {
             match key {
                 "n" | "j" => self.move_selection(1, cx),
@@ -340,30 +724,48 @@ impl LauncherView {
                 "enter" => self.launch_selected(true, window, cx),
                 "c" => {
                     if let Some(hit) = self.results.get(self.selected) {
-                        cx.write_to_clipboard(ClipboardItem::new_string(Self::copy_text(hit)));
+                        cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(hit)));
                         window.remove_window();
                     }
                 }
-                "u" => {
-                    self.query.clear();
-                    self.request_search();
+                "a" => {
+                    self.cursor = 0;
                     cx.notify();
                 }
-                "w" => {
-                    let trimmed = self.query.trim_end().len();
-                    let keep = self.query[..trimmed]
-                        .rfind(char::is_whitespace)
-                        .map_or(0, |index| index + 1);
-                    self.query.truncate(keep);
-                    self.request_search();
+                "e" => {
+                    self.cursor = self.query.len();
                     cx.notify();
+                }
+                "left" => {
+                    self.cursor = self.word_left(self.cursor);
+                    cx.notify();
+                }
+                "right" => {
+                    self.cursor = self.word_right(self.cursor);
+                    cx.notify();
+                }
+                "u" => {
+                    self.query.clear();
+                    self.cursor = 0;
+                    self.edited(cx);
+                }
+                "w" | "backspace" => {
+                    let start = self.word_left(self.cursor);
+                    self.delete_range(start, self.cursor);
+                    self.edited(cx);
                 }
                 "v" => {
                     if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        let line = text.lines().next().unwrap_or_default();
-                        self.query.extend(line.chars().filter(|c| !c.is_control()));
-                        self.request_search();
-                        cx.notify();
+                        let line: String = text
+                            .lines()
+                            .next()
+                            .unwrap_or_default()
+                            .chars()
+                            .filter(|c| !c.is_control())
+                            .collect();
+
+                        self.insert_text(&line);
+                        self.edited(cx);
                     }
                 }
                 _ => {}
@@ -378,8 +780,8 @@ impl LauncherView {
                     window.remove_window();
                 } else {
                     self.query.clear();
-                    self.request_search();
-                    cx.notify();
+                    self.cursor = 0;
+                    self.edited(cx);
                 }
                 return;
             }
@@ -399,10 +801,40 @@ impl LauncherView {
                 self.move_selection(if modifiers.shift { -1 } else { 1 }, cx);
                 return;
             }
-            "backspace" => {
-                self.query.pop();
-                self.request_search();
+            "left" => {
+                self.cursor = self.prev_boundary(self.cursor);
                 cx.notify();
+                return;
+            }
+            "right" => {
+                self.cursor = self.next_boundary(self.cursor);
+                cx.notify();
+                return;
+            }
+            "home" => {
+                self.cursor = 0;
+                cx.notify();
+                return;
+            }
+            "end" => {
+                self.cursor = self.query.len();
+                cx.notify();
+                return;
+            }
+            "backspace" => {
+                if self.cursor > 0 {
+                    let start = self.prev_boundary(self.cursor);
+                    self.delete_range(start, self.cursor);
+                    self.edited(cx);
+                }
+                return;
+            }
+            "delete" => {
+                if self.cursor < self.query.len() {
+                    let end = self.next_boundary(self.cursor);
+                    self.delete_range(self.cursor, end);
+                    self.edited(cx);
+                }
                 return;
             }
             _ => {}
@@ -418,9 +850,28 @@ impl LauncherView {
             .as_ref()
             .filter(|text| !text.chars().any(char::is_control))
         {
-            self.query.push_str(text);
-            self.request_search();
-            cx.notify();
+            self.insert_text(text);
+            self.edited(cx);
+        }
+    }
+
+    /// Remember a launch so it shows up under Recent and ranks a little higher next time.
+    fn record_launch(&mut self, hit: &SearchHit) {
+        let recordable = matches!(
+            hit.kind.as_str(),
+            "application" | "file" | "folder" | "system" | "action"
+        );
+
+        if recordable && !is_dangerous(&hit.id) {
+            self.history.record(
+                &hit.id,
+                &hit.title,
+                hit.subtitle.as_deref(),
+                &hit.kind,
+                hit.icon.as_deref(),
+            );
+
+            let _ = self.history.save();
         }
     }
 
@@ -436,11 +887,16 @@ impl LauncherView {
             return;
         }
 
+        self.record_launch(&hit);
+
         match hit.kind.as_str() {
             // Calculations are not launchable: copy the answer instead. The UI process stays
             // alive, so it keeps owning the Wayland clipboard after the window closes.
             "calculation" => {
                 cx.write_to_clipboard(ClipboardItem::new_string(hit.title.clone()));
+            }
+            "clip" => {
+                cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(&hit)));
             }
             "web" => {
                 if let Some(url) = hit.id.strip_prefix("url:").filter(|url| is_web_url(url)) {
@@ -467,11 +923,11 @@ impl LauncherView {
 
     // ---- Rendering ----
 
-    fn leading(&self, hit: &SearchHit) -> AnyElement {
+    fn leading(&self, hit: &SearchHit, tile: f32) -> AnyElement {
         if self.settings.appearance.show_icons {
             if let Some(icon) = hit.icon.as_deref() {
                 return img(PathBuf::from(icon))
-                    .size(px(36.))
+                    .size(px(tile))
                     .flex_shrink_0()
                     .into_any_element();
             }
@@ -482,6 +938,7 @@ impl LauncherView {
             "file" => (0x6b7a90, "D".to_owned()),
             "system" => (0xc2414f, "S".to_owned()),
             "command" => (0x3d3d48, ">".to_owned()),
+            "clip" => (0x6b5bd6, "C".to_owned()),
             "action" => (self.settings.appearance.accent.rgb(), "A".to_owned()),
             "web" => (0x2f8fd8, "\u{2197}".to_owned()),
             _ => {
@@ -503,7 +960,7 @@ impl LauncherView {
             .flex()
             .items_center()
             .justify_center()
-            .size(px(36.))
+            .size(px(tile))
             .flex_shrink_0()
             .rounded_lg()
             .bg(rgb(color))
@@ -598,7 +1055,7 @@ impl LauncherView {
         };
 
         base.py_2()
-            .child(self.leading(hit))
+            .child(self.leading(hit, 36.))
             .child(
                 div()
                     .flex()
@@ -612,6 +1069,56 @@ impl LauncherView {
             )
             .child(div().text_xs().text_color(sub_color).child(trailing))
             .into_any_element()
+    }
+
+    fn render_preview(&self) -> Option<AnyElement> {
+        let preview = self.preview.as_ref()?;
+        let hit = self.results.get(self.selected)?;
+        let pal = self.palette;
+
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .w(px(270.))
+                .flex_shrink_0()
+                .p_4()
+                .border_l_1()
+                .border_color(rgba(pal.divider))
+                .child(self.leading(hit, 56.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(div().text_lg().text_color(rgb(pal.text)).child(preview.title.clone()))
+                        .child(div().text_xs().text_color(rgb(pal.text_dim)).child(preview.badge)),
+                )
+                .when_some(preview.image.clone(), |this, path| {
+                    this.child(img(path).w_full().max_h(px(170.)).rounded_md())
+                })
+                .children(preview.rows.iter().map(|(label, value)| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_xs().text_color(rgb(pal.text_dim)).child(*label))
+                        .child(div().text_sm().text_color(rgb(pal.text)).child(value.clone()))
+                }))
+                .when_some(preview.text.clone(), |this, text| {
+                    this.child(
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .bg(rgba(pal.subtle))
+                            .overflow_hidden()
+                            .text_xs()
+                            .text_color(rgb(pal.text_dim))
+                            .child(text),
+                    )
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_footer(&self) -> impl IntoElement {
@@ -637,6 +1144,10 @@ impl LauncherView {
                 hints.push(("g query", "Web shortcut"));
                 hints.push(("> cmd", "Run command"));
                 hints.push(("10 km to mi", "Convert"));
+
+                if self.settings.plugins.clipboard {
+                    hints.push(("clip", "Clipboard"));
+                }
             }
         }
 
@@ -662,6 +1173,42 @@ impl LauncherView {
                     .child(div().text_xs().text_color(rgb(pal.text_dim)).child(label))
             }))
     }
+
+    /// The search field with a caret at the cursor position.
+    fn render_query(&self) -> AnyElement {
+        let pal = self.palette;
+
+        let caret = || {
+            div()
+                .w(px(2.))
+                .h(px(26.))
+                .flex_shrink_0()
+                .bg(rgb(pal.accent))
+        };
+
+        let field = div().flex().flex_row().items_center().flex_1().text_2xl();
+
+        if self.query.is_empty() {
+            return field
+                .child(caret())
+                .child(
+                    div()
+                        .pl_1()
+                        .text_color(rgb(pal.text_dim))
+                        .child("Search apps, files, math and the web"),
+                )
+                .into_any_element();
+        }
+
+        let (before, after) = self.query.split_at(self.cursor.min(self.query.len()));
+
+        field
+            .text_color(rgb(pal.text))
+            .child(before.to_owned())
+            .child(caret())
+            .child(after.to_owned())
+            .into_any_element()
+    }
 }
 
 impl Focusable for LauncherView {
@@ -674,18 +1221,12 @@ impl Render for LauncherView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pal = self.palette;
 
-        let (query_line, query_color) = if self.query.is_empty() {
-            ("Search apps, files, math and the web".to_owned(), rgb(pal.text_dim))
-        } else {
-            (format!("{}\u{258F}", self.query), rgb(pal.text))
-        };
-
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut last_section: Option<Section> = None;
 
         for index in 0..self.results.len() {
             let hit = self.results[index].clone();
-            let section = section_of(&hit.kind);
+            let section = self.sections.get(index).copied().unwrap_or(Section::Web);
 
             if last_section != Some(section) {
                 rows.push(
@@ -705,6 +1246,7 @@ impl Render for LauncherView {
         }
 
         let show_footer = self.settings.appearance.show_footer;
+        let preview = self.render_preview();
 
         // The window is transparent: only this card is painted, so with no results it
         // collapses to the search bar (plus the hint bar), like Spotlight.
@@ -736,12 +1278,35 @@ impl Render for LauncherView {
                             .border_2()
                             .border_color(rgb(pal.text_dim)),
                     )
-                    .child(div().flex_1().text_2xl().text_color(query_color).child(query_line))
+                    .child(self.render_query())
                     .child(self.keycap("Esc")),
             )
             .when(!rows.is_empty(), |this| {
-                this.child(div().h(px(1.)).w_full().bg(rgba(pal.divider)))
-                    .child(div().flex().flex_col().pb_2().children(rows))
+                this.child(div().h(px(1.)).w_full().bg(rgba(pal.divider))).child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .overflow_hidden()
+                                .pb_2()
+                                .children(rows),
+                        )
+                        .when_some(preview, |this, preview| this.child(preview)),
+                )
+            })
+            .when_some(self.notice.clone(), |this, notice| {
+                this.child(
+                    div()
+                        .px_5()
+                        .pb_3()
+                        .text_sm()
+                        .text_color(rgb(pal.text_dim))
+                        .child(notice),
+                )
             })
             .when_some(self.status.clone(), |this, status| {
                 this.child(
@@ -760,11 +1325,23 @@ impl Render for LauncherView {
 fn open_launcher(
     cx: &mut App,
     requests: async_channel::Sender<UiRequest>,
+    clips: &mut Vec<String>,
 ) -> Option<WindowHandle<LauncherView>> {
     // Re-read the settings every time, so changes apply on the next open.
     let settings = Settings::load_or_default();
     let width = settings.appearance.width as f32;
     let bounds = Bounds::centered(None, size(px(width), px(WINDOW_H)), cx);
+
+    // Best effort: whatever is on the clipboard now joins the history (on GNOME/Wayland the
+    // background watcher cannot see the clipboard, so this is how entries get captured).
+    if settings.plugins.clipboard {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            push_clip(clips, text);
+        }
+    }
+
+    let close_on_blur = settings.appearance.close_on_blur;
+    let snapshot = clips.clone();
 
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -774,12 +1351,28 @@ fn open_launcher(
         ..Default::default()
     };
 
-    cx.open_window(options, |window, cx| {
-        let view = cx.new(|cx| LauncherView::new(requests, settings, cx));
+    cx.open_window(options, move |window, cx| {
+        let view = cx.new(|cx| LauncherView::new(requests, settings, snapshot, cx));
         let focus_handle = view.read(cx).focus_handle.clone();
 
         // Without focus, key events never reach the view.
         window.focus(&focus_handle, cx);
+
+        // Click-away closes the launcher. The grace period ignores the focus churn that
+        // compositors (especially Wayland) produce while a new window is being mapped.
+        if close_on_blur {
+            let opened = Instant::now();
+
+            view.update(cx, |_view, cx| {
+                cx.observe_window_activation(window, move |_this, window, _cx| {
+                    if !window.is_window_active() && opened.elapsed() > Duration::from_millis(500)
+                    {
+                        window.remove_window();
+                    }
+                })
+                .detach();
+            });
+        }
 
         view
     })
@@ -787,7 +1380,7 @@ fn open_launcher(
 }
 
 fn open_settings(cx: &mut App) -> Option<WindowHandle<SettingsView>> {
-    let bounds = Bounds::centered(None, size(px(760.), px(640.)), cx);
+    let bounds = Bounds::centered(None, size(px(760.), px(700.)), cx);
 
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -806,12 +1399,27 @@ fn open_settings(cx: &mut App) -> Option<WindowHandle<SettingsView>> {
     .ok()
 }
 
+/// Newest first, de-duplicated, bounded. Memory only: never written to disk.
+fn push_clip(clips: &mut Vec<String>, text: String) {
+    let text = text.trim().to_owned();
+
+    if text.is_empty() || text.chars().count() > 4000 {
+        return;
+    }
+
+    clips.retain(|existing| *existing != text);
+    clips.insert(0, text);
+    clips.truncate(50);
+}
+
 // ---- Window bookkeeping -----------------------------------------------------------------
 
 #[derive(Default)]
 struct UiState {
     launcher: Option<WindowHandle<LauncherView>>,
     settings: Option<WindowHandle<SettingsView>>,
+    /// Clipboard history, newest first (memory only).
+    clips: Vec<String>,
 }
 
 fn handle_message(
@@ -856,7 +1464,9 @@ fn handle_message(
             };
 
             match (is_open, want_open) {
-                (false, true) => state.launcher = open_launcher(cx, requests.clone()),
+                (false, true) => {
+                    state.launcher = open_launcher(cx, requests.clone(), &mut state.clips)
+                }
                 (true, false) => {
                     if let Some(handle) = state.launcher.take() {
                         let _ = handle.update(cx, |_, window, _| window.remove_window());
@@ -876,6 +1486,7 @@ fn handle_message(
                 });
             }
         }
+        UiMessage::Clipboard(text) => push_clip(&mut state.clips, text),
         UiMessage::Failed(message) => {
             if let Some(handle) = state.launcher.as_ref() {
                 let _ = handle.update(cx, |view, _, cx| {
@@ -1005,10 +1616,72 @@ fn spawn_bridge(
     });
 }
 
+/// Polls the system clipboard for the history (X11 via `xclip`, Wayland via `wl-paste`).
+/// GNOME's Wayland session does not allow background clipboard reads, so there the watcher
+/// gives up quietly and history only gets what is on the clipboard when the launcher opens.
+fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
+    std::thread::spawn(move || {
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+
+        let (program, args): (&str, &[&str]) = if wayland {
+            ("wl-paste", &["--no-newline", "--type", "text"])
+        } else {
+            ("xclip", &["-selection", "clipboard", "-o"])
+        };
+
+        let mut enabled = false;
+        let mut failures = 0u32;
+        let mut ticks = 0u32;
+        let mut last = String::new();
+
+        loop {
+            std::thread::sleep(Duration::from_millis(1500));
+
+            // The setting can change while we run; re-read it every few seconds.
+            if ticks % 4 == 0 {
+                enabled = Settings::load_or_default().plugins.clipboard;
+            }
+
+            ticks = ticks.wrapping_add(1);
+
+            if !enabled {
+                continue;
+            }
+
+            match Command::new(program).args(args).output() {
+                Ok(output) if output.status.success() => {
+                    failures = 0;
+
+                    if let Ok(text) = String::from_utf8(output.stdout) {
+                        if text != last {
+                            last = text.clone();
+
+                            if tx.send_blocking(UiMessage::Clipboard(text)).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                // An empty clipboard is an error exit for wl-paste, not a broken tool.
+                Ok(output)
+                    if String::from_utf8_lossy(&output.stderr).contains("Nothing is copied") => {}
+                _ => {
+                    failures += 1;
+
+                    if failures >= 10 {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+}
+
 fn main() {
     let (message_tx, message_rx) = async_channel::unbounded::<UiMessage>();
     let (request_tx, request_rx) = async_channel::unbounded::<UiRequest>();
 
+    spawn_clipboard_watcher(message_tx.clone());
     spawn_bridge(socket_path(), message_tx, request_rx);
 
     // Closing the launcher window (Esc / Enter) must not end the process: the UI has to

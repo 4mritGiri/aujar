@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
 
-# GPUI spike: built separately so the platform crates need no GPU/windowing libraries.
-exclude = ["apps/aujar-ui"]
-
 members = [
     "crates/aujar-core",
     "crates/aujar-config",
@@ -14,6 +11,12 @@ members = [
     "crates/aujar-plugin",
     "crates/aujar-runtime",
     "apps/aujar-launcher",
+    # The GPUI launcher UI is a member (so `cargo run -p aujar-ui --release` works) but NOT a
+    # default member: plain `cargo build` / `cargo check` skip it and need no GPU or
+    # windowing libraries. CI and `just check` pass `--exclude aujar-ui` for `--workspace`.
+    # Never build it together with the daemon in ONE cargo command: `ashpd` is used with the
+    # tokio runtime by the daemon and with async-io by GPUI, and the features would unify.
+    "apps/aujar-ui",
     "modules/launcher",
     "modules/window",
     "modules/zones",

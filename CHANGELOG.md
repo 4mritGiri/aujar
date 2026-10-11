@@ -14,7 +14,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Packaging: `.deb` (cargo-deb), `.rpm` (cargo-generate-rpm), tarball for x86_64 and aarch64, Arch PKGBUILD, per-user `install-local.sh`; CI builds and installs the deb on every PR; tag-triggered release workflow.
 - Native global hotkey (`aujar-hotkeys`): registers Ctrl+Alt+Space through the `GlobalShortcuts` portal and toggles the launcher; falls back with a log message when the portal is missing. `Options::hotkeys` (tests disable it); policy `global_hotkeys` disables it.
 - GPUI spike: keyboard-driven launcher (type, Up/Down, Enter to launch, Esc to close).
-- GPUI spike (`apps/aujar-ui`, pinned `gpui-pre =0.3.3` snapshot, separate workspace): toggles a window from daemon events and shows search results. See docs/UI_SPIKE.md.
+- GPUI spike (`apps/aujar-ui`, pinned `gpui-pre =0.3.3` snapshot, non-default workspace member: `cargo run -p aujar-ui --release`): toggles a window from daemon events and shows search results. See docs/UI_SPIKE.md.
 - IPC event stream: `Subscribe` connections, `Launcher` show/hide/toggle broadcast, `Shutdown` event; `aujar launcher` and `aujar events`.
 - `aujar_ipc::{encode_line, decode_line, Envelope, subscribe, EventStream}`; daemon and client share one framing implementation.
 - Daemon integration tests for the event stream. Docs: IPC protocol and keyboard-shortcut recipes.

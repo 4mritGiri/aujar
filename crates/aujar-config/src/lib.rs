@@ -1,5 +1,7 @@
+mod history;
 mod settings;
 
+pub use history::{History, HistoryEntry};
 pub use settings::{
     Accent, Appearance, Engine, Files, Plugins, Settings, Theme, Web, WebShortcut,
 };

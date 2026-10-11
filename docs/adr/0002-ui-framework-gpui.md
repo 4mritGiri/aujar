@@ -29,9 +29,15 @@ Known constraints:
 1. Build the UI with GPUI, in a **separate process** (`aujar-ui`) that talks to the daemon
    over the existing IPC. The daemon stays headless and toolkit-free.
 2. Pin GPUI to exact versions (`gpui-pre =0.3.3`, `gpui-pre-platform =0.3.3`) in
-   `apps/aujar-ui/Cargo.toml` and commit its `Cargo.lock`; upgrade deliberately via PR.
+   `apps/aujar-ui/Cargo.toml` and commit `Cargo.lock`; upgrade deliberately via PR.
 3. Keep `aujar-ui` **outside the default workspace members** so `cargo check` for the platform
    crates does not require GPU/windowing system libraries. UI has its own CI job.
+   *Amendment:* it is now a non-default workspace **member** (not excluded), so
+   `cargo run -p aujar-ui --release` works from the repository root. The platform jobs use
+   `--workspace --exclude aujar-ui`, `cargo-deny` excludes it from its graph, and the UI is
+   covered by `just check-ui` / the UI workflow. The cost: one shared `Cargo.lock`, and the UI
+   and the daemon must be built in **separate** cargo invocations (`ashpd`'s `tokio` and
+   `async-io` features are mutually exclusive and would unify otherwise).
 4. Global hotkeys, tray and window control stay in the daemon (portals, X11 grabs, compositor
    IPC), not in the UI toolkit. The daemon tells the UI to show/hide via IPC events.
 5. No Aujar logic in the UI: it renders state and sends requests.

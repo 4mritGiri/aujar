@@ -21,9 +21,21 @@ each time it opens, and the daemon reloads its plugins when the file changes (no
 | `github.com/rust-lang` | Open a URL |
 | `g rust lifetimes`, `yt lofi`, `gh aujar`, `w linux`, `maps pokhara` | Web shortcuts |
 | `? anything` | Search with your default engine |
+| `100 usd to eur`, `$50 in npr` | Currency conversion (opt-in: downloads rates with `curl`; rates by [Exchange Rate API](https://www.exchangerate-api.com)) |
+| `wifi off`, `bluetooth on`, `mute`, `dark mode` | More system commands (shown only when `nmcli`, `bluetoothctl`, `wpctl`/`pactl`, `gsettings` exist) |
+| `clip`, `cb foo` | Clipboard history (opt-in, kept in memory only) |
+| *(empty box)* | Recent and frequently used items |
 | anything | A "Search the web" row at the bottom |
 
-Keys: Up/Down/Tab/Shift+Tab or Ctrl+N/P/J/K move; Enter runs; Alt+1..9 runs that row;
+The right-hand preview pane shows details of the selected result: size and modified time
+for files, the first lines of text files, image thumbnails, and clipboard text.
+
+Clipboard history notes: on X11 (`xclip`) and wlroots/KDE Wayland (`wl-clipboard`) a background
+watcher records every copy. GNOME's Wayland session forbids that, so there the history only
+gains what is on the clipboard each time you open the launcher.
+
+Keys: Left/Right/Home/End/Delete edit the query (Ctrl+Left/Right jump words, Ctrl+A/E home/end);
+Up/Down/Tab/Shift+Tab or Ctrl+N/P/J/K move; Enter runs; Alt+1..9 runs that row;
 Ctrl+U clears; Ctrl+W deletes a word; Ctrl+V pastes; Esc clears, then closes.
 
 ## Config file reference
@@ -32,15 +44,20 @@ Ctrl+U clears; Ctrl+W deletes a word; Ctrl+V pastes; Esc clears, then closes.
 [appearance]
 theme = "dark"        # "dark" | "light"
 accent = "blue"       # blue | purple | pink | orange | green | teal
-width = 680           # 480..1000
+width = 860           # 480..1000
 max_results = 6       # 3..12
 show_icons = true
 show_footer = true
+show_preview = true
+show_recents = true
+close_on_blur = true
 
 [plugins]
 applications = true
 calculator = true
 units = true
+currency = false      # downloads exchange rates
+clipboard = false     # records what you copy (memory only)
 files = true
 system = true
 shell = false         # runs arbitrary commands

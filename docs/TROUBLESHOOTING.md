@@ -15,7 +15,7 @@ Work through these in order.
 
 1. **Is the UI running?** A shortcut only *toggles* a running UI; the daemon alone shows no
    window. `aujar doctor` should show `UI clients: 1` or more. While the UI is still a spike,
-   start it yourself: `cd apps/aujar-ui && cargo run`.
+   start it yourself: `cargo run -p aujar-ui --release`.
 2. **Do the events arrive?** In one terminal run `aujar events`, press the shortcut, and watch for
    `Launcher(Toggle)`. If it appears, the shortcut and daemon work and the problem is the UI.
    If not, continue.

@@ -4,7 +4,7 @@ name: UI
 on:
   workflow_dispatch:
   pull_request:
-    paths: ["apps/aujar-ui/**", "crates/aujar-ipc/**"]
+    paths: ["apps/aujar-ui/**", "crates/aujar-ipc/**", "crates/aujar-config/**", "Cargo.lock"]
 
 jobs:
   build:
@@ -18,4 +18,4 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libwayland-dev libvulkan-dev mesa-vulkan-drivers libfontconfig-dev
-      - run: cargo check --manifest-path apps/aujar-ui/Cargo.toml
+      - run: cargo check -p aujar-ui

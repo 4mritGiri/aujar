@@ -1,7 +1,7 @@
 # GPUI Spike
 
 Goal: decide whether GPUI is viable for Aujar's UI ([ADR 0002](adr/0002-ui-framework-gpui.md)).
-The spike lives in `apps/aujar-ui` and is built **separately** from the main workspace.
+The spike lives in `apps/aujar-ui`. It is a workspace member but **not** a default member, so a plain `cargo build` skips it; build or run it explicitly with `-p aujar-ui`.
 
 What it does: a GPUI window opens, renders on the GPU, is shown/hidden by daemon events
 (`aujar launcher show|hide|toggle`), and lets you **type a query, pick a result and launch it**.
@@ -20,7 +20,7 @@ sudo apt install build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-de
 
 ```bash
 cargo run -p aujar-launcher-app -- daemon                     # terminal 1
-cd apps/aujar-ui && cargo run                                 # terminal 2 (first build is slow)
+cargo run -p aujar-ui --release                               # terminal 2 (first build is slow)
 # then type, e.g. `fire`, press Enter to launch
 cargo run -p aujar-launcher-app -- launcher toggle            # terminal 3: window opens
 cargo run -p aujar-launcher-app -- launcher toggle            # window closes
@@ -57,7 +57,7 @@ cargo run -p aujar-launcher-app -- launcher toggle            # window closes
   Check whether that is intended; the background color is set opaque in code.
 - The official crates.io `gpui 0.2.2` failed to build on a current toolchain (`xattr 0.2.3` vs
   `libc`) and a git dependency on Zed `main` failed to resolve, so the spike uses the community
-  `gpui-pre*` snapshot crates (zed@5b055fa). Commit `apps/aujar-ui/Cargo.lock`.
+  `gpui-pre*` snapshot crates (zed@5b055fa). Commit the root `Cargo.lock` (it now also locks the UI).
 - The snapshot's Linux platform crate depends on a wgpu-based renderer crate (`gpui-pre-wgpu`), so
   rendering goes through wgpu (Vulkan/GL). Confirm the active backend on your machine and record it.
 

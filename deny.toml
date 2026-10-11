@@ -1,4 +1,8 @@
 # cargo-deny configuration: https://embarkstudios.github.io/cargo-deny/
+
+# The GPUI UI (and its large dependency tree) is audited separately; see docs/adr/0002.
+[graph]
+exclude = ["aujar-ui"]
 [advisories]
 version = 2
 
