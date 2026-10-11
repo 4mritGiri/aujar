@@ -179,6 +179,7 @@ impl Provider for CalculatorProvider {
             subtitle: Some(format!("= {query}")),
             kind: ResultKind::Calculation,
             score: 2000,
+            icon: None,
         }]
     }
 }

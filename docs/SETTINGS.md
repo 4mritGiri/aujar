@@ -1,0 +1,59 @@
+# Settings and launcher features
+
+Open the settings window with any of:
+
+- type `aujar settings` in the launcher,
+- `aujar launcher settings`.
+
+Changes save immediately to `~/.config/aujar/settings.toml`. The launcher re-reads the file
+each time it opens, and the daemon reloads its plugins when the file changes (no restart).
+
+## What you can type in the launcher
+
+| You type | You get |
+| --- | --- |
+| `fire` | Applications (with icons), then files and folders |
+| `2*(3+4)`, `2^10` | Calculator answer card. Enter copies it |
+| `10 km to mi`, `100 f to c`, `2 gb to mb` | Unit conversion (length, mass, volume, time, data, speed, area, temperature) |
+| `report` | Files and folders by name (Ctrl+Enter shows the file in its folder, Ctrl+C copies the path) |
+| `lock`, `sleep`, `restart`, `shut down`, `log out` | System commands (restart, shut down and log out ask for a second Enter) |
+| `> ls -la` | Run a shell command (off by default, enable in Settings -> Search plugins) |
+| `github.com/rust-lang` | Open a URL |
+| `g rust lifetimes`, `yt lofi`, `gh aujar`, `w linux`, `maps pokhara` | Web shortcuts |
+| `? anything` | Search with your default engine |
+| anything | A "Search the web" row at the bottom |
+
+Keys: Up/Down/Tab/Shift+Tab or Ctrl+N/P/J/K move; Enter runs; Alt+1..9 runs that row;
+Ctrl+U clears; Ctrl+W deletes a word; Ctrl+V pastes; Esc clears, then closes.
+
+## Config file reference
+
+```toml
+[appearance]
+theme = "dark"        # "dark" | "light"
+accent = "blue"       # blue | purple | pink | orange | green | teal
+width = 680           # 480..1000
+max_results = 6       # 3..12
+show_icons = true
+show_footer = true
+
+[plugins]
+applications = true
+calculator = true
+units = true
+files = true
+system = true
+shell = false         # runs arbitrary commands
+
+[files]
+roots = ["~"]         # directories to index
+max_depth = 4
+
+[web]
+engine = "duckduckgo" # duckduckgo | google | brave | bing | startpage
+
+[[web.shortcuts]]
+keyword = "g"
+name = "Google"
+url = "https://www.google.com/search?q="
+```

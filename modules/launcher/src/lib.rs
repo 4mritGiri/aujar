@@ -1,12 +1,51 @@
 mod apps;
 mod calculator;
+mod files;
+mod icons;
 mod model;
 mod ranking;
+mod shell;
+mod system;
+mod units;
 
 pub use apps::{AppsProvider, DesktopEntry, default_dirs, parse_desktop_entry, parse_exec};
 pub use calculator::{CalculatorProvider, evaluate};
+pub use files::FilesProvider;
+pub use icons::resolve_icon;
 pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
 pub use ranking::{score, score_strict};
+pub use shell::ShellProvider;
+pub use system::SystemProvider;
+pub use units::{UnitsProvider, convert_query};
+
+/// Which providers a [`Launcher`] is built with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LauncherOptions {
+    pub applications: bool,
+    pub calculator: bool,
+    pub units: bool,
+    pub files: bool,
+    pub system: bool,
+    /// Runs arbitrary commands, so it is opt-in.
+    pub shell: bool,
+    pub file_roots: Vec<String>,
+    pub file_depth: usize,
+}
+
+impl Default for LauncherOptions {
+    fn default() -> Self {
+        Self {
+            applications: true,
+            calculator: true,
+            units: true,
+            files: true,
+            system: true,
+            shell: false,
+            file_roots: vec!["~".to_owned()],
+            file_depth: 4,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LauncherQuery {
@@ -37,12 +76,40 @@ impl Launcher {
         }
     }
 
-    /// Calculator plus installed desktop applications.
+    /// Every default provider except the opt-in shell.
     pub fn with_default_providers() -> Self {
+        Self::with_options(&LauncherOptions::default())
+    }
+
+    pub fn with_options(options: &LauncherOptions) -> Self {
         let mut launcher = Self::new();
 
-        launcher.register(Box::new(CalculatorProvider));
-        launcher.register(Box::new(AppsProvider::from_env()));
+        if options.calculator {
+            launcher.register(Box::new(CalculatorProvider));
+        }
+
+        if options.units {
+            launcher.register(Box::new(UnitsProvider));
+        }
+
+        if options.applications {
+            launcher.register(Box::new(AppsProvider::from_env()));
+        }
+
+        if options.files {
+            launcher.register(Box::new(FilesProvider::new(
+                &options.file_roots,
+                options.file_depth,
+            )));
+        }
+
+        if options.system {
+            launcher.register(Box::new(SystemProvider::new()));
+        }
+
+        if options.shell {
+            launcher.register(Box::new(ShellProvider));
+        }
 
         launcher
     }
@@ -112,6 +179,7 @@ mod tests {
             subtitle: None,
             kind: ResultKind::Application,
             score,
+            icon: None,
         }
     }
 

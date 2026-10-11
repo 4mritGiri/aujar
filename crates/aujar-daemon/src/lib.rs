@@ -51,11 +51,71 @@ const EVENT_BUFFER: usize = 64;
 
 use modules::CoreModule;
 
+/// The launcher plus the settings file it was built from. The launcher is rebuilt when the
+/// file changes, so toggling a plugin in the settings window needs no daemon restart.
+struct LauncherState {
+    launcher: Launcher,
+    stamp: Option<std::time::SystemTime>,
+}
+
+fn settings_stamp() -> Option<std::time::SystemTime> {
+    std::fs::metadata(aujar_config::Settings::path())
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
+fn launcher_options(settings: &aujar_config::Settings) -> aujar_launcher::LauncherOptions {
+    aujar_launcher::LauncherOptions {
+        applications: settings.plugins.applications,
+        calculator: settings.plugins.calculator,
+        units: settings.plugins.units,
+        files: settings.plugins.files,
+        system: settings.plugins.system,
+        shell: settings.plugins.shell,
+        file_roots: settings.files.roots.clone(),
+        file_depth: settings.files.max_depth as usize,
+    }
+}
+
+fn build_launcher() -> Launcher {
+    let settings = aujar_config::Settings::load_or_default();
+
+    Launcher::with_options(&launcher_options(&settings))
+}
+
+impl LauncherState {
+    fn new() -> Self {
+        Self {
+            launcher: build_launcher(),
+            stamp: settings_stamp(),
+        }
+    }
+}
+
+/// Run `f` with an up-to-date launcher.
+fn with_launcher<R>(shared: &Shared, f: impl FnOnce(&Launcher) -> R) -> R {
+    let mut state = shared
+        .launcher
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let stamp = settings_stamp();
+
+    if stamp != state.stamp {
+        tracing::info!("settings changed; reloading launcher providers");
+
+        state.launcher = build_launcher();
+        state.stamp = stamp;
+    }
+
+    f(&state.launcher)
+}
+
 /// State shared by every client connection.
 struct Shared {
     health: Health,
     registry: Arc<ModuleRegistry>,
-    launcher: Launcher,
+    launcher: std::sync::Mutex<LauncherState>,
     owner_uid: u32,
     denied: HashSet<Capability>,
     events: broadcast::Sender<Event>,
@@ -244,7 +304,7 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
     let shared = Arc::new(Shared {
         health,
         registry: Arc::clone(&registry),
-        launcher: Launcher::with_default_providers(),
+        launcher: std::sync::Mutex::new(LauncherState::new()),
         owner_uid,
         denied,
         events: broadcast::channel(EVENT_BUFFER).0,
@@ -518,7 +578,7 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
             Response::Delivered { subscribers }
         }
 
-        Request::Execute(request) => match shared.launcher.resolve(&request.id) {
+        Request::Execute(request) => match with_launcher(shared, |launcher| launcher.resolve(&request.id)) {
             Ok(spec) => match spawn_detached(&spec) {
                 Ok(pid) => {
                     tracing::info!(id = %request.id, program = %spec.program, ?pid, "launched application");
@@ -538,9 +598,7 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
         Request::Search(request) => {
             let limit = request.limit.unwrap_or(10).clamp(1, 50);
 
-            let results = shared
-                .launcher
-                .search(&request.query, limit)
+            let results = with_launcher(shared, |launcher| launcher.search(&request.query, limit))
                 .into_iter()
                 .map(|result| SearchHit {
                     id: result.id,
@@ -548,6 +606,7 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
                     subtitle: result.subtitle,
                     kind: result.kind.as_str().to_owned(),
                     score: result.score,
+                    icon: result.icon,
                 })
                 .collect();
 

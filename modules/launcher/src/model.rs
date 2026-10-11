@@ -4,7 +4,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResultKind {
     Application,
+    /// A computed answer (arithmetic, unit conversion). Enter copies it.
     Calculation,
+    File,
+    Folder,
+    /// Lock, sleep, restart, ...
+    System,
+    /// A shell command typed after `>`.
+    Command,
 }
 
 impl ResultKind {
@@ -12,6 +19,10 @@ impl ResultKind {
         match self {
             Self::Application => "application",
             Self::Calculation => "calculation",
+            Self::File => "file",
+            Self::Folder => "folder",
+            Self::System => "system",
+            Self::Command => "command",
         }
     }
 }
@@ -26,6 +37,8 @@ pub struct SearchResult {
     pub kind: ResultKind,
     /// Higher is better. Only comparable within one search.
     pub score: u32,
+    /// Absolute path of a PNG/SVG icon, when one was found.
+    pub icon: Option<String>,
 }
 
 /// A resolved, shell-free command line for launching a result.

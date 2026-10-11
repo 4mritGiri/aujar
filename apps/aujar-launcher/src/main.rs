@@ -29,6 +29,8 @@ enum LauncherAction {
     Show,
     Hide,
     Toggle,
+    /// Open the settings window.
+    Settings,
 }
 
 impl From<LauncherAction> for LauncherCommand {
@@ -37,6 +39,7 @@ impl From<LauncherAction> for LauncherCommand {
             LauncherAction::Show => Self::Show,
             LauncherAction::Hide => Self::Hide,
             LauncherAction::Toggle => Self::Toggle,
+            LauncherAction::Settings => Self::Settings,
         }
     }
 }

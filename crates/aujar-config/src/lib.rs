@@ -1,3 +1,9 @@
+mod settings;
+
+pub use settings::{
+    Accent, Appearance, Engine, Files, Plugins, Settings, Theme, Web, WebShortcut,
+};
+
 use serde::Deserialize;
 use std::{fs, path::Path};
 

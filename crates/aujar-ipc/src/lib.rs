@@ -33,6 +33,8 @@ pub enum LauncherCommand {
     Show,
     Hide,
     Toggle,
+    /// Open the settings window.
+    Settings,
 }
 
 /// Messages pushed by the daemon on a subscribed connection.
@@ -140,6 +142,9 @@ pub struct SearchHit {
     pub subtitle: Option<String>,
     pub kind: String,
     pub score: u32,
+    /// Absolute path of an icon image (PNG/SVG), when one was found.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

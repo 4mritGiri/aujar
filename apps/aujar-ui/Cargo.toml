@@ -13,6 +13,7 @@ description = "Aujar launcher UI (GPUI spike)"
 [dependencies]
 anyhow = "1"
 async-channel = "2"
+aujar-config = { path = "../../crates/aujar-config" }
 aujar-ipc = { path = "../../crates/aujar-ipc" }
 # GPUI snapshot of Zed `main` (zed@5b055fa), published to crates.io by a GPUI contributor
 # (huacnlee) as `gpui-pre*`. Chosen because:

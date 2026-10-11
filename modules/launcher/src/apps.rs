@@ -18,6 +18,8 @@ pub struct DesktopEntry {
     pub comment: Option<String>,
     pub exec: String,
     pub terminal: bool,
+    /// The raw `Icon=` value: a theme icon name or an absolute path.
+    pub icon: Option<String>,
 }
 
 /// Parse a freedesktop `.desktop` file. Returns `None` for entries that
@@ -31,6 +33,7 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
     let mut kind = None;
     let mut hidden = false;
     let mut terminal = false;
+    let mut icon = None;
 
     for raw in content.lines() {
         let line = raw.trim();
@@ -58,6 +61,7 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
             "Name" => name = Some(value.to_owned()),
             "Comment" => comment = Some(value.to_owned()),
             "Exec" => exec = Some(value.to_owned()),
+            "Icon" => icon = Some(value.to_owned()).filter(|value| !value.is_empty()),
             "Type" => kind = Some(value.to_owned()),
             "Terminal" => terminal = value.eq_ignore_ascii_case("true"),
             "NoDisplay" | "Hidden" if value.eq_ignore_ascii_case("true") => hidden = true,
@@ -75,6 +79,7 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
         comment: comment.filter(|value: &String| !value.is_empty()),
         exec: exec?,
         terminal,
+        icon,
     })
 }
 
@@ -223,6 +228,8 @@ fn collect(
 /// Searches installed desktop applications.
 pub struct AppsProvider {
     entries: Vec<DesktopEntry>,
+    /// Icon name -> resolved file, filled lazily (looking up icons touches the disk).
+    icons: std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
 }
 
 impl AppsProvider {
@@ -234,7 +241,23 @@ impl AppsProvider {
             collect(dir, dir, 0, &mut entries, &mut seen);
         }
 
-        Self { entries }
+        Self {
+            entries,
+            icons: Default::default(),
+        }
+    }
+
+    fn icon_for(&self, entry: &DesktopEntry) -> Option<String> {
+        let name = entry.icon.as_deref()?;
+        let mut cache = self
+            .icons
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        cache
+            .entry(name.to_owned())
+            .or_insert_with(|| crate::icons::resolve_icon(name))
+            .clone()
     }
 
     pub fn from_env() -> Self {
@@ -274,6 +297,7 @@ impl Provider for AppsProvider {
                     subtitle: entry.comment.clone(),
                     kind: ResultKind::Application,
                     score: best,
+                    icon: self.icon_for(entry),
                 })
             })
             .collect()
