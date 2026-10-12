@@ -7,14 +7,14 @@ See [`config/policy.example.toml`](../config/policy.example.toml).
 denied_capabilities = ["execute_command"]
 ```
 
-| Capability | Gates |
-|---|---|
-| `execute_command` | `Execute` (launching applications) |
-| `filesystem` | `Rename` (preview and apply) |
-| `read_windows` | `Windows` |
-| `screen_capture` | `PickColor` (screen color picker) |
-| `global_hotkeys` | Registering native global shortcuts at startup |
-| others | reserved for upcoming modules |
+| Capability        | Gates                                          |
+| ----------------- | ---------------------------------------------- |
+| `execute_command` | `Execute` (launching applications)             |
+| `filesystem`      | `Rename` (preview and apply)                   |
+| `read_windows`    | `Windows`                                      |
+| `screen_capture`  | `PickColor` (screen color picker)              |
+| `global_hotkeys`  | Registering native global shortcuts at startup |
+| others            | reserved for upcoming modules                  |
 
 Behaviour:
 

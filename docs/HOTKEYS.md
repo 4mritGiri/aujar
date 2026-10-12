@@ -53,13 +53,13 @@ aujar launcher toggle      # show/hide the launcher UI (also: show, hide)
 The command sends a `Launcher` request to the daemon, which pushes an event to the running UI
 (see [IPC](IPC.md)). If no UI is subscribed, the command prints a notice and does nothing else.
 
-| Environment | How to bind `Super+Space` |
-|---|---|
-| Sway / i3 | `bindsym $mod+space exec aujar launcher toggle` |
-| Hyprland | `bind = SUPER, SPACE, exec, aujar launcher toggle` |
-| GNOME | Settings → Keyboard → View and Customize Shortcuts → Custom Shortcuts → add command `aujar launcher toggle` |
-| KDE Plasma | System Settings → Keyboard → Shortcuts → Add New → Command or Script |
-| Other | Use your desktop's custom-shortcut settings with the same command |
+| Environment | How to bind `Super+Space`                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------- |
+| Sway / i3   | `bindsym $mod+space exec aujar launcher toggle`                                                             |
+| Hyprland    | `bind = SUPER, SPACE, exec, aujar launcher toggle`                                                          |
+| GNOME       | Settings → Keyboard → View and Customize Shortcuts → Custom Shortcuts → add command `aujar launcher toggle` |
+| KDE Plasma  | System Settings → Keyboard → Shortcuts → Add New → Command or Script                                        |
+| Other       | Use your desktop's custom-shortcut settings with the same command                                           |
 
 Note: `Super+Space` may already be taken (for example by input-method switching); pick any free
 combination.

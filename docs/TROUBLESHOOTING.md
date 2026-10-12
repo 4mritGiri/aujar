@@ -13,20 +13,21 @@ the state of the native global shortcut.
 
 Work through these in order.
 
-1. **Is the UI running?** A shortcut only *toggles* a running UI; the daemon alone shows no
+1. **Is the UI running?** A shortcut only _toggles_ a running UI; the daemon alone shows no
    window. `aujar doctor` should show `UI clients: 1` or more. While the UI is still a spike,
    start it yourself: `cargo run -p aujar-ui --release`.
 2. **Do the events arrive?** In one terminal run `aujar events`, press the shortcut, and watch for
    `Launcher(Toggle)`. If it appears, the shortcut and daemon work and the problem is the UI.
    If not, continue.
 3. **Which mechanism are you using?** There are two, and they can fight over the same key:
-   - *Native* (portal): the daemon asks the desktop for **Ctrl+Alt+Space**. `aujar doctor` shows
+   - _Native_ (portal): the daemon asks the desktop for **Ctrl+Alt+Space**. `aujar doctor` shows
      `hotkey: bound: ...` when the desktop accepted it.
-   - *Manual*: you add a custom shortcut that runs `aujar launcher toggle`.
+   - _Manual_: you add a custom shortcut that runs `aujar launcher toggle`.
 
    If you created a manual shortcut on the same keys, the desktop may refuse the native one
    (`hotkey: unavailable: ...`) or the keys may do something else. Use **one** of the two, or give
    them different keys.
+
 4. **Manual shortcut: use the absolute path.** Desktop shortcuts often run with a minimal `PATH`
    that does not include `~/.local/bin`. Use the full path, e.g.
    `/home/you/.local/bin/aujar launcher toggle` (`aujar doctor` prints it).
@@ -45,8 +46,7 @@ Work through these in order.
 **Short answer (GNOME):** run `aujar shortcut install`. It uses GNOME's own shortcut settings and
 needs no app id. The rest of this section explains the portal failure and what we tried.
 
-
-GNOME (and some other desktops) only bind a global shortcut for a program they can *identify*.
+GNOME (and some other desktops) only bind a global shortcut for a program they can _identify_.
 A daemon started by systemd is anonymous unless it is identified in one of two ways.
 
 **1. Make the desktop file visible to the portal.** The daemon registers the id `dev.aujar.Aujar`;

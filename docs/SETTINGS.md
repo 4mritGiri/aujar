@@ -10,24 +10,24 @@ each time it opens, and the daemon reloads its plugins when the file changes (no
 
 ## What you can type in the launcher
 
-| You type | You get |
-| --- | --- |
-| `fire` | Applications (with icons), then files and folders |
-| `2*(3+4)`, `2^10` | Calculator answer card. Enter copies it |
-| `10 km to mi`, `100 f to c`, `2 gb to mb` | Unit conversion (length, mass, volume, time, data, speed, area, temperature) |
-| `kind:pdf`, `kind:pdf invoice`, `kind:image`, `kind:folder`, `ext:rs` | Filter files by type (newest first when you type no name). Also `document`, `audio`, `video`, `archive`, `code` |
-| `kind:recent` | Your file history, from the desktop's recently-used list (the empty launcher shows it as "Recent Files") |
-| `report` | Files and folders by name (Ctrl+Enter shows the file in its folder, Ctrl+C copies the path) |
-| `lock`, `sleep`, `restart`, `shut down`, `log out` | System commands (restart, shut down and log out ask for a second Enter) |
-| `> ls -la` | Run a shell command (off by default, enable in Settings -> Search plugins) |
-| `github.com/rust-lang` | Open a URL |
-| `g rust lifetimes`, `yt lofi`, `gh aujar`, `w linux`, `maps pokhara` | Web shortcuts |
-| `? anything` | Search with your default engine |
-| `100 usd to eur`, `$50 in npr` | Currency conversion (opt-in: downloads rates with `curl`; rates by [Exchange Rate API](https://www.exchangerate-api.com)) |
-| `wifi off`, `bluetooth on`, `mute`, `dark mode` | More system commands (shown only when `nmcli`, `bluetoothctl`, `wpctl`/`pactl`, `gsettings` exist) |
-| `clip`, `cb foo` | Clipboard history (opt-in, kept in memory only) |
-| *(empty box)* | Recent and frequently used items |
-| anything | A "Search the web" row at the bottom |
+| You type                                                              | You get                                                                                                                   |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `fire`                                                                | Applications (with icons), then files and folders                                                                         |
+| `2*(3+4)`, `2^10`                                                     | Calculator answer card. Enter copies it                                                                                   |
+| `10 km to mi`, `100 f to c`, `2 gb to mb`                             | Unit conversion (length, mass, volume, time, data, speed, area, temperature)                                              |
+| `kind:pdf`, `kind:pdf invoice`, `kind:image`, `kind:folder`, `ext:rs` | Filter files by type (newest first when you type no name). Also `document`, `audio`, `video`, `archive`, `code`           |
+| `kind:recent`                                                         | Your file history, from the desktop's recently-used list (the empty launcher shows it as "Recent Files")                  |
+| `report`                                                              | Files and folders by name (Ctrl+Enter shows the file in its folder, Ctrl+C copies the path)                               |
+| `lock`, `sleep`, `restart`, `shut down`, `log out`                    | System commands (restart, shut down and log out ask for a second Enter)                                                   |
+| `> ls -la`                                                            | Run a shell command (off by default, enable in Settings -> Search plugins)                                                |
+| `github.com/rust-lang`                                                | Open a URL                                                                                                                |
+| `g rust lifetimes`, `yt lofi`, `gh aujar`, `w linux`, `maps pokhara`  | Web shortcuts                                                                                                             |
+| `? anything`                                                          | Search with your default engine                                                                                           |
+| `100 usd to eur`, `$50 in npr`                                        | Currency conversion (opt-in: downloads rates with `curl`; rates by [Exchange Rate API](https://www.exchangerate-api.com)) |
+| `wifi off`, `bluetooth on`, `mute`, `dark mode`                       | More system commands (shown only when `nmcli`, `bluetoothctl`, `wpctl`/`pactl`, `gsettings` exist)                        |
+| `clip`, `cb foo`                                                      | Clipboard history (opt-in, kept in memory only)                                                                           |
+| _(empty box)_                                                         | Recent and frequently used items                                                                                          |
+| anything                                                              | A "Search the web" row at the bottom                                                                                      |
 
 The right-hand preview pane shows details of the selected result: size and modified time
 for files, the first lines of text files, image thumbnails, and clipboard text.

@@ -1,15 +1,15 @@
 # Maintainer: Aujar Contributors <https://github.com/4mritGiri/aujar>
 pkgname=aujar
 pkgver=0.1.1
-pkgrel=1
-pkgdesc="Modular productivity toolkit for Linux desktops (CLI and daemon)"
+pkgrel=2
+pkgdesc="Modular productivity toolkit for Linux desktops (CLI, daemon and UI)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/4mritGiri/aujar"
 license=('Apache-2.0')
 depends=('gcc-libs' 'glibc')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP') # replace with the real checksum before publishing to the AUR
+sha256sums=('SKIP') # Replace before publishing.
 
 prepare() {
   cd "$pkgname-$pkgver"
@@ -21,23 +21,49 @@ build() {
   cd "$pkgname-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
+
+  # Keep separate: the workspace has incompatible async runtime features.
   cargo build --frozen --release -p aujar-launcher-app
+  cargo build --frozen --release -p aujar-ui
 }
 
 check() {
   cd "$pkgname-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  cargo test --frozen -p aujar-launcher-app -p aujar-core -p aujar-ipc -p aujar-rename -p aujar-launcher
+
+  cargo test --frozen \
+    -p aujar-launcher-app \
+    -p aujar-core \
+    -p aujar-ipc \
+    -p aujar-rename \
+    -p aujar-launcher
 }
 
 package() {
   cd "$pkgname-$pkgver"
-  install -Dm755 target/release/aujar "$pkgdir/usr/bin/aujar"
-  install -Dm644 packaging/systemd/aujar.service "$pkgdir/usr/lib/systemd/user/aujar.service"
+
+  # Binaries
+  install -Dm755 target/release/aujar \
+    "$pkgdir/usr/bin/aujar"
+  install -Dm755 target/release/aujar-ui \
+    "$pkgdir/usr/bin/aujar-ui"
+
+  # systemd user services
+  install -Dm644 packaging/systemd/aujar.service \
+    "$pkgdir/usr/lib/systemd/user/aujar.service"
+  install -Dm644 packaging/systemd/aujar-ui.service \
+    "$pkgdir/usr/lib/systemd/user/aujar-ui.service"
+
+  # Desktop entries
   install -Dm644 packaging/desktop/dev.aujar.Aujar.desktop \
     "$pkgdir/usr/share/applications/dev.aujar.Aujar.desktop"
-  install -Dm644 config/policy.example.toml "$pkgdir/usr/share/doc/$pkgname/policy.example.toml"
-  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  # Documentation and policy example
+  install -Dm644 config/policy.example.toml \
+    "$pkgdir/usr/share/doc/$pkgname/policy.example.toml"
+  install -Dm644 README.md \
+    "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
