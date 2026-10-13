@@ -17,19 +17,19 @@ bumping the version; clients must tolerate variants they do not know.
 
 One request per connection, one response, then the daemon closes it.
 
-| Request                              | Response                                                       | Capability        |
-| ------------------------------------ | -------------------------------------------------------------- | ----------------- |
-| `Ping`                               | `Pong`                                                         | —                 |
-| `Health`                             | `Health{...}`                                                  | —                 |
-| `Modules`                            | `Modules{...}`                                                 | —                 |
-| `Windows`                            | `Windows[...]`                                                 | `read_windows`    |
-| `Search{query, limit?}`              | `Search{results}`                                              | —                 |
-| `Execute{id}`                        | `Executed{title, pid}`                                         | `execute_command` |
-| `Rename{...}`                        | `Rename{...}`                                                  | `filesystem`      |
-| `Status`                             | `Status{subscribers, hotkeys}`                                 | —                 |
-| `PickColor`                          | `Color{hex, rgb, hsl}` (waits until the user picks or cancels) | `screen_capture`  |
-| `Launcher("Show"\|"Hide"\|"Toggle")` | `Delivered{subscribers}`                                       | —                 |
-| `Subscribe`                          | `Subscribed`, then events                                      | —                 |
+| Request | Response | Capability |
+|---|---|---|
+| `Ping` | `Pong` | — |
+| `Health` | `Health{...}` | — |
+| `Modules` | `Modules{...}` | — |
+| `Windows` | `Windows[...]` | `read_windows` |
+| `Search{query, limit?}` | `Search{results}` | — |
+| `Execute{id}` | `Executed{title, pid}` | `execute_command` |
+| `Rename{...}` | `Rename{...}` | `filesystem` |
+| `Status` | `Status{subscribers, hotkeys}` | — |
+| `PickColor` | `Color{hex, rgb, hsl}` (waits until the user picks or cancels) | `screen_capture` |
+| `Launcher("Show"\|"Hide"\|"Toggle")` | `Delivered{subscribers}` | — |
+| `Subscribe` | `Subscribed`, then events | — |
 
 Any request can instead return `Error("message")`, including when policy denies its capability.
 
@@ -42,10 +42,10 @@ Any request can instead return `Error("message")`, including when policy denies 
 3. The client sends nothing further. Closing the connection unsubscribes; sending data ends the
    stream.
 
-| Event                          | Meaning                                                               |
-| ------------------------------ | --------------------------------------------------------------------- |
+| Event | Meaning |
+|---|---|
 | `Launcher(Show\|Hide\|Toggle)` | A trigger (keyboard shortcut, CLI) wants the launcher UI shown/hidden |
-| `Shutdown`                     | Daemon is exiting; the stream ends after this event                   |
+| `Shutdown` | Daemon is exiting; the stream ends after this event |
 
 Limits: at most 16 concurrent subscribers; a subscriber that falls more than 64 events behind
 loses the oldest events (logged by the daemon).

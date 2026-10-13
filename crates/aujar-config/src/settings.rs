@@ -116,7 +116,7 @@ impl Default for Appearance {
         Self {
             theme: Theme::Dark,
             accent: Accent::Blue,
-            width: 860,
+            width: 720,
             max_results: 6,
             show_icons: true,
             show_footer: true,
@@ -145,6 +145,17 @@ pub struct Plugins {
     pub system: bool,
     /// `> command` runs a shell command. Off by default: it runs arbitrary commands.
     pub shell: bool,
+    /// `define word`. Only the word you typed is sent, to dictionaryapi.dev.
+    pub dictionary: bool,
+    /// `weather city`. Only the place you typed is sent, to Open-Meteo.
+    pub weather: bool,
+    /// `stock aapl`. Only the ticker you typed is sent, to Yahoo Finance.
+    pub stocks: bool,
+    /// `nba`, `premier league`. Only the league is sent, to ESPN.
+    pub sports: bool,
+    /// `< name` switches to an open window. Needs a backend for your session (GNOME
+    /// extension, Sway, Hyprland or X11 with wmctrl).
+    pub windows: bool,
 }
 
 impl Default for Plugins {
@@ -158,8 +169,20 @@ impl Default for Plugins {
             files: true,
             system: true,
             shell: false,
+            dictionary: true,
+            weather: true,
+            stocks: true,
+            sports: true,
+            windows: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Weather {
+    /// Fahrenheit and mph instead of Celsius and km/h.
+    pub imperial: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -222,6 +245,7 @@ pub struct Settings {
     pub plugins: Plugins,
     pub files: Files,
     pub web: Web,
+    pub weather: Weather,
 }
 
 impl Settings {
@@ -306,6 +330,16 @@ mod tests {
         let text = toml::to_string_pretty(&settings).unwrap();
 
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
+    }
+
+    #[test]
+    fn new_plugins_default_on_and_old_files_still_load() {
+        // A settings file written before these options existed.
+        let settings: Settings = toml::from_str("[plugins]\nfiles = false\n").unwrap();
+
+        assert!(settings.plugins.dictionary && settings.plugins.windows);
+        assert!(!settings.plugins.files);
+        assert!(!settings.weather.imperial);
     }
 
     #[test]

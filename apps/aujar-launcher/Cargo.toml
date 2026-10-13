@@ -19,6 +19,7 @@ aujar-core = { path = "../../crates/aujar-core" }
 aujar-color = { path = "../../modules/color" }
 aujar-daemon = { path = "../../crates/aujar-daemon" }
 aujar-ipc = { path = "../../crates/aujar-ipc" }
+aujar-launcher = { path = "../../modules/launcher" }
 aujar-rename = { path = "../../modules/rename" }
 tokio.workspace = true
 
@@ -37,17 +38,11 @@ section = "utils"
 priority = "optional"
 depends = "$auto"
 assets = [
-    ["target/release/aujar", "usr/bin/aujar", "755"],
-    ["target/release/aujar-ui", "usr/bin/aujar-ui", "755"],
-
-    ["../../packaging/systemd/aujar.service", "usr/lib/systemd/user/aujar.service", "644"],
-    ["../../packaging/systemd/aujar-ui.service", "usr/lib/systemd/user/aujar-ui.service", "644"],
-
-    ["../../packaging/desktop/aujar.desktop", "usr/share/applications/aujar.desktop", "644"],
-
-    ["../../config/policy.example.toml", "usr/share/doc/aujar/policy.example.toml", "644"],
-    ["../../README.md", "usr/share/doc/aujar/README.md", "644"],
-    ["../../LICENSE", "usr/share/licenses/aujar/LICENSE", "644"],
+    ["target/release/aujar", "usr/bin/", "755"],
+    ["../../packaging/systemd/aujar.service", "usr/lib/systemd/user/", "644"],
+    ["../../packaging/desktop/dev.aujar.Aujar.desktop", "usr/share/applications/", "644"],
+    ["../../config/policy.example.toml", "usr/share/doc/aujar/", "644"],
+    ["../../README.md", "usr/share/doc/aujar/", "644"],
 ]
 
 # ---- RPM (Fedora, RHEL-likes, openSUSE): `cargo generate-rpm -p apps/aujar-launcher` ----
@@ -60,13 +55,8 @@ url = "https://github.com/4mritGiri/aujar"
 auto-req = "builtin"
 assets = [
     { source = "target/release/aujar", dest = "/usr/bin/aujar", mode = "0755" },
-    { source = "target/release/aujar-ui", dest = "/usr/bin/aujar-ui", mode = "0755" },
-
     { source = "packaging/systemd/aujar.service", dest = "/usr/lib/systemd/user/aujar.service", mode = "0644" },
-    { source = "packaging/systemd/aujar-ui.service", dest = "/usr/lib/systemd/user/aujar-ui.service", mode = "0644" },
-
-    { source = "packaging/desktop/aujar.desktop", dest = "/usr/share/applications/aujar.desktop", mode = "0644" },
-
+    { source = "packaging/desktop/dev.aujar.Aujar.desktop", dest = "/usr/share/applications/dev.aujar.Aujar.desktop", mode = "0644" },
     { source = "config/policy.example.toml", dest = "/usr/share/doc/aujar/policy.example.toml", mode = "0644", doc = true },
     { source = "README.md", dest = "/usr/share/doc/aujar/README.md", mode = "0644", doc = true },
     { source = "LICENSE", dest = "/usr/share/licenses/aujar/LICENSE", mode = "0644", license = true },

@@ -12,6 +12,20 @@ pub enum ResultKind {
     System,
     /// A shell command typed after `>`.
     Command,
+    /// A dictionary entry (`define serendipity`). Enter opens the full entry online.
+    Definition,
+    /// Current weather and a short forecast (`weather paris`).
+    Weather,
+    /// A stock quote (`stock aapl`, `$tsla`).
+    Stock,
+    /// A game from a league scoreboard (`nba`, `premier league arsenal`).
+    Sports,
+    /// An open window that can be switched to (`< firefox`).
+    Window,
+    /// A lookup that is still being fetched. The UI asks again shortly.
+    Loading,
+    /// A message instead of a result: a failed lookup or a missing backend. Not launchable.
+    Notice,
 }
 
 impl ResultKind {
@@ -23,6 +37,13 @@ impl ResultKind {
             Self::Folder => "folder",
             Self::System => "system",
             Self::Command => "command",
+            Self::Definition => "definition",
+            Self::Weather => "weather",
+            Self::Stock => "stock",
+            Self::Sports => "sports",
+            Self::Window => "window",
+            Self::Loading => "loading",
+            Self::Notice => "notice",
         }
     }
 }
@@ -39,6 +60,45 @@ pub struct SearchResult {
     pub score: u32,
     /// Absolute path of a PNG/SVG icon, when one was found.
     pub icon: Option<String>,
+    /// Longer text for the preview pane (definitions, a forecast, quote details), one item
+    /// per line. `None` for results that have nothing more to say.
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
+impl SearchResult {
+    /// A result with no subtitle, icon or detail; chain the `with_*` helpers to fill them in.
+    pub fn new(id: impl Into<String>, title: impl Into<String>, kind: ResultKind, score: u32) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            subtitle: None,
+            kind,
+            score,
+            icon: None,
+            detail: None,
+        }
+    }
+
+    pub fn with_subtitle(mut self, subtitle: impl Into<String>) -> Self {
+        self.subtitle = Some(subtitle.into());
+        self
+    }
+
+    pub fn with_optional_subtitle(mut self, subtitle: Option<String>) -> Self {
+        self.subtitle = subtitle;
+        self
+    }
+
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn with_icon(mut self, icon: Option<String>) -> Self {
+        self.icon = icon;
+        self
+    }
 }
 
 /// A resolved, shell-free command line for launching a result.

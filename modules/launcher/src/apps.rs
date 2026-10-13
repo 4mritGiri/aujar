@@ -1,6 +1,6 @@
 use crate::{
     model::{LaunchSpec, Provider, ResultKind, SearchResult},
-    ranking::{score, score_strict},
+    ranking::score_lowered,
 };
 use std::{
     collections::HashSet,
@@ -225,24 +225,122 @@ fn collect(
     }
 }
 
+/// Applications shown per search at most (the launcher shows far fewer; this bounds how many
+/// icons are looked up on disk).
+const MAX_RESULTS: usize = 16;
+/// How often the application directories are checked for changes.
+const RECHECK: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Lower-cased copies made once at scan time, so a search allocates nothing per application.
+struct Lowered {
+    name: String,
+    comment: Option<String>,
+}
+
+struct Snapshot {
+    entries: Vec<DesktopEntry>,
+    lowered: Vec<Lowered>,
+    /// Newest modification time over the application directories.
+    stamp: Option<std::time::SystemTime>,
+    checked: std::time::Instant,
+}
+
+fn scan_dirs(dirs: &[PathBuf]) -> Snapshot {
+    let mut entries = Vec::new();
+    let mut seen = HashSet::new();
+
+    for dir in dirs {
+        collect(dir, dir, 0, &mut entries, &mut seen);
+    }
+
+    let lowered = entries
+        .iter()
+        .map(|entry| Lowered {
+            name: entry.name.to_lowercase(),
+            comment: entry.comment.as_deref().map(str::to_lowercase),
+        })
+        .collect();
+
+    Snapshot {
+        entries,
+        lowered,
+        stamp: dirs_stamp(dirs),
+        checked: std::time::Instant::now(),
+    }
+}
+
+/// Installing or removing an application changes the mtime of its applications directory.
+fn dirs_stamp(dirs: &[PathBuf]) -> Option<std::time::SystemTime> {
+    dirs.iter()
+        .filter_map(|dir| fs::metadata(dir).and_then(|meta| meta.modified()).ok())
+        .max()
+}
+
+/// Terminal emulators and the argument that precedes the command to run, in preference order.
+const TERMINALS: [(&str, &[&str]); 11] = [
+    ("x-terminal-emulator", &["-e"]),
+    ("gnome-terminal", &["--"]),
+    ("kgx", &["--"]),
+    ("konsole", &["-e"]),
+    ("xfce4-terminal", &["-x"]),
+    ("alacritty", &["-e"]),
+    ("kitty", &[]),
+    ("foot", &[]),
+    ("wezterm", &["start", "--"]),
+    ("tilix", &["-e"]),
+    ("xterm", &["-e"]),
+];
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+        .unwrap_or(false)
+}
+
+/// Wrap `program args` so it runs inside a terminal emulator.
+fn in_terminal(program: String, args: Vec<String>) -> Option<(String, Vec<String>)> {
+    let preferred = std::env::var("TERMINAL").ok().filter(|name| {
+        // Only a bare program name: this value ends up as the command that is executed.
+        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    });
+
+    let (terminal, flags): (String, Vec<&str>) = match preferred.filter(|name| on_path(name)) {
+        Some(name) => {
+            let flags = TERMINALS
+                .iter()
+                .find(|(known, _)| *known == name)
+                .map_or(vec!["-e"], |(_, flags)| flags.to_vec());
+
+            (name, flags)
+        }
+        None => {
+            let (name, flags) = TERMINALS.iter().find(|(name, _)| on_path(name))?;
+
+            ((*name).to_owned(), flags.to_vec())
+        }
+    };
+
+    let mut wrapped: Vec<String> = flags.into_iter().map(str::to_owned).collect();
+
+    wrapped.push(program);
+    wrapped.extend(args);
+
+    Some((terminal, wrapped))
+}
+
 /// Searches installed desktop applications.
 pub struct AppsProvider {
-    entries: Vec<DesktopEntry>,
+    dirs: Vec<PathBuf>,
+    snapshot: std::sync::RwLock<Snapshot>,
     /// Icon name -> resolved file, filled lazily (looking up icons touches the disk).
     icons: std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
 }
 
 impl AppsProvider {
     pub fn from_dirs(dirs: &[PathBuf]) -> Self {
-        let mut entries = Vec::new();
-        let mut seen = HashSet::new();
-
-        for dir in dirs {
-            collect(dir, dir, 0, &mut entries, &mut seen);
-        }
-
         Self {
-            entries,
+            dirs: dirs.to_vec(),
+            snapshot: std::sync::RwLock::new(scan_dirs(dirs)),
             icons: Default::default(),
         }
     }
@@ -265,11 +363,46 @@ impl AppsProvider {
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.read().entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len() == 0
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Snapshot> {
+        self.snapshot
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Pick up applications installed or removed since the last scan (at most every
+    /// [`RECHECK`], and only a handful of `stat` calls unless something changed).
+    fn refresh_if_changed(&self) {
+        {
+            let snapshot = self.read();
+
+            if snapshot.checked.elapsed() < RECHECK {
+                return;
+            }
+        }
+
+        let stamp = dirs_stamp(&self.dirs);
+        let mut snapshot = self
+            .snapshot
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Another search may have refreshed while we waited for the write lock.
+        if snapshot.checked.elapsed() < RECHECK {
+            return;
+        }
+
+        if stamp == snapshot.stamp {
+            snapshot.checked = std::time::Instant::now();
+        } else {
+            *snapshot = scan_dirs(&self.dirs);
+        }
     }
 }
 
@@ -279,40 +412,61 @@ impl Provider for AppsProvider {
     }
 
     fn search(&self, query: &str) -> Vec<SearchResult> {
-        self.entries
+        let query = query.trim().to_lowercase();
+
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        self.refresh_if_changed();
+
+        let snapshot = self.read();
+
+        // Rank everything first; only the winners get an icon lookup (a disk probe per icon).
+        let mut ranked: Vec<(u32, usize)> = snapshot
+            .lowered
             .iter()
-            .filter_map(|entry| {
-                let name_score = score(query, &entry.name);
-                let comment_score = entry
+            .enumerate()
+            .filter_map(|(index, lowered)| {
+                let name_score = score_lowered(&query, &lowered.name, true);
+                let comment_score = lowered
                     .comment
                     .as_deref()
-                    .and_then(|comment| score_strict(query, comment))
+                    .and_then(|comment| score_lowered(&query, comment, false))
                     .map(|value| value / 2);
 
-                let best = name_score.into_iter().chain(comment_score).max()?;
+                name_score
+                    .into_iter()
+                    .chain(comment_score)
+                    .max()
+                    .map(|best| (best, index))
+            })
+            .collect();
 
-                Some(SearchResult {
-                    id: format!("apps:{}", entry.id),
-                    title: entry.name.clone(),
-                    subtitle: entry.comment.clone(),
-                    kind: ResultKind::Application,
-                    score: best,
-                    icon: self.icon_for(entry),
-                })
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        ranked.truncate(MAX_RESULTS);
+
+        ranked
+            .into_iter()
+            .map(|(best, index)| {
+                let entry = &snapshot.entries[index];
+
+                SearchResult::new(
+                    format!("apps:{}", entry.id),
+                    &entry.name,
+                    ResultKind::Application,
+                    best,
+                )
+                .with_icon(self.icon_for(entry))
+                .with_optional_subtitle(entry.comment.clone())
             })
             .collect()
     }
 
     fn resolve(&self, id: &str) -> Option<Result<LaunchSpec, String>> {
         let key = id.strip_prefix("apps:")?;
-        let entry = self.entries.iter().find(|entry| entry.id == key)?;
-
-        if entry.terminal {
-            return Some(Err(format!(
-                "`{}` needs a terminal, which is not supported yet",
-                entry.name
-            )));
-        }
+        let snapshot = self.read();
+        let entry = snapshot.entries.iter().find(|entry| entry.id == key)?;
 
         let mut parts = parse_exec(&entry.exec).into_iter();
 
@@ -320,10 +474,26 @@ impl Provider for AppsProvider {
             return Some(Err(format!("`{}` has an empty Exec line", entry.name)));
         };
 
+        let args: Vec<String> = parts.collect();
+
+        if entry.terminal {
+            return Some(match in_terminal(program, args) {
+                Some((program, args)) => Ok(LaunchSpec {
+                    title: entry.name.clone(),
+                    program,
+                    args,
+                }),
+                None => Err(format!(
+                    "`{}` needs a terminal, and no terminal emulator was found (set $TERMINAL)",
+                    entry.name
+                )),
+            });
+        }
+
         Some(Ok(LaunchSpec {
             title: entry.name.clone(),
             program,
-            args: parts.collect(),
+            args,
         }))
     }
 }
@@ -431,7 +601,11 @@ Exec=firefox --new-window
         assert_eq!(spec.program, "firefox");
         assert!(spec.args.is_empty());
 
-        assert!(provider.resolve("apps:htop.desktop").unwrap().is_err());
+        // A terminal app is wrapped in a terminal emulator, or refused when none is installed.
+        match provider.resolve("apps:htop.desktop").unwrap() {
+            Ok(spec) => assert!(spec.args.contains(&"htop".to_owned())),
+            Err(message) => assert!(message.contains("terminal")),
+        }
         assert!(provider.resolve("apps:missing.desktop").is_none());
         assert!(provider.resolve("calc:4").is_none());
 

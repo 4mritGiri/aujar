@@ -225,6 +225,7 @@ impl Provider for SystemProvider {
                     kind: ResultKind::System,
                     score: best.saturating_sub(250),
                     icon: None,
+                    detail: None,
                 })
             })
             .collect()

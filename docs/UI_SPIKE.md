@@ -26,23 +26,24 @@ cargo run -p aujar-launcher-app -- launcher toggle            # terminal 3: wind
 cargo run -p aujar-launcher-app -- launcher toggle            # window closes
 ```
 
+
 ## Checklist (record results in the ADR)
 
-| Check                                                             | How                                                                                            | Result                                                                               |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Builds with pinned `gpui-pre =0.3.3` / `gpui-pre-platform =0.3.3` | `cargo build`                                                                                  | ✅ Ubuntu, rustc 1.97, debug build 2m39s                                             |
-| Window opens on your session                                      | toggle                                                                                         | ✅ Wayland (GNOME-style session): window opens with rounded corners and live results |
-| Toggle show/hide from the CLI                                     | `launcher toggle` twice                                                                        | ✅ "Delivered to 1 subscriber"                                                       |
-| Typing, selection, Enter-to-launch, Esc                           | use the keyboard                                                                               |                                                                                      |
-| Window opens on X11                                               | log into an X11 session, repeat                                                                |                                                                                      |
-| Daemon restart reconnects                                         | stop/start the daemon, toggle again                                                            |                                                                                      |
-| GPU in use                                                        | `vulkaninfo --summary`; watch GPU load (`intel_gpu_top`, `nvtop`, `nvidia-smi`) while resizing |                                                                                      |
-| Idle cost                                                         | `top -p $(pgrep aujar-ui)` with the window open and untouched; target ~0% CPU                  |                                                                                      |
-| Cold start                                                        | time from `toggle` to visible window                                                           |                                                                                      |
-| Memory                                                            | RSS in `top` with window open                                                                  |                                                                                      |
-| Works without GPU                                                 | run with a software Vulkan driver (`mesa-vulkan-drivers` includes lavapipe); record behaviour  |                                                                                      |
-| HiDPI / fractional scaling                                        | set 125-200% scale, check sharpness                                                            |                                                                                      |
-| Overlay behaviour on your compositor                              | is it a normal window or can it be centered/undecorated?                                       |                                                                                      |
+| Check | How | Result |
+|---|---|---|
+| Builds with pinned `gpui-pre =0.3.3` / `gpui-pre-platform =0.3.3` | `cargo build` | ✅ Ubuntu, rustc 1.97, debug build 2m39s |
+| Window opens on your session | toggle | ✅ Wayland (GNOME-style session): window opens with rounded corners and live results |
+| Toggle show/hide from the CLI | `launcher toggle` twice | ✅ "Delivered to 1 subscriber" |
+| Typing, selection, Enter-to-launch, Esc | use the keyboard | |
+| Window opens on X11 | log into an X11 session, repeat | |
+| Daemon restart reconnects | stop/start the daemon, toggle again | |
+| GPU in use | `vulkaninfo --summary`; watch GPU load (`intel_gpu_top`, `nvtop`, `nvidia-smi`) while resizing | |
+| Idle cost | `top -p $(pgrep aujar-ui)` with the window open and untouched; target ~0% CPU | |
+| Cold start | time from `toggle` to visible window | |
+| Memory | RSS in `top` with window open | |
+| Works without GPU | run with a software Vulkan driver (`mesa-vulkan-drivers` includes lavapipe); record behaviour | |
+| HiDPI / fractional scaling | set 125-200% scale, check sharpness | |
+| Overlay behaviour on your compositor | is it a normal window or can it be centered/undecorated? | |
 
 ## Known limits of this spike
 

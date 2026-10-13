@@ -180,6 +180,7 @@ impl Provider for CalculatorProvider {
             kind: ResultKind::Calculation,
             score: 2000,
             icon: None,
+            detail: None,
         }]
     }
 }

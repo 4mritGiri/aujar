@@ -267,6 +267,12 @@ impl Render for SettingsView {
                 toggle_row!(self, cx, "p-clip", "Clipboard history", "Type clip or cb. Records what you copy (in memory only)", plugins.clipboard),
                 toggle_row!(self, cx, "p-files", "Files & folders", "Search file names under your home folder", plugins.files),
                 toggle_row!(self, cx, "p-system", "System commands", "Lock, sleep, restart, shut down, log out, settings", plugins.system),
+                toggle_row!(self, cx, "p-dict", "Dictionary", "define word, meaning of word, Ctrl+L. Sends only that word to dictionaryapi.dev", plugins.dictionary),
+                toggle_row!(self, cx, "p-weather", "Weather", "weather paris. Sends only the place to Open-Meteo", plugins.weather),
+                toggle_row!(self, cx, "p-imperial", "Fahrenheit and mph", "Weather in imperial units", weather.imperial),
+                toggle_row!(self, cx, "p-stocks", "Stocks", "stock aapl, $tsla. Sends only the ticker to Yahoo Finance (delayed quotes)", plugins.stocks),
+                toggle_row!(self, cx, "p-sports", "Sports scores", "nba, premier league, nfl lakers. Sends only the league to ESPN", plugins.sports),
+                toggle_row!(self, cx, "p-windows", "Window switching", "< name lists open windows. GNOME needs the extension: aujar gnome-extension install", plugins.windows),
                 toggle_row!(self, cx, "p-shell", "Shell commands", "> command runs it in a shell. Runs arbitrary commands: off by default", plugins.shell),
             ],
         );

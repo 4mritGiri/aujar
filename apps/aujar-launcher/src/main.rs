@@ -8,6 +8,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
+mod gnome_extension;
 mod shortcut;
 
 const DEFAULT_SOCKET_NAME: &str = "aujar.sock";
@@ -42,6 +43,18 @@ impl From<LauncherAction> for LauncherCommand {
             LauncherAction::Settings => Self::Settings,
         }
     }
+}
+
+#[derive(Debug, Subcommand)]
+enum ExtensionAction {
+    /// Copy the extension into your GNOME Shell extensions and enable it.
+    Install,
+
+    /// Disable and remove the extension.
+    Remove,
+
+    /// Say whether the extension is installed, enabled and answering.
+    Status,
 }
 
 #[derive(Debug, Subcommand)]
@@ -112,6 +125,12 @@ enum Command {
     Shortcut {
         #[command(subcommand)]
         action: ShortcutAction,
+    },
+
+    /// Install the GNOME Shell extension that lets the launcher switch windows.
+    GnomeExtension {
+        #[command(subcommand)]
+        action: ExtensionAction,
     },
 
     /// Color tools.
@@ -275,6 +294,11 @@ async fn main() -> Result<()> {
 
         Command::Doctor => doctor().await?,
 
+        Command::GnomeExtension { action } => match action {
+            ExtensionAction::Install => gnome_extension::install()?,
+            ExtensionAction::Remove => gnome_extension::remove()?,
+            ExtensionAction::Status => gnome_extension::status()?,
+        },
         Command::Shortcut { action } => match action {
             ShortcutAction::Install { keys } => shortcut::install(&keys)?,
             ShortcutAction::Remove => shortcut::remove()?,

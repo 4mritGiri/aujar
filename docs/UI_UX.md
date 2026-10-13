@@ -16,15 +16,15 @@ Status: design only. Framework decision: [ADR 0002](adr/0002-ui-framework-gpui.m
 
 ## Surfaces
 
-| Surface                | Window type                                                                  | Notes                                                         |
-| ---------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Launcher               | Centered popup (layer-shell where available, else normal undecorated window) | Query box, ranked results, action keys                        |
-| Zones editor / overlay | Fullscreen overlay per monitor                                               | Needs window-manager backend                                  |
-| Rename                 | Dialog (also launched from the CLI / file manager)                           | Live preview table with per-row status, errors highlighted    |
-| Clipboard history      | Popup                                                                        | Search, pin, per-item delete, sensitive-item masking          |
-| Color picker           | Small overlay + history panel                                                | Portal-based pick                                             |
-| Settings               | Normal window                                                                | Module toggles, hotkeys, capability approvals, backend status |
-| Tray                   | StatusNotifierItem menu                                                      | Pause, settings, quit                                         |
+| Surface | Window type | Notes |
+|---|---|---|
+| Launcher | Centered popup (layer-shell where available, else normal undecorated window) | Query box, ranked results, action keys |
+| Zones editor / overlay | Fullscreen overlay per monitor | Needs window-manager backend |
+| Rename | Dialog (also launched from the CLI / file manager) | Live preview table with per-row status, errors highlighted |
+| Clipboard history | Popup | Search, pin, per-item delete, sensitive-item masking |
+| Color picker | Small overlay + history panel | Portal-based pick |
+| Settings | Normal window | Module toggles, hotkeys, capability approvals, backend status |
+| Tray | StatusNotifierItem menu | Pause, settings, quit |
 
 ## Hardware acceleration
 
@@ -39,14 +39,14 @@ Status: design only. Framework decision: [ADR 0002](adr/0002-ui-framework-gpui.m
 
 ## Daemon ↔ UI contract (new)
 
-| Need                         | Mechanism                                                                                                  |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Need | Mechanism |
+|---|---|
 | Show/hide launcher on hotkey | IPC **event stream**: `Subscribe` → `Event::Launcher(Show\|Hide\|Toggle)` (implemented, see [IPC](IPC.md)) |
-| Search results               | `Request::Search { query }` → ranked results                                                               |
-| Run an action                | `Request::Execute { result_id }` (capability-checked)                                                      |
-| Rename preview/apply         | existing `Request::Rename`                                                                                 |
-| Backend/capability report    | `Request::Capabilities` (per module: available / unavailable + reason)                                     |
-| Settings changes             | `Request::SetConfig`, validated by the daemon                                                              |
+| Search results | `Request::Search { query }` → ranked results |
+| Run an action | `Request::Execute { result_id }` (capability-checked) |
+| Rename preview/apply | existing `Request::Rename` |
+| Backend/capability report | `Request::Capabilities` (per module: available / unavailable + reason) |
+| Settings changes | `Request::SetConfig`, validated by the daemon |
 
 All of these require protocol v2 or additive variants; document in CHANGELOG when added.
 

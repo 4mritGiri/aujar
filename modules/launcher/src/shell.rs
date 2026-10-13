@@ -27,6 +27,7 @@ impl Provider for ShellProvider {
             kind: ResultKind::Command,
             score: 1800,
             icon: None,
+            detail: None,
         }]
     }
 

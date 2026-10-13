@@ -154,10 +154,10 @@ fn split_number(text: &str) -> Option<(f64, &str)> {
     let text = text.trim();
     let end = text
         .char_indices()
-        .find(|(index, c)| !(c.is_ascii_digit() || *c == '.' || (*index == 0 && *c == '-')))
+        .find(|(index, c)| !(c.is_ascii_digit() || matches!(c, '.' | ',') || (*index == 0 && *c == '-')))
         .map_or(text.len(), |(index, _)| index);
 
-    let number: f64 = text[..end].parse().ok()?;
+    let number: f64 = text[..end].replace(',', "").parse().ok()?;
 
     Some((number, text[end..].trim()))
 }
@@ -201,6 +201,7 @@ impl Provider for UnitsProvider {
             kind: ResultKind::Calculation,
             score: 1900,
             icon: None,
+            detail: None,
         }]
     }
 }
@@ -244,6 +245,7 @@ mod tests {
     fn accepts_attached_units_and_negative_numbers() {
         assert_eq!(answer("10km to m").as_deref(), Some("10000 m"));
         assert_eq!(answer("-40 c to f").as_deref(), Some("-40 °F"));
+        assert_eq!(answer("1,000 m to km").as_deref(), Some("1 km"));
     }
 
     #[test]

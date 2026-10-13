@@ -82,7 +82,12 @@ fn fetch() -> Option<Rates> {
     if let Some(parent) = cache_path().parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let _ = fs::write(cache_path(), cached.to_string());
+    // Write-then-rename so a reader never sees half a file.
+    let temp = cache_path().with_extension("json.tmp");
+
+    if fs::write(&temp, cached.to_string()).is_ok() {
+        let _ = fs::rename(&temp, cache_path());
+    }
 
     Some(rates)
 }
@@ -188,16 +193,22 @@ impl CurrencyProvider {
                         .and_then(|guard| guard.as_ref().map(|r| now().saturating_sub(r.fetched)))
                         .is_some_and(|age| age < MAX_AGE_SECS);
 
+                    let mut failed = false;
+
                     if !fresh {
-                        if let Some(latest) = fetch() {
-                            if let Ok(mut guard) = shared.write() {
-                                *guard = Some(latest);
+                        match fetch() {
+                            Some(latest) => {
+                                if let Ok(mut guard) = shared.write() {
+                                    *guard = Some(latest);
+                                }
                             }
+                            None => failed = true,
                         }
                     }
 
-                    // Re-check hourly; exit when the provider is gone (we hold the only reference).
-                    for _ in 0..720 {
+                    // Re-check hourly, or after two minutes when offline so rates arrive soon
+                    // after the network does. Exit when the provider is gone.
+                    for _ in 0..if failed { 24 } else { 720 } {
                         std::thread::sleep(Duration::from_secs(5));
 
                         if Arc::strong_count(&shared) == 1 {
@@ -258,6 +269,7 @@ impl Provider for CurrencyProvider {
             kind: ResultKind::Calculation,
             score: 1950,
             icon: None,
+            detail: None,
         }]
     }
 }

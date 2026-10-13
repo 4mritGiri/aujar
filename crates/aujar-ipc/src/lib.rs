@@ -145,6 +145,10 @@ pub struct SearchHit {
     /// Absolute path of an icon image (PNG/SVG), when one was found.
     #[serde(default)]
     pub icon: Option<String>,
+    /// Longer text for a preview pane (definitions, forecast, quote details), one item per
+    /// line. Additive: older clients ignore it, older daemons omit it.
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

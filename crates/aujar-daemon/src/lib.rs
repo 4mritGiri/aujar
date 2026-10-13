@@ -54,9 +54,15 @@ use modules::CoreModule;
 /// The launcher plus the settings file it was built from. The launcher is rebuilt when the
 /// file changes, so toggling a plugin in the settings window needs no daemon restart.
 struct LauncherState {
-    launcher: Launcher,
+    launcher: Arc<Launcher>,
+    options: aujar_launcher::LauncherOptions,
     stamp: Option<std::time::SystemTime>,
+    /// When the settings file was last looked at (one `stat` per second at most).
+    checked: std::time::Instant,
 }
+
+/// How often the settings file is checked for changes.
+const SETTINGS_RECHECK: Duration = Duration::from_secs(1);
 
 fn settings_stamp() -> Option<std::time::SystemTime> {
     std::fs::metadata(aujar_config::Settings::path())
@@ -73,43 +79,65 @@ fn launcher_options(settings: &aujar_config::Settings) -> aujar_launcher::Launch
         files: settings.plugins.files,
         system: settings.plugins.system,
         shell: settings.plugins.shell,
+        dictionary: settings.plugins.dictionary,
+        weather: settings.plugins.weather,
+        imperial: settings.weather.imperial,
+        stocks: settings.plugins.stocks,
+        sports: settings.plugins.sports,
+        windows: settings.plugins.windows,
         file_roots: settings.files.roots.clone(),
         file_depth: settings.files.max_depth as usize,
     }
 }
 
-fn build_launcher() -> Launcher {
-    let settings = aujar_config::Settings::load_or_default();
-
-    Launcher::with_options(&launcher_options(&settings))
+fn current_options() -> aujar_launcher::LauncherOptions {
+    launcher_options(&aujar_config::Settings::load_or_default())
 }
 
 impl LauncherState {
     fn new() -> Self {
+        let options = current_options();
+
         Self {
-            launcher: build_launcher(),
+            launcher: Arc::new(Launcher::with_options(&options)),
+            options,
             stamp: settings_stamp(),
+            checked: std::time::Instant::now(),
         }
     }
 }
 
-/// Run `f` with an up-to-date launcher.
-fn with_launcher<R>(shared: &Shared, f: impl FnOnce(&Launcher) -> R) -> R {
+/// The current launcher, rebuilt only when a setting that affects the providers changed.
+///
+/// The lock is held just long enough to clone an `Arc`, so searches run concurrently and
+/// outside it. Appearance-only edits (theme, width, ...) change the settings file but not the
+/// options, so they no longer throw away the file index and rescan the disk.
+fn current_launcher(shared: &Shared) -> Arc<Launcher> {
     let mut state = shared
         .launcher
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let stamp = settings_stamp();
+    if state.checked.elapsed() >= SETTINGS_RECHECK {
+        state.checked = std::time::Instant::now();
 
-    if stamp != state.stamp {
-        tracing::info!("settings changed; reloading launcher providers");
+        let stamp = settings_stamp();
 
-        state.launcher = build_launcher();
-        state.stamp = stamp;
+        if stamp != state.stamp {
+            state.stamp = stamp;
+
+            let options = current_options();
+
+            if options != state.options {
+                tracing::info!("provider settings changed; rebuilding the launcher");
+
+                state.launcher = Arc::new(Launcher::with_options(&options));
+                state.options = options;
+            }
+        }
     }
 
-    f(&state.launcher)
+    Arc::clone(&state.launcher)
 }
 
 /// State shared by every client connection.
@@ -516,6 +544,14 @@ async fn stream_events(
     Ok(())
 }
 
+async fn resolve_off_thread(shared: &Shared, id: String) -> Result<LaunchSpec, String> {
+    let launcher = current_launcher(shared);
+
+    tokio::task::spawn_blocking(move || launcher.resolve(&id))
+        .await
+        .unwrap_or_else(|_| Err("the launcher stopped while resolving the result".to_owned()))
+}
+
 async fn dispatch(request: Request, shared: &Shared) -> Response {
     if let Some(capability) = request
         .required_capability()
@@ -579,7 +615,7 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
             Response::Delivered { subscribers }
         }
 
-        Request::Execute(request) => match with_launcher(shared, |launcher| launcher.resolve(&request.id)) {
+        Request::Execute(request) => match resolve_off_thread(shared, request.id.clone()).await {
             Ok(spec) => match spawn_detached(&spec) {
                 Ok(pid) => {
                     tracing::info!(id = %request.id, program = %spec.program, ?pid, "launched application");
@@ -599,7 +635,13 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
         Request::Search(request) => {
             let limit = request.limit.unwrap_or(10).clamp(1, 50);
 
-            let results = with_launcher(shared, |launcher| launcher.search(&request.query, limit))
+            // Providers read the disk and spawn helpers: keep that off the async workers.
+            let launcher = current_launcher(shared);
+            let query = request.query;
+
+            let results = tokio::task::spawn_blocking(move || launcher.search(&query, limit))
+                .await
+                .unwrap_or_default()
                 .into_iter()
                 .map(|result| SearchHit {
                     id: result.id,
@@ -608,6 +650,7 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
                     kind: result.kind.as_str().to_owned(),
                     score: result.score,
                     icon: result.icon,
+                    detail: result.detail,
                 })
                 .collect();
 

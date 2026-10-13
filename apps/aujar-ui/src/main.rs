@@ -5,9 +5,13 @@
 //! daemon over IPC; the GPUI thread only renders state and forwards keystrokes.
 //!
 //! Keys: type to search, Left/Right/Home/End to edit, Up/Down/Tab to select, Enter to
-//! launch, Ctrl+Enter to show a file in its folder, Ctrl+C to copy, Alt+1..9 to launch a
-//! row, Esc to clear/close. Limitation: plain key events only (no IME / composition yet).
+//! launch, Ctrl+Enter to show a file in its folder, Ctrl+C to copy, Ctrl+L to look a word up,
+//! Ctrl+K (or right-click) for the actions menu, Alt+1..9 to launch a row, Esc to clear/close.
+//! Files can be dragged out of the window into other apps (Wayland). Limitation: plain key
+//! events only (no IME / composition yet).
 
+mod assets;
+mod model;
 mod settings_view;
 mod theme;
 
@@ -18,23 +22,38 @@ use aujar_ipc::{
     subscribe,
 };
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, FocusHandle, Focusable, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ScrollHandle, SharedString, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, div, img,
-    prelude::*, px, rgb, rgba, size,
+    AnyElement, App, Bounds, ClipboardItem, Context, ExternalDragPayload, FileDragPaths,
+    FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ScrollHandle, SharedString, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowHandle, WindowOptions, div, img, prelude::*, px, rgb, rgba, size, svg,
 };
 use gpui_platform::application;
+use model::{
+    Action, MenuItem, SECTION_COUNT, Section, define_query, definition_parts, has_loading,
+    icon_for_kind, is_card, is_dangerous, is_inert, kind_meta, menu_items, price_direction,
+    scoreboard, section_of, section_title, stock_rows, tile_color, weather_parts,
+};
 use settings_view::SettingsView;
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use theme::Palette;
 
 /// Window height; the card inside is content-sized and the rest is transparent.
-const WINDOW_H: f32 = 600.0;
+const WINDOW_H: f32 = 640.0;
+/// Wait before sending a search, so a burst of keystrokes becomes one request.
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(30);
+/// Wait before asking again about a lookup that is still loading.
+const POLL_DELAY: Duration = Duration::from_millis(450);
+/// Re-asks per search (about 20 s), after which the placeholder stays.
+const MAX_POLLS: u32 = 44;
 /// Tallest the results list gets before it scrolls.
 const LIST_MAX_H: f32 = 430.0;
 
@@ -44,6 +63,8 @@ enum UiMessage {
     Results {
         query: String,
         results: Vec<SearchHit>,
+        /// 0 for a fresh search; counts the re-asks made while a lookup is loading.
+        attempt: u32,
     },
     Failed(String),
     OpenSettings,
@@ -57,78 +78,14 @@ enum UiMessage {
 
 /// UI thread -> bridge thread.
 enum UiRequest {
-    Search(String),
+    /// `attempt` > 0 is a re-ask for a lookup that was still loading: it waits a moment first.
+    Search { query: String, attempt: u32 },
     Execute(String),
     OpenSettings,
     /// Ask the daemon for the file history (`kind:recent`).
     Recents,
     /// Render the first page of a PDF into the thumbnail cache.
     Thumbnail(PathBuf),
-}
-
-// ---- Sections ---------------------------------------------------------------------------
-
-/// Declaration order is display order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Section {
-    Recent,
-    RecentFiles,
-    Frequent,
-    Answer,
-    TopHit,
-    Clipboard,
-    Applications,
-    Commands,
-    Files,
-    Web,
-}
-
-const SECTION_COUNT: usize = 10;
-
-fn section_of(kind: &str) -> Section {
-    match kind {
-        "calculation" => Section::Answer,
-        "clip" => Section::Clipboard,
-        "application" => Section::Applications,
-        "system" | "command" | "action" => Section::Commands,
-        "file" | "folder" => Section::Files,
-        _ => Section::Web,
-    }
-}
-
-fn section_title(section: Section) -> &'static str {
-    match section {
-        Section::Recent => "Recent",
-        Section::RecentFiles => "Recent Files",
-        Section::Frequent => "Frequently used",
-        Section::Answer => "Answer",
-        Section::TopHit => "Top Hit",
-        Section::Clipboard => "Clipboard",
-        Section::Applications => "Applications",
-        Section::Commands => "Commands",
-        Section::Files => "Files & Folders",
-        Section::Web => "Web",
-    }
-}
-
-/// (badge, Enter-action label) for a result kind.
-fn kind_meta(kind: &str) -> (&'static str, &'static str) {
-    match kind {
-        "application" => ("App", "Open"),
-        "calculation" => ("Answer", "Copy"),
-        "clip" => ("Clip", "Copy"),
-        "file" => ("File", "Open"),
-        "folder" => ("Folder", "Open"),
-        "system" => ("System", "Run"),
-        "command" => ("Command", "Run"),
-        "action" => ("Aujar", "Open"),
-        _ => ("Web", "Open"),
-    }
-}
-
-/// Results that end the session or the machine ask for a second Enter.
-fn is_dangerous(id: &str) -> bool {
-    matches!(id, "system:restart" | "system:shutdown" | "system:logout")
 }
 
 // ---- Web helpers ------------------------------------------------------------------------
@@ -186,6 +143,7 @@ fn web_hit(title: String, subtitle: String, url: String) -> SearchHit {
         kind: "web".to_owned(),
         score: 0,
         icon: None,
+        detail: None,
     }
 }
 
@@ -350,7 +308,13 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
             if let Ok(meta) = fs::metadata(&path) {
                 if meta.is_dir() {
                     if let Ok(entries) = fs::read_dir(&path) {
-                        preview.rows.push(("Contains", format!("{} items", entries.count())));
+                        // Bounded: a huge directory must not stall the UI thread.
+                        let count = entries.take(5001).count();
+
+                        preview.rows.push((
+                            "Contains",
+                            if count > 5000 { "5,000+ items".to_owned() } else { format!("{count} items") },
+                        ));
                     }
                 } else {
                     preview.rows.push(("Size", human_size(meta.len())));
@@ -410,6 +374,8 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
                 preview.rows.push(("Address", url.to_owned()));
             }
         }
+        // Drawn from `hit.detail` by `render_preview`.
+        "definition" | "weather" | "stock" | "sports" => {}
         _ => {
             if let Some(subtitle) = &hit.subtitle {
                 preview.rows.push(("About", subtitle.clone()));
@@ -419,6 +385,79 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
 
     preview
 }
+
+// ---- Drag and drop out -------------------------------------------------------------------
+
+/// A file result being dragged. Dropping it on another app (file manager, chat, mail) copies
+/// or moves the real file; GPUI offers it to the compositor when the pointer leaves the window
+/// (Wayland; elsewhere the drag stays inside the window and does nothing).
+#[derive(Clone)]
+struct DraggedFile {
+    path: PathBuf,
+    is_dir: bool,
+    title: String,
+}
+
+/// What follows the pointer while dragging inside the window.
+struct DragGhost {
+    title: String,
+    accent: u32,
+}
+
+impl Render for DragGhost {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_3()
+            .py_2()
+            .rounded_lg()
+            .bg(rgb(self.accent))
+            .text_color(rgb(0xffffff))
+            .text_sm()
+            .child(self.title.clone())
+    }
+}
+
+/// Set while a file drag has been handed to the compositor: losing focus is expected then,
+/// and must not close the window (that would cancel the drag).
+static DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// Bumped each time the launcher opens, so a stale auto-close timer leaves a newer window alone.
+static LAUNCHER_GENERATION: AtomicU64 = AtomicU64::new(0);
+static UI_SENDER: OnceLock<async_channel::Sender<UiMessage>> = OnceLock::new();
+
+/// How long the window stays alive after a drag leaves it, so the receiving app can read the
+/// file list. Then it closes by itself.
+const DRAG_LINGER: Duration = Duration::from_secs(30);
+
+fn begin_external_drag() {
+    DRAG_ACTIVE.store(true, Ordering::SeqCst);
+
+    let generation = LAUNCHER_GENERATION.load(Ordering::SeqCst);
+
+    std::thread::spawn(move || {
+        std::thread::sleep(DRAG_LINGER);
+
+        DRAG_ACTIVE.store(false, Ordering::SeqCst);
+
+        if LAUNCHER_GENERATION.load(Ordering::SeqCst) == generation {
+            if let Some(sender) = UI_SENDER.get() {
+                let _ = sender.send_blocking(UiMessage::Launcher(LauncherCommand::Hide));
+            }
+        }
+    });
+}
+
+// ---- Context menu -------------------------------------------------------------------------
+
+struct ContextMenu {
+    items: Vec<MenuItem>,
+    selected: usize,
+    /// Top-left corner in window coordinates.
+    x: f32,
+    y: f32,
+}
+
+const MENU_W: f32 = 232.0;
+const MENU_ROW_H: f32 = 32.0;
 
 // ---- Launcher view ----------------------------------------------------------------------
 
@@ -446,6 +485,7 @@ struct LauncherView {
     /// Id of a dangerous result that is waiting for a second Enter.
     confirming: Option<String>,
     preview: Option<Preview>,
+    menu: Option<ContextMenu>,
     settings: Settings,
     palette: Palette,
     history: History,
@@ -483,6 +523,7 @@ impl LauncherView {
             notice: None,
             confirming: None,
             preview: None,
+            menu: None,
             palette: Palette::from_settings(&settings),
             history: History::load_or_default(),
             recent_files: Vec::new(),
@@ -699,6 +740,7 @@ impl LauncherView {
         self.status = None;
         self.notice = None;
         self.confirming = None;
+        self.menu = None;
 
         if self.query.trim().is_empty() {
             self.show_empty_state();
@@ -710,7 +752,10 @@ impl LauncherView {
             return;
         }
 
-        let _ = self.requests.try_send(UiRequest::Search(self.query.clone()));
+        let _ = self.requests.try_send(UiRequest::Search {
+            query: self.query.clone(),
+            attempt: 0,
+        });
     }
 
     fn install(&mut self, hits: Vec<SearchHit>, sections: Vec<Section>) {
@@ -783,6 +828,7 @@ impl LauncherView {
             kind: entry.kind.clone(),
             score: 0,
             icon: entry.icon.clone(),
+            detail: None,
         };
 
         let recent = self.history.recent(5);
@@ -833,6 +879,7 @@ impl LauncherView {
                 kind: "clip".to_owned(),
                 score: 0,
                 icon: None,
+                detail: None,
             })
             .collect();
 
@@ -862,6 +909,7 @@ impl LauncherView {
                 kind: "action".to_owned(),
                 score: 0,
                 icon: None,
+                detail: None,
             });
         }
 
@@ -929,6 +977,8 @@ impl LauncherView {
             let section = section_of(&hit.kind);
             let cap = match section {
                 Section::Answer => 2,
+                Section::Lookup => 6,
+                Section::Windows => 8,
                 Section::Applications => apps_cap,
                 Section::Commands => 4,
                 Section::Files => apps_cap.min(6),
@@ -1008,7 +1058,17 @@ impl LauncherView {
             return text.clone();
         }
 
-        hit.title.clone()
+        match hit.kind.as_str() {
+            "definition" => match hit.detail.as_deref().map(definition_parts) {
+                Some((first, _)) if !first.is_empty() => format!("{}: {first}", hit.title),
+                _ => hit.title.clone(),
+            },
+            "weather" | "stock" | "sports" => match &hit.subtitle {
+                Some(subtitle) => format!("{} \u{2014} {subtitle}", hit.title),
+                None => hit.title.clone(),
+            },
+            _ => hit.title.clone(),
+        }
     }
 
     /// Ctrl+B (Spotlight's Cmd+B): search the web for the query, whatever is selected.
@@ -1028,11 +1088,145 @@ impl LauncherView {
         }
     }
 
+    /// Replace the whole query (used by Look Up) and search for it.
+    fn set_query(&mut self, text: &str, cx: &mut Context<Self>) {
+        let text: String = text.chars().take(MAX_QUERY_CHARS).collect();
+
+        self.snapshot();
+        self.query = text;
+        self.cursor = self.query.len();
+        self.anchor = self.cursor;
+        self.edited(cx);
+    }
+
+    /// Ctrl+L (Spotlight's Cmd+L): define the selected text, else the query, else the word in
+    /// the selected result's title.
+    fn look_up(&mut self, cx: &mut Context<Self>) {
+        let selected = if self.has_selection() { self.selected_text().to_owned() } else { String::new() };
+        let title = self.results.get(self.selected).map(|hit| hit.title.clone()).unwrap_or_default();
+
+        match define_query(&[selected.as_str(), self.query.as_str(), title.as_str()]) {
+            Some(query) => self.set_query(&query, cx),
+            None => {
+                self.notice = Some("Select or type a word first, then press Ctrl+L.".to_owned());
+                cx.notify();
+            }
+        }
+    }
+
+    /// Whether a dictionary word is available for the selected result (menu entry).
+    fn can_look_up(&self) -> bool {
+        let title = self.results.get(self.selected).map(|hit| hit.title.as_str()).unwrap_or("");
+
+        self.settings.plugins.dictionary && define_query(&[self.query.as_str(), title]).is_some()
+    }
+
+    /// Open the actions menu for result `index` at window position (`x`, `y`), or beside the
+    /// selected row when opened from the keyboard.
+    fn open_menu(&mut self, index: usize, at: Option<(f32, f32)>, cx: &mut Context<Self>) {
+        if index >= self.results.len() {
+            return;
+        }
+
+        if self.selected != index {
+            self.selected = index;
+            self.confirming = None;
+            self.refresh_preview();
+        }
+
+        let items = menu_items(&self.results[index], self.can_look_up());
+
+        if items.is_empty() {
+            return;
+        }
+
+        let width = self.settings.appearance.width as f32;
+        let height = items.len() as f32 * MENU_ROW_H + 12.0;
+
+        // Keyboard: a fixed spot under the search bar, near the left of the list.
+        let (x, y) = at.unwrap_or((width - MENU_W - 24.0, 120.0));
+
+        self.menu = Some(ContextMenu {
+            items,
+            selected: 0,
+            x: x.clamp(8.0, (width - MENU_W - 8.0).max(8.0)),
+            y: y.clamp(8.0, (WINDOW_H - height - 8.0).max(8.0)),
+        });
+
+        cx.notify();
+    }
+
+    fn close_menu(&mut self, cx: &mut Context<Self>) {
+        if self.menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Run a menu action on the selected result.
+    fn perform(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+
+        let Some(hit) = self.results.get(self.selected).cloned() else {
+            return;
+        };
+
+        match action {
+            Action::Primary => self.launch_selected(false, window, cx),
+            Action::Reveal => self.launch_selected(true, window, cx),
+            Action::Copy => {
+                cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(&hit)));
+                window.remove_window();
+            }
+            Action::LookUp => self.look_up(cx),
+            Action::WebSearch => self.open_web_search(window, cx),
+        }
+
+        cx.notify();
+    }
+
+    /// Keys while the actions menu is open. Everything else is swallowed.
+    fn on_menu_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.menu.as_mut() else {
+            return;
+        };
+
+        let count = menu.items.len();
+
+        match key {
+            "escape" => self.close_menu(cx),
+            "down" | "tab" => {
+                menu.selected = (menu.selected + 1) % count;
+                cx.notify();
+            }
+            "up" => {
+                menu.selected = (menu.selected + count - 1) % count;
+                cx.notify();
+            }
+            "enter" => {
+                let action = menu.items[menu.selected].action;
+
+                self.perform(action, window, cx);
+            }
+            _ => {}
+        }
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let modifiers = &keystroke.modifiers;
         let key = keystroke.key.as_str();
         let (ctrl, shift, alt) = (modifiers.control, modifiers.shift, modifiers.alt);
+
+        if self.menu.is_some() {
+            self.on_menu_key(key, window, cx);
+            return;
+        }
+
+        // The keyboard route to the right-click menu.
+        if key == "menu" || (key == "f10" && shift) {
+            self.open_menu(self.selected, None, cx);
+            return;
+        }
 
         // Alt+1..9 launches that row directly (Spotlight's Cmd+1..9).
         if alt && !ctrl {
@@ -1121,7 +1315,9 @@ impl LauncherView {
         if ctrl {
             match key {
                 "n" | "j" => self.move_selection(1, cx),
-                "p" | "k" => self.move_selection(-1, cx),
+                "p" => self.move_selection(-1, cx),
+                "k" => self.open_menu(self.selected, None, cx),
+                "l" => self.look_up(cx),
                 "enter" => self.launch_selected(true, window, cx),
                 "a" => {
                     self.anchor = 0;
@@ -1261,6 +1457,10 @@ impl LauncherView {
             return;
         };
 
+        if is_inert(&hit.kind) {
+            return;
+        }
+
         if is_dangerous(&hit.id) && self.confirming.as_deref() != Some(hit.id.as_str()) {
             self.confirming = Some(hit.id);
             cx.notify();
@@ -1303,6 +1503,17 @@ impl LauncherView {
 
     // ---- Rendering ----
 
+    /// A stroke icon from the embedded set, tinted `color`.
+    fn glyph(&self, path: &'static str, size: f32, color: u32) -> impl IntoElement {
+        svg()
+            .path(path)
+            .size(px(size))
+            .flex_shrink_0()
+            .text_color(rgb(color))
+    }
+
+    /// The icon tile of a result: the application's own icon when there is one, otherwise a
+    /// colored rounded square with a glyph for its kind.
     fn leading(&self, hit: &SearchHit, tile: f32) -> AnyElement {
         if self.settings.appearance.show_icons {
             if let Some(icon) = hit.icon.as_deref() {
@@ -1313,28 +1524,33 @@ impl LauncherView {
             }
         }
 
-        let (color, glyph) = match hit.kind.as_str() {
-            "folder" => (0xd9a23a, "F".to_owned()),
-            "file" => (0x6b7a90, "D".to_owned()),
-            "system" => (0xc2414f, "S".to_owned()),
-            "command" => (0x3d3d48, ">".to_owned()),
-            "clip" => (0x6b5bd6, "C".to_owned()),
-            "action" => (self.settings.appearance.accent.rgb(), "A".to_owned()),
-            "web" => (0x2f8fd8, "\u{2197}".to_owned()),
-            _ => {
-                const PALETTE: [u32; 6] =
-                    [0x5e5ce6, 0x30a46c, 0xe5732d, 0xd6409f, 0x2f8fd8, 0x8e6bd8];
-                let initial = hit
-                    .title
-                    .chars()
-                    .find(|c| c.is_alphanumeric())
-                    .map(|c| c.to_uppercase().to_string())
-                    .unwrap_or_else(|| "?".to_owned());
-                let sum: usize = hit.title.bytes().map(usize::from).sum();
+        // An application without an icon file: its initial on a stable color.
+        if hit.kind == "application" {
+            const PALETTE: [u32; 6] = [0x5e5ce6, 0x30a46c, 0xe5732d, 0xd6409f, 0x2f8fd8, 0x8e6bd8];
 
-                (PALETTE[sum % PALETTE.len()], initial)
-            }
-        };
+            let initial = hit
+                .title
+                .chars()
+                .find(|c| c.is_alphanumeric())
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_else(|| "?".to_owned());
+            let sum: usize = hit.title.bytes().map(usize::from).sum();
+
+            return div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(tile))
+                .flex_shrink_0()
+                .rounded_lg()
+                .bg(rgb(PALETTE[sum % PALETTE.len()]))
+                .text_color(rgb(0xffffff))
+                .text_lg()
+                .child(initial)
+                .into_any_element();
+        }
+
+        let color = tile_color(&hit.kind, &hit.id, self.settings.appearance.accent.rgb());
 
         div()
             .flex()
@@ -1344,16 +1560,13 @@ impl LauncherView {
             .flex_shrink_0()
             .rounded_lg()
             .bg(rgb(color))
-            .text_color(rgb(0xffffff))
-            .text_lg()
-            .child(glyph)
+            .child(self.glyph(icon_for_kind(&hit.kind, &hit.id), tile * 0.55, 0xffffff))
             .into_any_element()
     }
 
     fn keycap(&self, label: &str) -> impl IntoElement {
         div()
-            .px_2()
-            .py_0p5()
+            .px_1()
             .rounded_md()
             .border_1()
             .border_color(rgba(self.palette.keycap_border))
@@ -1368,8 +1581,16 @@ impl LauncherView {
         let selected = index == self.selected;
         let dangerous = is_dangerous(&hit.id);
         let confirming = self.confirming.as_deref() == Some(hit.id.as_str());
+        let inert = is_inert(&hit.kind);
+        let card = is_card(&hit.kind);
 
-        let title_color = if selected { rgb(pal.on_accent) } else { rgb(pal.text) };
+        let title_color = if selected {
+            rgb(pal.on_accent)
+        } else if inert {
+            rgb(pal.text_dim)
+        } else {
+            rgb(pal.text)
+        };
         let sub_color = if selected { rgba(pal.on_accent_dim) } else { rgb(pal.text_dim) };
 
         let base = div()
@@ -1380,12 +1601,48 @@ impl LauncherView {
             .gap_3()
             .mx_2()
             .px_3()
-            .rounded_lg()
+            .rounded_xl()
             .cursor_pointer()
             .on_click(cx.listener(move |this, _event, window, cx| {
                 this.selected = index;
                 this.launch_selected(false, window, cx);
-            }));
+            }))
+            // Right-click: the actions menu at the pointer.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                    let at = (f32::from(event.position.x), f32::from(event.position.y));
+
+                    this.open_menu(index, Some(at), cx);
+                }),
+            );
+
+        // Files and folders can be dragged out of the window into other applications.
+        let base = match hit.id.strip_prefix("files:open:") {
+            Some(path) if hit.kind == "file" || hit.kind == "folder" => {
+                let dragged = DraggedFile {
+                    path: PathBuf::from(path),
+                    is_dir: hit.kind == "folder",
+                    title: hit.title.clone(),
+                };
+                let accent = pal.accent;
+
+                base.on_drag(dragged, move |dragged, _offset, _window, cx| {
+                    let title = dragged.title.clone();
+
+                    cx.new(|_| DragGhost { title, accent })
+                })
+                .external_drag_payload::<DraggedFile>(|dragged, _window, _cx| {
+                    begin_external_drag();
+
+                    Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                        dragged.path.clone(),
+                        dragged.is_dir,
+                    )])))
+                })
+            }
+            _ => base,
+        };
 
         let base = if selected {
             base.bg(rgb(if dangerous { pal.danger } else { pal.accent }))
@@ -1393,17 +1650,27 @@ impl LauncherView {
             base.hover(|style| style.bg(rgba(pal.hover)))
         };
 
-        let (badge, _) = kind_meta(&hit.kind);
-        let trailing = if selected {
-            if confirming { "Enter again".to_owned() } else { "Enter".to_owned() }
-        } else if index < 9 {
-            format!("Alt+{}", index + 1)
-        } else {
-            badge.to_owned()
-        };
+        let (kind_label, action_label) = kind_meta(&hit.kind);
+
+        let trailing = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .flex_shrink_0()
+            .text_xs()
+            .text_color(sub_color)
+            .child(if selected {
+                if confirming { "Enter again" } else { action_label }
+            } else {
+                kind_label
+            })
+            .when(selected && !inert, |this| {
+                this.child(self.glyph("icons/enter.svg", 14., if selected { pal.on_accent } else { pal.text_dim }))
+            });
 
         if hit.kind == "calculation" {
-            // Answer card: the result is the star, like Spotlight's calculator.
+            // The answer is the star, like Spotlight's calculator.
             return base
                 .py_3()
                 .child(
@@ -1411,20 +1678,53 @@ impl LauncherView {
                         .flex()
                         .flex_col()
                         .flex_1()
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(sub_color)
-                                .child(hit.subtitle.clone().unwrap_or_else(|| "Answer".to_owned())),
-                        )
+                        .child(div().text_xs().text_color(sub_color).child(
+                            hit.subtitle.clone().unwrap_or_else(|| "Answer".to_owned()),
+                        ))
                         .child(div().text_3xl().text_color(title_color).child(hit.title.clone())),
                 )
+                .child(trailing)
+                .into_any_element();
+        }
+
+        if card {
+            // Weather, quotes, scores and definitions: a larger row with the key facts.
+            let first_definition = (hit.kind == "definition")
+                .then(|| hit.detail.as_deref().map(|detail| definition_parts(detail).0))
+                .flatten()
+                .filter(|text| !text.is_empty());
+
+            let subtitle_color = match (hit.kind.as_str(), hit.subtitle.as_deref().and_then(price_direction)) {
+                ("stock", Some(up)) if !selected => rgb(if up { pal.positive } else { pal.negative }),
+                _ => sub_color,
+            };
+
+            return base
+                .py_3()
+                .child(self.leading(hit, 44.))
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(sub_color)
-                        .child(if selected { "Enter to copy".to_owned() } else { trailing }),
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .overflow_hidden()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .text_xl()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(title_color)
+                                .truncate()
+                                .child(hit.title.clone()),
+                        )
+                        .when_some(hit.subtitle.clone(), |this, subtitle| {
+                            this.child(div().text_sm().text_color(subtitle_color).truncate().child(subtitle))
+                        })
+                        .when_some(first_definition, |this, text| {
+                            this.child(div().text_sm().text_color(sub_color).line_clamp(2).child(text))
+                        }),
                 )
+                .child(trailing)
                 .into_any_element();
         }
 
@@ -1435,7 +1735,7 @@ impl LauncherView {
         };
 
         base.py_2()
-            .child(self.leading(hit, 36.))
+            .child(self.leading(hit, 32.))
             .child(
                 div()
                     .flex()
@@ -1447,7 +1747,7 @@ impl LauncherView {
                         this.child(div().text_xs().text_color(sub_color).truncate().child(subtitle))
                     }),
             )
-            .child(div().text_xs().text_color(sub_color).child(trailing))
+            .child(trailing)
             .into_any_element()
     }
 
@@ -1456,12 +1756,113 @@ impl LauncherView {
         let hit = self.results.get(self.selected)?;
         let pal = self.palette;
 
+        if is_inert(&hit.kind) {
+            return None;
+        }
+
+        let label = |text: &str| {
+            div()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgb(pal.text_faint))
+                .child(text.to_owned())
+        };
+
+        // Kind-specific body, built from the daemon's `detail` text.
+        let mut body: Vec<AnyElement> = Vec::new();
+
+        match (hit.kind.as_str(), hit.detail.as_deref()) {
+            ("definition", Some(detail)) => {
+                for line in definition_parts(detail).1 {
+                    let example = line.starts_with("   ");
+
+                    body.push(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(if example { pal.text_dim } else { pal.text }))
+                            .when(example, |this| this.italic())
+                            .child(line.trim_start().to_owned())
+                            .into_any_element(),
+                    );
+                }
+            }
+            ("weather", Some(detail)) => {
+                let (facts, days) = weather_parts(detail);
+
+                for fact in facts {
+                    body.push(div().text_sm().text_color(rgb(pal.text)).child(fact).into_any_element());
+                }
+
+                if !days.is_empty() {
+                    body.push(label("FORECAST").into_any_element());
+                }
+
+                for (name, condition, high, low) in days {
+                    body.push(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .text_sm()
+                            .child(div().w(px(42.)).text_color(rgb(pal.text)).child(name))
+                            .child(div().flex_1().truncate().text_color(rgb(pal.text_dim)).child(condition))
+                            .child(div().text_color(rgb(pal.text)).child(high))
+                            .child(div().text_color(rgb(pal.text_faint)).child(low))
+                            .into_any_element(),
+                    );
+                }
+            }
+            ("stock", Some(detail)) => {
+                for (name, value) in stock_rows(detail) {
+                    body.push(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(label(&name))
+                            .child(div().text_sm().text_color(rgb(pal.text)).child(value))
+                            .into_any_element(),
+                    );
+                }
+            }
+            ("sports", Some(detail)) => {
+                if let Some(board) = scoreboard(detail) {
+                    let team = |name: String, score: String, won: bool| {
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_sm()
+                                    .font_weight(if won { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                    .text_color(rgb(if won { pal.text } else { pal.text_dim }))
+                                    .child(name),
+                            )
+                            .child(div().text_xl().text_color(rgb(pal.text)).child(score))
+                    };
+
+                    let away_won = board.winner == "away";
+                    let home_won = board.winner == "home";
+
+                    body.push(team(board.away, board.away_score, away_won).into_any_element());
+                    body.push(team(board.home, board.home_score, home_won).into_any_element());
+                }
+            }
+            _ => {}
+        }
+
         Some(
             div()
                 .flex()
                 .flex_col()
                 .gap_3()
-                .w(px(270.))
+                .w(px(268.))
                 .flex_shrink_0()
                 .p_4()
                 .border_l_1()
@@ -1472,17 +1873,23 @@ impl LauncherView {
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .child(div().text_lg().text_color(rgb(pal.text)).child(preview.title.clone()))
+                        .child(
+                            div()
+                                .text_lg()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(pal.text))
+                                .child(preview.title.clone()),
+                        )
                         .child(div().text_xs().text_color(rgb(pal.text_dim)).child(preview.badge)),
                 )
                 .when_some(preview.image.clone(), |this, path| {
                     this.child(img(path).w_full().max_h(px(170.)).rounded_md())
                 })
-                .children(preview.rows.iter().map(|(label, value)| {
+                .children(preview.rows.iter().map(|(name, value)| {
                     div()
                         .flex()
                         .flex_col()
-                        .child(div().text_xs().text_color(rgb(pal.text_dim)).child(*label))
+                        .child(label(name))
                         .child(div().text_sm().text_color(rgb(pal.text)).child(value.clone()))
                 }))
                 .when_some(preview.text.clone(), |this, text| {
@@ -1497,6 +1904,7 @@ impl LauncherView {
                             .child(text),
                     )
                 })
+                .children(body)
                 .into_any_element(),
         )
     }
@@ -1505,31 +1913,30 @@ impl LauncherView {
         let pal = self.palette;
         let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
 
-        match self.results.get(self.selected) {
+        match self.results.get(self.selected).filter(|hit| !is_inert(&hit.kind)) {
             Some(hit) => {
                 hints.push(("Enter", kind_meta(&hit.kind).1));
 
                 match hit.kind.as_str() {
                     "file" | "folder" => {
                         hints.push(("Ctrl+Enter", "Show in folder"));
-                        hints.push(("Ctrl+C", "Copy path"));
+                        hints.push(("Drag", "Share file"));
                     }
-                    "calculation" => {}
                     _ => hints.push(("Ctrl+C", "Copy")),
                 }
 
-                hints.push(("Alt+1-9", "Quick open"));
-                hints.push(("Ctrl+B", "Web search"));
+                hints.push(("Ctrl+K", "Actions"));
+
+                if self.settings.plugins.dictionary {
+                    hints.push(("Ctrl+L", "Look up"));
+                }
             }
             None => {
-                hints.push(("g query", "Web shortcut"));
-                hints.push(("> cmd", "Run command"));
-                hints.push(("10 km to mi", "Convert"));
-                hints.push(("kind:pdf", "File type"));
-
-                if self.settings.plugins.clipboard {
-                    hints.push(("clip", "Clipboard"));
-                }
+                hints.push(("define word", "Dictionary"));
+                hints.push(("weather city", "Weather"));
+                hints.push(("stock aapl", "Stocks"));
+                hints.push(("nba", "Scores"));
+                hints.push(("< name", "Windows"));
             }
         }
 
@@ -1538,13 +1945,14 @@ impl LauncherView {
         div()
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
-            .gap_4()
+            .gap_x_4()
+            .gap_y_1()
             .px_5()
             .py_2()
             .border_t_1()
             .border_color(rgba(pal.divider))
-            .bg(rgba(pal.subtle))
             .children(hints.into_iter().map(|(keys, label)| {
                 div()
                     .flex()
@@ -1552,8 +1960,83 @@ impl LauncherView {
                     .items_center()
                     .gap_1p5()
                     .child(self.keycap(keys))
-                    .child(div().text_xs().text_color(rgb(pal.text_dim)).child(label))
+                    .child(div().text_xs().text_color(rgb(pal.text_faint)).child(label))
             }))
+    }
+
+    /// The right-click / Ctrl+K actions menu, with a transparent backdrop that dismisses it.
+    fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let menu = self.menu.as_ref()?;
+        let pal = self.palette;
+
+        let rows = menu.items.iter().enumerate().map(|(index, item)| {
+            let action = item.action;
+            let selected = index == menu.selected;
+
+            div()
+                .id(SharedString::from(format!("menu-{index}")))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap_4()
+                .mx_1()
+                .px_3()
+                .h(px(MENU_ROW_H))
+                .rounded_md()
+                .cursor_pointer()
+                .when(selected, |this| this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent)))
+                .when(!selected, |this| {
+                    this.text_color(rgb(pal.text)).hover(|style| style.bg(rgba(pal.hover)))
+                })
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    this.perform(action, window, cx);
+                }))
+                .child(div().text_sm().child(item.label.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(if selected { rgba(pal.on_accent_dim) } else { rgb(pal.text_faint) })
+                        .child(item.shortcut),
+                )
+        });
+
+        let dismiss = |this: &mut Self, _event: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>| {
+            this.close_menu(cx);
+        };
+
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .h(px(WINDOW_H))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .on_mouse_down(MouseButton::Left, cx.listener(dismiss))
+                        .on_mouse_down(MouseButton::Right, cx.listener(dismiss)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(menu.x))
+                        .top(px(menu.y))
+                        .w(px(MENU_W))
+                        .py_1()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(rgba(pal.border))
+                        .bg(rgba(pal.menu))
+                        .occlude()
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The search field: one element per character so the mouse can place the caret
@@ -1575,7 +2058,7 @@ impl LauncherView {
             .flex_row()
             .items_center()
             .flex_1()
-            .h(px(34.))
+            .h(px(36.))
             .overflow_hidden()
             .cursor_text()
             .text_2xl();
@@ -1605,7 +2088,7 @@ impl LauncherView {
                     div()
                         .pl_1()
                         .text_color(rgb(pal.text_dim))
-                        .child("Search apps, files, math and the web"),
+                        .child("Search apps, files, windows, weather, math\u{2026}"),
                 )
                 .child(filler)
                 .into_any_element();
@@ -1680,7 +2163,6 @@ impl Render for LauncherView {
         let mut last_section: Option<Section> = None;
 
         for index in 0..self.results.len() {
-            let hit = self.results[index].clone();
             let section = self.sections.get(index).copied().unwrap_or(Section::Web);
 
             if last_section != Some(section) {
@@ -1690,37 +2172,35 @@ impl Render for LauncherView {
                         .pt_3()
                         .pb_1()
                         .text_xs()
-                        .text_color(rgb(pal.text_dim))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(rgb(pal.text_faint))
                         .child(section_title(section))
                         .into_any_element(),
                 );
                 last_section = Some(section);
             }
 
-            rows.push(self.render_row(index, &hit, cx));
+            // Borrowed, not cloned: this runs every frame for every visible row.
+            let hit = &self.results[index];
+
+            rows.push(self.render_row(index, hit, cx));
         }
 
         let show_footer = self.settings.appearance.show_footer;
         let preview = self.render_preview();
+        let menu = self.render_menu(cx);
 
-        // The window is transparent: only this card is painted, so with no results it
-        // collapses to the search bar (plus the hint bar), like Spotlight.
-        div()
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(Self::on_key_down))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _event, _window, _cx| this.drag_anchor = None),
-            )
+        let card = div()
             .flex()
             .flex_col()
             .w_full()
             .bg(rgba(pal.card))
             .border_1()
             .border_color(rgba(pal.border))
-            .rounded_xl()
+            .rounded_2xl()
             .overflow_hidden()
             .text_color(rgb(pal.text))
+            // The search bar.
             .child(
                 div()
                     .flex()
@@ -1729,16 +2209,8 @@ impl Render for LauncherView {
                     .gap_3()
                     .px_5()
                     .py_4()
-                    .child(
-                        div()
-                            .size(px(18.))
-                            .flex_shrink_0()
-                            .rounded_full()
-                            .border_2()
-                            .border_color(rgb(pal.text_dim)),
-                    )
-                    .child(self.render_query(cx))
-                    .child(self.keycap("Esc")),
+                    .child(self.glyph("icons/search.svg", 22., pal.text_faint))
+                    .child(self.render_query(cx)),
             )
             .when(!rows.is_empty(), |this| {
                 this.child(div().h(px(1.)).w_full().bg(rgba(pal.divider))).child(
@@ -1754,6 +2226,7 @@ impl Render for LauncherView {
                                 .max_h(px(LIST_MAX_H))
                                 .overflow_y_scroll()
                                 .track_scroll(&self.scroll)
+                                .pt_1()
                                 .pb_2()
                                 .children(rows),
                         )
@@ -1780,7 +2253,23 @@ impl Render for LauncherView {
                         .child(status),
                 )
             })
-            .when(show_footer, |this| this.child(self.render_footer()))
+            .when(show_footer, |this| this.child(self.render_footer()));
+
+        // The window is transparent: only the card is painted, so with no results it collapses
+        // to the search bar. The menu floats above it.
+        div()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::on_key_down))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event, _window, _cx| this.drag_anchor = None),
+            )
+            .relative()
+            .flex()
+            .flex_col()
+            .w_full()
+            .child(card)
+            .when_some(menu, |this, menu| this.child(menu))
     }
 }
 
@@ -1805,6 +2294,10 @@ fn open_launcher(
     let close_on_blur = settings.appearance.close_on_blur;
     let snapshot = clips.clone();
 
+    // A new window: forget any earlier drag, and invalidate its auto-close timer.
+    DRAG_ACTIVE.store(false, Ordering::SeqCst);
+    LAUNCHER_GENERATION.fetch_add(1, Ordering::SeqCst);
+
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,
@@ -1827,7 +2320,9 @@ fn open_launcher(
 
             view.update(cx, |_view, cx| {
                 cx.observe_window_activation(window, move |_this, window, _cx| {
-                    if !window.is_window_active() && opened.elapsed() > Duration::from_millis(500)
+                    if !window.is_window_active()
+                        && opened.elapsed() > Duration::from_millis(500)
+                        && !DRAG_ACTIVE.load(Ordering::SeqCst)
                     {
                         window.remove_window();
                     }
@@ -1937,12 +2432,22 @@ fn handle_message(
                 _ => {}
             }
         }
-        UiMessage::Results { query, results } => {
+        UiMessage::Results { query, results, attempt } => {
             if let Some(handle) = state.launcher.as_ref() {
                 let _ = handle.update(cx, |view, _, cx| {
                     // Ignore answers for a query the user has already edited.
                     if view.query == query {
                         view.set_results(results);
+
+                        // A lookup (definition, weather, ...) is still being fetched: ask
+                        // again shortly; the daemon answers from its cache once it is done.
+                        if has_loading(&view.results) && attempt < MAX_POLLS {
+                            let _ = view.requests.try_send(UiRequest::Search {
+                                query,
+                                attempt: attempt + 1,
+                            });
+                        }
+
                         cx.notify();
                     }
                 });
@@ -2027,17 +2532,39 @@ async fn serve_requests(
     tx: async_channel::Sender<UiMessage>,
     requests: async_channel::Receiver<UiRequest>,
 ) {
+    let _ = UI_SENDER.set(tx.clone());
+    let latest = Arc::new(AtomicU64::new(0));
+
     while let Ok(request) = requests.recv().await {
         match request {
-            UiRequest::Search(query) => {
-                let message = match search(&socket, &query).await {
-                    Ok(results) => UiMessage::Results { query, results },
-                    Err(error) => UiMessage::Failed(format!("{error:#}")),
-                };
+            UiRequest::Search { query, attempt } => {
+                // Searches run concurrently and only the newest one reports back: a slow
+                // query (cold file index, a lookup) must not hold up the keystrokes after it.
+                let id = latest.fetch_add(1, Ordering::SeqCst) + 1;
+                let latest = Arc::clone(&latest);
+                let socket = socket.clone();
+                let tx = tx.clone();
 
-                if tx.send(message).await.is_err() {
-                    break;
-                }
+                tokio::spawn(async move {
+                    // Typing fast supersedes this search before it is sent (debounce); a
+                    // re-ask for a loading lookup waits a little longer.
+                    let wait = if attempt == 0 { SEARCH_DEBOUNCE } else { POLL_DELAY };
+
+                    tokio::time::sleep(wait).await;
+
+                    if latest.load(Ordering::SeqCst) != id {
+                        return;
+                    }
+
+                    let message = match search(&socket, &query).await {
+                        Ok(results) => UiMessage::Results { query, results, attempt },
+                        Err(error) => UiMessage::Failed(format!("{error:#}")),
+                    };
+
+                    if latest.load(Ordering::SeqCst) == id {
+                        let _ = tx.send(message).await;
+                    }
+                });
             }
             UiRequest::Execute(id) => {
                 if let Err(error) = execute(&socket, &id).await {
@@ -2133,6 +2660,7 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
         };
 
         let mut enabled = false;
+        let mut settings_stamp: Option<SystemTime> = None;
         let mut failures = 0u32;
         let mut ticks = 0u32;
         let mut last = String::new();
@@ -2140,9 +2668,15 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
         loop {
             std::thread::sleep(Duration::from_millis(1500));
 
-            // The setting can change while we run; re-read it every few seconds.
+            // The setting can change while we run; look at the file every few seconds, and
+            // only parse it when it actually changed.
             if ticks % 4 == 0 {
-                enabled = Settings::load_or_default().plugins.clipboard;
+                let stamp = fs::metadata(Settings::path()).and_then(|meta| meta.modified()).ok();
+
+                if stamp != settings_stamp || ticks == 0 {
+                    settings_stamp = stamp;
+                    enabled = Settings::load_or_default().plugins.clipboard;
+                }
             }
 
             ticks = ticks.wrapping_add(1);
@@ -2155,13 +2689,16 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
                 Ok(output) if output.status.success() => {
                     failures = 0;
 
-                    if let Ok(text) = String::from_utf8(output.stdout) {
+                    // Skip huge copies (a file's contents, an image as text): not history material.
+                    if output.stdout.len() <= 64 * 1024 {
+                        if let Ok(text) = String::from_utf8(output.stdout) {
                         if text != last {
                             last = text.clone();
 
                             if tx.send_blocking(UiMessage::Clipboard(text)).is_err() {
                                 return;
                             }
+                        }
                         }
                     }
                 }
@@ -2190,6 +2727,7 @@ fn main() {
     // Closing the launcher window (Esc / Enter) must not end the process: the UI has to
     // stay alive to receive the next toggle. By default GPUI quits with the last window.
     application()
+        .with_assets(assets::Assets)
         .with_quit_mode(gpui::QuitMode::Explicit)
         .run(move |cx: &mut App| {
             cx.spawn(async move |cx| {

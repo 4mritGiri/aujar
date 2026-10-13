@@ -19,21 +19,31 @@ fn score_inner(query: &str, text: &str, allow_fuzzy: bool) -> Option<u32> {
         return None;
     }
 
-    let text = text.to_lowercase();
+    score_lowered(&query, &text.to_lowercase(), allow_fuzzy)
+}
+
+/// [`score`] / [`score_strict`] for a query and text that are **already lower-case** (and a
+/// non-empty, trimmed query). Hot loops lower-case the query once and keep lower-cased texts,
+/// instead of allocating two strings per candidate.
+pub fn score_lowered(query: &str, text: &str, allow_fuzzy: bool) -> Option<u32> {
+    if query.is_empty() {
+        return None;
+    }
+
     let bonus = 99u32.saturating_sub(text.chars().count() as u32);
 
     let base = if text == query {
         1000
-    } else if text.starts_with(&query) {
+    } else if text.starts_with(query) {
         800
     } else if text
         .split(|c: char| !c.is_alphanumeric())
-        .any(|word| word.starts_with(&query))
+        .any(|word| word.starts_with(query))
     {
         600
-    } else if text.contains(&query) {
+    } else if text.contains(query) {
         400
-    } else if allow_fuzzy && query.chars().count() >= 3 && is_subsequence(&query, &text) {
+    } else if allow_fuzzy && query.chars().count() >= 3 && is_subsequence(query, text) {
         200
     } else {
         return None;

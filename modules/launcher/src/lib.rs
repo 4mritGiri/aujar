@@ -1,25 +1,36 @@
 mod apps;
 mod calculator;
 mod currency;
+mod dictionary;
 mod files;
 mod icons;
 mod model;
 mod ranking;
 mod recent;
 mod shell;
+mod sports;
+mod stocks;
 mod system;
 mod units;
+mod weather;
+mod web;
+mod windows;
 
 pub use apps::{AppsProvider, DesktopEntry, default_dirs, parse_desktop_entry, parse_exec};
 pub use calculator::{CalculatorProvider, evaluate};
 pub use currency::CurrencyProvider;
+pub use dictionary::DictionaryProvider;
 pub use files::FilesProvider;
 pub use icons::resolve_icon;
 pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
-pub use ranking::{score, score_strict};
+pub use ranking::{score, score_lowered, score_strict};
 pub use shell::ShellProvider;
+pub use sports::SportsProvider;
+pub use stocks::StocksProvider;
 pub use system::SystemProvider;
 pub use units::{UnitsProvider, convert_query};
+pub use weather::WeatherProvider;
+pub use windows::{GNOME_BUS_NAME, GNOME_OBJECT_PATH, WindowsProvider};
 
 /// Which providers a [`Launcher`] is built with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +44,18 @@ pub struct LauncherOptions {
     pub system: bool,
     /// Runs arbitrary commands, so it is opt-in.
     pub shell: bool,
+    /// `define word`. Sends the word to dictionaryapi.dev, only when you ask.
+    pub dictionary: bool,
+    /// `weather city`. Sends the place to Open-Meteo, only when you ask.
+    pub weather: bool,
+    /// Fahrenheit and mph instead of Celsius and km/h.
+    pub imperial: bool,
+    /// `stock aapl`. Sends the ticker to Yahoo Finance, only when you ask.
+    pub stocks: bool,
+    /// `nba`, `premier league`. Sends the league to ESPN, only when you ask.
+    pub sports: bool,
+    /// `< firefox`: switch to an open window (needs a backend for the session).
+    pub windows: bool,
     pub file_roots: Vec<String>,
     pub file_depth: usize,
 }
@@ -47,6 +70,12 @@ impl Default for LauncherOptions {
             files: true,
             system: true,
             shell: false,
+            dictionary: true,
+            weather: true,
+            imperial: false,
+            stocks: true,
+            sports: true,
+            windows: true,
             file_roots: vec!["~".to_owned()],
             file_depth: 4,
         }
@@ -121,6 +150,26 @@ impl Launcher {
             launcher.register(Box::new(ShellProvider));
         }
 
+        if options.dictionary {
+            launcher.register(Box::new(DictionaryProvider::new()));
+        }
+
+        if options.weather {
+            launcher.register(Box::new(WeatherProvider::new(options.imperial)));
+        }
+
+        if options.stocks {
+            launcher.register(Box::new(StocksProvider::new()));
+        }
+
+        if options.sports {
+            launcher.register(Box::new(SportsProvider::new()));
+        }
+
+        if options.windows {
+            launcher.register(Box::new(WindowsProvider::new()));
+        }
+
         launcher
     }
 
@@ -190,6 +239,7 @@ mod tests {
             kind: ResultKind::Application,
             score,
             icon: None,
+            detail: None,
         }
     }
 

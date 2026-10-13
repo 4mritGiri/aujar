@@ -302,13 +302,16 @@ impl FilesProvider {
 }
 
 fn pretty_parent(path: &Path) -> String {
-    let parent = path.parent().unwrap_or(path).display().to_string();
+    let parent = path.parent().unwrap_or(path);
 
-    match std::env::var("HOME") {
-        Ok(home) if !home.is_empty() && parent.starts_with(&home) => {
-            format!("~{}", &parent[home.len()..])
-        }
-        _ => parent,
+    // Compare whole path components: `/home/ann2` is not inside `/home/ann`.
+    match std::env::var_os("HOME").map(PathBuf::from) {
+        Some(home) if !home.as_os_str().is_empty() => match parent.strip_prefix(&home) {
+            Ok(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => parent.display().to_string(),
+        },
+        _ => parent.display().to_string(),
     }
 }
 
@@ -361,8 +364,14 @@ impl Provider for FilesProvider {
             })
             .collect();
 
-        hits.sort_by(|a, b| b.0.cmp(&a.0));
-        hits.truncate(MAX_RESULTS);
+        // A broad query can match tens of thousands of names; only the best few matter, so
+        // partition instead of sorting everything.
+        if hits.len() > MAX_RESULTS {
+            hits.select_nth_unstable_by(MAX_RESULTS - 1, |a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            hits.truncate(MAX_RESULTS);
+        }
+
+        hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
 
         let count = hits.len() as u32;
 
@@ -384,6 +393,7 @@ impl Provider for FilesProvider {
                     // stay below applications for plain searches.
                     score: 560 + (count - order as u32),
                     icon: None,
+                    detail: None,
                 }
             })
             .collect()
@@ -493,6 +503,27 @@ mod tests {
         assert_eq!(reveal.args, ["/home/u/Music"]);
 
         assert!(provider.resolve("files:open:/etc/passwd").is_none());
+    }
+
+    #[test]
+    fn home_prefix_matches_whole_components_only() {
+        // Not asserting on the real HOME: only that a sibling-looking directory is untouched.
+        let shown = pretty_parent(Path::new("/definitely-not-home/x/file.txt"));
+
+        assert_eq!(shown, "/definitely-not-home/x");
+    }
+
+    #[test]
+    fn many_matches_still_return_the_best_first() {
+        let entries = (0..500)
+            .map(|index| entry(&format!("/home/u/d/note{index}.txt"), false, index, None))
+            .chain([entry("/home/u/note", false, 1, None)])
+            .collect();
+        let results = FilesProvider::from_entries(entries).search("note");
+
+        assert_eq!(results.len(), MAX_RESULTS);
+        assert_eq!(results[0].title, "note");
+        assert!(results.windows(2).all(|pair| pair[0].score >= pair[1].score));
     }
 
     #[test]

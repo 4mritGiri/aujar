@@ -598,6 +598,7 @@ dependencies = [
  "aujar-core",
  "aujar-daemon",
  "aujar-ipc",
+ "aujar-launcher",
  "aujar-rename",
  "clap",
  "clap_complete",

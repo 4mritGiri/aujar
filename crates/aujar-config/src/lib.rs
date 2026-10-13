@@ -3,6 +3,7 @@ mod settings;
 
 pub use history::{History, HistoryEntry};
 pub use settings::{
+    Weather,
     Accent, Appearance, Engine, Files, Plugins, Settings, Theme, Web, WebShortcut,
 };
 
