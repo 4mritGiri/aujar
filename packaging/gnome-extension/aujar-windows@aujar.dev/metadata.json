@@ -1,0 +1,7 @@
+{
+  "uuid": "aujar-windows@aujar.dev",
+  "name": "Aujar Windows",
+  "description": "Lets the Aujar launcher list and switch to open windows. Exposes dev.aujar.Windows on the session bus; window titles are visible to your own session's processes.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/4mritGiri/aujar"
+}
