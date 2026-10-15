@@ -33,6 +33,7 @@ use tokio::{
 };
 
 mod modules;
+mod mouse_borders;
 
 /// Maximum size of a single IPC request line.
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
@@ -145,6 +146,7 @@ struct Shared {
     health: Health,
     registry: Arc<ModuleRegistry>,
     launcher: std::sync::Mutex<LauncherState>,
+    mouse_borders: aujar_mouse_borders::service::MouseBordersModule,
     owner_uid: u32,
     denied: HashSet<Capability>,
     events: broadcast::Sender<Event>,
@@ -322,7 +324,8 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
         session,
     };
 
-    let registry = initialize_runtime().await?;
+    let mouse_borders = mouse_borders::module(&denied);
+    let registry = initialize_runtime(mouse_borders.clone()).await?;
 
     tracing::info!(
         socket = %socket_path.display(),
@@ -334,6 +337,7 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
         health,
         registry: Arc::clone(&registry),
         launcher: std::sync::Mutex::new(LauncherState::new()),
+        mouse_borders,
         owner_uid,
         denied,
         events: broadcast::channel(EVENT_BUFFER).0,
@@ -393,12 +397,17 @@ async fn remove_socket(socket_path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn initialize_runtime() -> Result<Arc<ModuleRegistry>> {
+async fn initialize_runtime(
+    mouse_borders: aujar_mouse_borders::service::MouseBordersModule,
+) -> Result<Arc<ModuleRegistry>> {
     let mut registry = ModuleRegistry::new();
 
     registry
         .register(CoreModule)
         .context("failed to register Aujar core module")?;
+    registry
+        .register(mouse_borders)
+        .context("failed to register the Mouse Borders module")?;
 
     let context = ModuleContext::new(env!("CARGO_PKG_VERSION"));
 
@@ -607,6 +616,10 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
 
         Request::Subscribe => {
             Response::Error("Subscribe is handled by the connection layer".into())
+        }
+
+        Request::MouseBorders(request) => {
+            mouse_borders::handle(request, &shared.mouse_borders).await
         }
 
         Request::Launcher(command) => {

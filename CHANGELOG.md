@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- **Mouse Borders** (`modules/mouse-borders`, `aujar mwb ...`): share one keyboard and mouse between up to four Linux machines, with edge switching (X11), `Ctrl+Alt+1..4` jumping (X11 and Wayland), a shared clipboard (text and images), file transfer (100 MB), multi-machine input, wrap, Easy Mouse modes, corner blocking, relative movement, keep-awake and remote lock. Encrypted with a Noise `XXpsk3` channel keyed by a generated security key; off by default. Optional least-privilege system service for the login screen. See [MOUSE_BORDERS](docs/MOUSE_BORDERS.md).
+- `Capability::ControlInput` and `Capability::Network`; IPC `MouseBorders` request/response (additive); `[mouse_borders]` settings.
+- `Rect::new/right/bottom/contains/clamp` in `aujar-core`.
 - Dictionary lookup (`define word`, `meaning of word`, `what does word mean`, and Ctrl+L on any word, like Spotlight's Cmd+L). Powered by dictionaryapi.dev; only the word you typed is sent.
 - Weather (`weather paris`, `kathmandu weather`), via Open-Meteo: current conditions plus a five-day forecast; Fahrenheit/mph option.
 - Stock quotes (`stock aapl`, `$tsla`, `msft share price`), via Yahoo Finance's public endpoint (unofficial, delayed).

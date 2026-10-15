@@ -30,6 +30,9 @@ One request per connection, one response, then the daemon closes it.
 | `PickColor` | `Color{hex, rgb, hsl}` (waits until the user picks or cancels) | `screen_capture` |
 | `Launcher("Show"\|"Hide"\|"Toggle")` | `Delivered{subscribers}` | — |
 | `Subscribe` | `Subscribed`, then events | — |
+| `MouseBorders(Status\|GenerateKey\|ShowKey\|SetKey\|Reload)` | `MouseBorders(Status\|Key\|NoKey\|Done)` | — |
+| `MouseBorders(Switch\|SetEasyMouse\|LockAll\|Reconnect\|MultiMachineInput)` | `MouseBorders(Done{message})` | `control_input` |
+| `MouseBorders(SendFiles{machine, paths})` (absolute paths) | `MouseBorders(Done{message})` | `filesystem` |
 
 Any request can instead return `Error("message")`, including when policy denies its capability.
 

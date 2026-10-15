@@ -1,0 +1,66 @@
+# Mouse Borders: one keyboard and mouse for up to four Linux machines.
+# Add this section to ~/.config/aujar/settings.toml (the same text can go on every machine),
+# then:   aujar mwb key generate     on one machine
+#         aujar mwb key set <KEY>    on the others
+# Full guide: docs/MOUSE_BORDERS.md
+
+[mouse_borders]
+enabled = true
+
+# This machine's name in the list below. Empty means the hostname.
+machine_name = "desk"
+
+port = 15101
+
+# "row": up to four side by side.  "grid": two rows of two (slots 0 1 / 2 3).
+matrix = "row"
+
+# Continue from the last machine back to the first.
+wrap_mouse = false
+
+# "enabled", "disabled", "require_shift" or "require_ctrl".
+easy_mouse = "enabled"
+
+# Ignore edge crossings that start in a screen corner.
+block_corners = false
+
+# Send relative motion instead of absolute positions: for mismatched resolutions or
+# several monitors.
+move_relatively = false
+
+# Refuse peers that are not on a subnet of one of this machine's interfaces.
+same_subnet_only = true
+
+share_clipboard = true
+transfer_files = true
+max_file_mb = 100
+# receive_dir = "~/Downloads/Aujar"
+
+# Keep every machine awake while you work.
+block_screensaver = true
+
+# Let a connected machine lock this one (Ctrl+Alt+L).
+allow_remote_lock = true
+
+# Wayland cannot report the screen size: set it here (WIDTHxHEIGHT).
+# screen = "1920x1080"
+
+[mouse_borders.hotkeys]
+# Ctrl+Alt+1..4 jump to the machine in that slot. "function_keys" uses F1..F4 instead, but
+# Linux reserves Ctrl+Alt+F1..F7 for virtual terminals.
+switch_keys = "digits"
+toggle_easy_mouse = "e"
+lock_machines = "l"
+reconnect = "r"
+multi_machine_input = "m"
+
+# Every machine, including this one. `slot` is the place on the desk (0..3).
+# `address` is optional: without it the machine's name is resolved as a host name.
+[[mouse_borders.machines]]
+name = "desk"
+slot = 0
+
+[[mouse_borders.machines]]
+name = "laptop"
+slot = 1
+address = "192.168.1.20"

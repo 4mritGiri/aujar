@@ -3,8 +3,8 @@ mod settings;
 
 pub use history::{History, HistoryEntry};
 pub use settings::{
-    Weather,
-    Accent, Appearance, Engine, Files, Plugins, Settings, Theme, Web, WebShortcut,
+    Accent, Appearance, EasyMouse, Engine, Files, Machine, MatrixMode, MouseBorders,
+    MouseBordersHotkeys, Plugins, Settings, SwitchKeys, Theme, Weather, Web, WebShortcut,
 };
 
 use serde::Deserialize;

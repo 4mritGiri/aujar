@@ -9,6 +9,7 @@ use clap_complete::Shell;
 use std::path::PathBuf;
 
 mod gnome_extension;
+mod mouse_borders;
 mod shortcut;
 
 const DEFAULT_SOCKET_NAME: &str = "aujar.sock";
@@ -137,6 +138,13 @@ enum Command {
     Color {
         #[command(subcommand)]
         action: ColorAction,
+    },
+
+    /// Share one keyboard, mouse, clipboard and files between your machines.
+    #[command(alias = "mwb")]
+    MouseBorders {
+        #[command(subcommand)]
+        action: mouse_borders::MwbAction,
     },
 
     /// Print daemon events as they happen (debugging and scripting).
@@ -323,6 +331,8 @@ async fn main() -> Result<()> {
                 );
             }
         },
+
+        Command::MouseBorders { action } => mouse_borders::run(action, resolve_socket()).await?,
 
         Command::Daemon { socket } => {
             let socket_path = socket.unwrap_or_else(resolve_socket);

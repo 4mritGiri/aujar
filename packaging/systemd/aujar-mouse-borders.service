@@ -1,0 +1,52 @@
+# Mouse Borders as a system service, so keyboard and mouse sharing also works at the login
+# screen, on the lock screen and over elevated windows. Optional: the normal per-user daemon
+# (`systemctl --user enable --now aujar`) already covers your desktop session. Run one or the
+# other, not both: they listen on the same port.
+#
+# Setup: docs/MOUSE_BORDERS.md#service-mode
+[Unit]
+Description=Aujar Mouse Borders (system service)
+Documentation=https://github.com/4mritGiri/aujar/blob/main/docs/MOUSE_BORDERS.md
+After=network-online.target systemd-udevd.service
+Wants=network-online.target
+ConditionPathExists=/etc/aujar/mouse-borders.key
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/aujar mouse-borders service
+User=aujar-mwb
+Group=aujar-mwb
+# Reading /dev/input/event* needs the `input` group (see packaging/sysusers).
+SupplementaryGroups=input
+Restart=on-failure
+RestartSec=3
+StateDirectory=aujar-mwb
+
+# It needs the network and two kinds of device node, nothing else.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+DevicePolicy=closed
+DeviceAllow=/dev/uinput rw
+DeviceAllow=char-input rw
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

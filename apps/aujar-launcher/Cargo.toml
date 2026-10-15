@@ -15,13 +15,17 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
+aujar-config = { path = "../../crates/aujar-config" }
 aujar-core = { path = "../../crates/aujar-core" }
 aujar-color = { path = "../../modules/color" }
 aujar-daemon = { path = "../../crates/aujar-daemon" }
 aujar-ipc = { path = "../../crates/aujar-ipc" }
 aujar-launcher = { path = "../../modules/launcher" }
+aujar-mouse-borders = { path = "../../modules/mouse-borders" }
 aujar-rename = { path = "../../modules/rename" }
 tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 # ---- Debian/Ubuntu package: `cargo deb -p aujar-launcher-app` ----
 [package.metadata.deb]
@@ -42,6 +46,12 @@ assets = [
     ["../../packaging/systemd/aujar.service", "usr/lib/systemd/user/", "644"],
     ["../../packaging/desktop/dev.aujar.Aujar.desktop", "usr/share/applications/", "644"],
     ["../../config/policy.example.toml", "usr/share/doc/aujar/", "644"],
+    ["../../config/mouse-borders.example.toml", "usr/share/doc/aujar/", "644"],
+    ["../../docs/MOUSE_BORDERS.md", "usr/share/doc/aujar/", "644"],
+    ["../../packaging/systemd/aujar-mouse-borders.service", "usr/lib/systemd/system/", "644"],
+    ["../../packaging/udev/70-aujar-mouse-borders.rules", "usr/lib/udev/rules.d/", "644"],
+    ["../../packaging/sysusers/aujar-mouse-borders.conf", "usr/lib/sysusers.d/", "644"],
+    ["../../packaging/modules-load/aujar-mouse-borders.conf", "usr/lib/modules-load.d/", "644"],
     ["../../README.md", "usr/share/doc/aujar/", "644"],
 ]
 
@@ -58,6 +68,12 @@ assets = [
     { source = "packaging/systemd/aujar.service", dest = "/usr/lib/systemd/user/aujar.service", mode = "0644" },
     { source = "packaging/desktop/dev.aujar.Aujar.desktop", dest = "/usr/share/applications/dev.aujar.Aujar.desktop", mode = "0644" },
     { source = "config/policy.example.toml", dest = "/usr/share/doc/aujar/policy.example.toml", mode = "0644", doc = true },
+    { source = "config/mouse-borders.example.toml", dest = "/usr/share/doc/aujar/mouse-borders.example.toml", mode = "0644", doc = true },
+    { source = "docs/MOUSE_BORDERS.md", dest = "/usr/share/doc/aujar/MOUSE_BORDERS.md", mode = "0644", doc = true },
+    { source = "packaging/systemd/aujar-mouse-borders.service", dest = "/usr/lib/systemd/system/aujar-mouse-borders.service", mode = "0644" },
+    { source = "packaging/udev/70-aujar-mouse-borders.rules", dest = "/usr/lib/udev/rules.d/70-aujar-mouse-borders.rules", mode = "0644" },
+    { source = "packaging/sysusers/aujar-mouse-borders.conf", dest = "/usr/lib/sysusers.d/aujar-mouse-borders.conf", mode = "0644" },
+    { source = "packaging/modules-load/aujar-mouse-borders.conf", dest = "/usr/lib/modules-load.d/aujar-mouse-borders.conf", mode = "0644" },
     { source = "README.md", dest = "/usr/share/doc/aujar/README.md", mode = "0644", doc = true },
     { source = "LICENSE", dest = "/usr/share/licenses/aujar/LICENSE", mode = "0644", license = true },
 ]

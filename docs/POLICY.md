@@ -10,10 +10,13 @@ denied_capabilities = ["execute_command"]
 | Capability | Gates |
 |---|---|
 | `execute_command` | `Execute` (launching applications) |
-| `filesystem` | `Rename` (preview and apply) |
+| `filesystem` | `Rename` (preview and apply); Mouse Borders file transfer (`mwb send`, and receiving files) |
 | `read_windows` | `Windows` |
 | `screen_capture` | `PickColor` (screen color picker) |
 | `global_hotkeys` | Registering native global shortcuts at startup |
+| `control_input` | Mouse Borders: capturing and injecting keyboard and mouse input, switching machines |
+| `network` | Mouse Borders: listening for and connecting to other machines (denying it keeps the module from starting) |
+| `read_clipboard`, `write_clipboard` | Mouse Borders clipboard sharing (denying either turns it off) |
 | others | reserved for upcoming modules |
 
 Behaviour:

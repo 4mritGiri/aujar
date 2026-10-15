@@ -1,0 +1,36 @@
+[package]
+name = "aujar-mouse-borders"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Share one keyboard and mouse, clipboard and files between Linux machines (Mouse Without Borders for Aujar)"
+
+[features]
+default = ["linux-backend"]
+# evdev/uinput input capture and injection, X11 pointer tracking, clipboard via wl-clipboard/xclip.
+linux-backend = ["dep:evdev", "dep:x11rb"]
+
+[dependencies]
+async-trait.workspace = true
+aujar-config = { path = "../../crates/aujar-config" }
+aujar-core = { path = "../../crates/aujar-core" }
+aujar-runtime = { path = "../../crates/aujar-runtime" }
+getrandom = "0.3"
+if-addrs = "0.13"
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+serde.workspace = true
+sha2 = "0.10"
+snow = "0.10"
+thiserror.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tracing.workspace = true
+zeroize = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = { version = "0.13", features = ["tokio"], optional = true }
+x11rb = { version = "0.13", features = ["xfixes"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+toml.workspace = true

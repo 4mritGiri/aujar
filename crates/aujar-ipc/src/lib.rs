@@ -26,6 +26,104 @@ pub enum Request {
     PickColor,
     /// Daemon diagnostics: connected UIs and global-shortcut state (see `aujar doctor`).
     Status,
+    /// Share keyboard, mouse, clipboard and files with other machines.
+    MouseBorders(MouseBordersRequest),
+}
+
+/// Operations on the Mouse Borders service (`aujar mwb ...`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MouseBordersRequest {
+    Status,
+    /// Create the security key; `force` replaces an existing one.
+    GenerateKey {
+        force: bool,
+    },
+    ShowKey,
+    /// Store a key copied from another machine.
+    SetKey {
+        key: String,
+        force: bool,
+    },
+    /// Re-read settings and the key now.
+    Reload,
+    /// Give the keyboard and mouse to a machine (`None`: this one).
+    Switch {
+        machine: Option<String>,
+    },
+    SetEasyMouse {
+        enabled: bool,
+    },
+    LockAll,
+    Reconnect,
+    MultiMachineInput {
+        enabled: bool,
+    },
+    /// Send files (absolute paths) to a connected machine.
+    SendFiles {
+        machine: String,
+        paths: Vec<String>,
+    },
+}
+
+impl MouseBordersRequest {
+    /// Capability needed on top of the request itself. Reading status (and explaining why
+    /// the service is off) always works.
+    pub fn required_capability(&self) -> Option<Capability> {
+        match self {
+            Self::Status
+            | Self::ShowKey
+            | Self::Reload
+            | Self::GenerateKey { .. }
+            | Self::SetKey { .. } => None,
+            Self::SendFiles { .. } => Some(Capability::FileSystem),
+            Self::Switch { .. }
+            | Self::SetEasyMouse { .. }
+            | Self::LockAll
+            | Self::Reconnect
+            | Self::MultiMachineInput { .. } => Some(Capability::ControlInput),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MouseBordersResponse {
+    Status(Box<MouseBordersStatus>),
+    /// The security key, in its copyable form.
+    Key(String),
+    /// A command ran; this is what to tell the user.
+    Done(String),
+    /// There is no security key yet.
+    NoKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MouseBordersPeer {
+    pub name: String,
+    pub connected: bool,
+    pub address: Option<String>,
+    pub screen: Option<(u32, u32)>,
+    pub slot: Option<u8>,
+    pub last_error: Option<String>,
+}
+
+/// Service state in a form independent of the module crate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MouseBordersStatus {
+    /// `disabled`, `blocked`, `waiting_for_key`, `error` or `running`.
+    pub state: String,
+    /// Why, for every state except `running`.
+    pub detail: String,
+    pub local: String,
+    /// Machine holding the keyboard and mouse.
+    pub focus: String,
+    pub controlled_by: Option<String>,
+    pub multi_machine_input: bool,
+    pub easy_mouse: String,
+    pub listening: Option<String>,
+    pub edge_switching_unavailable: Option<String>,
+    pub capture_unavailable: Option<String>,
+    pub peers: Vec<MouseBordersPeer>,
+    pub log: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +151,7 @@ impl Request {
             Self::Rename(_) => Some(Capability::FileSystem),
             Self::Execute(_) => Some(Capability::ExecuteCommand),
             Self::PickColor => Some(Capability::ScreenCapture),
+            Self::MouseBorders(request) => request.required_capability(),
             Self::Ping
             | Self::Health
             | Self::Modules
@@ -122,6 +221,7 @@ pub enum Response {
     Subscribed,
     Color(ColorResponse),
     Status(StatusResponse),
+    MouseBorders(MouseBordersResponse),
     /// A launcher command was broadcast to this many subscribers.
     Delivered {
         subscribers: usize,
@@ -317,5 +417,59 @@ mod tests {
             Request::Launcher(LauncherCommand::Toggle).required_capability(),
             None
         );
+    }
+
+    #[test]
+    fn mouse_borders_capabilities_match_what_the_request_does() {
+        let capability = |request| Request::MouseBorders(request).required_capability();
+
+        // Looking, and managing the key, never needs more than the daemon itself.
+        assert_eq!(capability(MouseBordersRequest::Status), None);
+        assert_eq!(capability(MouseBordersRequest::ShowKey), None);
+        assert_eq!(
+            capability(MouseBordersRequest::GenerateKey { force: true }),
+            None
+        );
+
+        assert_eq!(
+            capability(MouseBordersRequest::Switch { machine: None }),
+            Some(Capability::ControlInput)
+        );
+        assert_eq!(
+            capability(MouseBordersRequest::LockAll),
+            Some(Capability::ControlInput)
+        );
+        assert_eq!(
+            capability(MouseBordersRequest::SendFiles {
+                machine: "laptop".into(),
+                paths: vec!["/tmp/a".into()],
+            }),
+            Some(Capability::FileSystem)
+        );
+    }
+
+    #[test]
+    fn mouse_borders_messages_round_trip() {
+        let request = Request::MouseBorders(MouseBordersRequest::SendFiles {
+            machine: "laptop".into(),
+            paths: vec!["/tmp/a b".into()],
+        });
+        let line = String::from_utf8(encode_line(&request).unwrap()).unwrap();
+
+        match decode_line::<Request>(&line).unwrap() {
+            Request::MouseBorders(MouseBordersRequest::SendFiles { machine, paths }) => {
+                assert_eq!(machine, "laptop");
+                assert_eq!(paths, ["/tmp/a b"]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let response = Response::MouseBorders(MouseBordersResponse::Key("AAAA".into()));
+        let line = String::from_utf8(encode_line(&response).unwrap()).unwrap();
+
+        assert!(matches!(
+            decode_line::<Response>(&line).unwrap(),
+            Response::MouseBorders(MouseBordersResponse::Key(key)) if key == "AAAA"
+        ));
     }
 }

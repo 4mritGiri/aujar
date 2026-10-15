@@ -12,7 +12,7 @@
 - [x] Automated CI on Linux (configured; verify first run)
 - [ ] Protocol versioning
 - [ ] Persistent daemon state
-- [ ] Mouse without borders (Mouse without borders is a quick and easy way to move your cursor across multiple devices)
+- [x] Mouse without borders (Mouse without borders is a quick and easy way to move your cursor across multiple devices): `modules/mouse-borders`, see [MOUSE_BORDERS](MOUSE_BORDERS.md). Still open: Wayland edge switching (InputCapture portal), visual layout editor, drag-and-drop file transfer
 
 ## v0.2 — Launcher
 - GPUI spike across X11/KDE/GNOME/Sway/Hyprland (ADR 0002)

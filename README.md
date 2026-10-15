@@ -34,6 +34,7 @@ Something not working? Run `aujar doctor` and see [docs/TROUBLESHOOTING.md](docs
 |---|---|
 | [Feature matrix](docs/FEATURE_MATRIX.md) | What is done / planned, per compositor |
 | [Architecture](docs/ARCHITECTURE.md) | Design principles and layout |
+| [Mouse Borders](docs/MOUSE_BORDERS.md) | One keyboard and mouse across up to four machines |
 | [Roadmap](docs/ROADMAP.md) | Milestones |
 | [Threat model](docs/THREAT_MODEL.md) | Security assumptions |
 | [Packaging](docs/PACKAGING.md) | Distro packaging plans |
@@ -88,6 +89,14 @@ Pick a color from the screen, or convert one:
 ```bash
 cargo run -p aujar-launcher-app -- color pick
 cargo run -p aujar-launcher-app -- color convert '#FF8800'
+```
+
+Share one keyboard, mouse, clipboard and files between your machines ([guide](docs/MOUSE_BORDERS.md)):
+
+```bash
+cargo run -p aujar-launcher-app -- mwb key generate      # then `mwb key set <KEY>` elsewhere
+cargo run -p aujar-launcher-app -- mwb status
+cargo run -p aujar-launcher-app -- mwb send laptop report.pdf
 ```
 
 Launch an app from a search result id:

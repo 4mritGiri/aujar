@@ -21,6 +21,43 @@ pub struct Rect {
     pub size: Size,
 }
 
+impl Rect {
+    pub const fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
+        Self {
+            position: Position { x, y },
+            size: Size { width, height },
+        }
+    }
+
+    /// Exclusive right edge (`x + width`).
+    pub const fn right(&self) -> i32 {
+        self.position.x.saturating_add(self.size.width as i32)
+    }
+
+    /// Exclusive bottom edge (`y + height`).
+    pub const fn bottom(&self) -> i32 {
+        self.position.y.saturating_add(self.size.height as i32)
+    }
+
+    pub const fn contains(&self, point: Position) -> bool {
+        point.x >= self.position.x
+            && point.x < self.right()
+            && point.y >= self.position.y
+            && point.y < self.bottom()
+    }
+
+    /// Nearest point inside the rectangle. An empty rectangle yields its origin.
+    pub fn clamp(&self, point: Position) -> Position {
+        let max_x = (self.right() - 1).max(self.position.x);
+        let max_y = (self.bottom() - 1).max(self.position.y);
+
+        Position {
+            x: point.x.clamp(self.position.x, max_x),
+            y: point.y.clamp(self.position.y, max_y),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Session {
     X11,
@@ -48,10 +85,14 @@ pub enum Capability {
     GlobalHotkeys,
     ExecuteCommand,
     FileSystem,
+    /// Capture local keyboard/mouse input and inject input into the local desktop.
+    ControlInput,
+    /// Listen for and connect to other machines on the network.
+    Network,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 8] = [
+    pub const ALL: [Capability; 10] = [
         Self::ReadClipboard,
         Self::WriteClipboard,
         Self::ReadWindows,
@@ -60,6 +101,8 @@ impl Capability {
         Self::GlobalHotkeys,
         Self::ExecuteCommand,
         Self::FileSystem,
+        Self::ControlInput,
+        Self::Network,
     ];
 
     /// Parse the stable snake_case name produced by [`Capability::as_str`].
@@ -79,6 +122,8 @@ impl Capability {
             Self::GlobalHotkeys => "global_hotkeys",
             Self::ExecuteCommand => "execute_command",
             Self::FileSystem => "filesystem",
+            Self::ControlInput => "control_input",
+            Self::Network => "network",
         }
     }
 }
@@ -91,7 +136,7 @@ impl std::fmt::Display for Capability {
 
 #[cfg(test)]
 mod tests {
-    use super::Capability;
+    use super::{Capability, Position, Rect};
 
     #[test]
     fn capability_names_round_trip() {
@@ -100,5 +145,34 @@ mod tests {
         }
 
         assert_eq!(Capability::parse("nope"), None);
+    }
+
+    #[test]
+    fn rect_edges_and_containment() {
+        let rect = Rect::new(10, 20, 100, 50);
+
+        assert_eq!((rect.right(), rect.bottom()), (110, 70));
+        assert!(rect.contains(Position { x: 10, y: 20 }));
+        assert!(rect.contains(Position { x: 109, y: 69 }));
+        assert!(!rect.contains(Position { x: 110, y: 69 }));
+        assert!(!rect.contains(Position { x: 9, y: 20 }));
+    }
+
+    #[test]
+    fn rect_clamp_stays_inside() {
+        let rect = Rect::new(0, 0, 1920, 1080);
+
+        assert_eq!(
+            rect.clamp(Position { x: -5, y: 5000 }),
+            Position { x: 0, y: 1079 }
+        );
+        assert_eq!(
+            rect.clamp(Position { x: 1920, y: 10 }),
+            Position { x: 1919, y: 10 }
+        );
+        assert_eq!(
+            Rect::new(3, 4, 0, 0).clamp(Position { x: 99, y: 99 }),
+            Position { x: 3, y: 4 }
+        );
     }
 }

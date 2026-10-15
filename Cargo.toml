@@ -24,6 +24,7 @@ members = [
     "modules/color",
     "modules/ruler",
     "modules/rename",
+    "modules/mouse-borders",
 ]
 
 default-members = [
@@ -42,6 +43,7 @@ default-members = [
     "modules/color",
     "modules/ruler",
     "modules/rename",
+    "modules/mouse-borders",
 ]
 
 [workspace.package]

@@ -7,8 +7,10 @@ use anyhow::{Context, Result, bail};
 use std::{path::PathBuf, process::Command};
 
 const UUID: &str = "aujar-windows@aujar.dev";
-const METADATA: &str = include_str!("../../../packaging/gnome-extension/aujar-windows@aujar.dev/metadata.json");
-const EXTENSION_JS: &str = include_str!("../../../packaging/gnome-extension/aujar-windows@aujar.dev/extension.js");
+const METADATA: &str =
+    include_str!("../../../packaging/gnome-extension/aujar-windows@aujar.dev/metadata.json");
+const EXTENSION_JS: &str =
+    include_str!("../../../packaging/gnome-extension/aujar-windows@aujar.dev/extension.js");
 
 fn target_dir() -> Result<PathBuf> {
     let data = std::env::var_os("XDG_DATA_HOME")
@@ -38,7 +40,9 @@ pub fn install() -> Result<()> {
         Some(output) if output.status.success() => {
             println!("Enabled {UUID}.");
         }
-        _ => println!("Could not enable it yet (GNOME has not seen it); this is normal before the next login."),
+        _ => println!(
+            "Could not enable it yet (GNOME has not seen it); this is normal before the next login."
+        ),
     }
 
     println!(
@@ -55,7 +59,8 @@ pub fn remove() -> Result<()> {
     let dir = target_dir()?;
 
     if dir.exists() {
-        std::fs::remove_dir_all(&dir).with_context(|| format!("could not remove {}", dir.display()))?;
+        std::fs::remove_dir_all(&dir)
+            .with_context(|| format!("could not remove {}", dir.display()))?;
         println!("Removed {}", dir.display());
     } else {
         println!("The extension is not installed.");
@@ -67,7 +72,14 @@ pub fn remove() -> Result<()> {
 pub fn status() -> Result<()> {
     let dir = target_dir()?;
 
-    println!("installed: {}", if dir.join("extension.js").exists() { "yes" } else { "no" });
+    println!(
+        "installed: {}",
+        if dir.join("extension.js").exists() {
+            "yes"
+        } else {
+            "no"
+        }
+    );
 
     match gnome_extensions(&["info", UUID]) {
         Some(output) if output.status.success() => {
@@ -97,7 +109,9 @@ pub fn status() -> Result<()> {
 
     match reply {
         Ok(output) if output.status.success() => println!("window service: answering"),
-        Ok(_) => bail!("window service: not answering (is the extension enabled and the session restarted?)"),
+        Ok(_) => bail!(
+            "window service: not answering (is the extension enabled and the session restarted?)"
+        ),
         Err(error) => bail!("window service: could not run busctl: {error}"),
     }
 
