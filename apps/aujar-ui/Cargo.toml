@@ -15,6 +15,7 @@ anyhow = "1"
 async-channel = "2"
 aujar-config = { path = "../../crates/aujar-config" }
 aujar-ipc = { path = "../../crates/aujar-ipc" }
+aujar-mouse-borders = { path = "../../modules/mouse-borders", default-features = false }
 # GPUI snapshot of Zed `main` (zed@5b055fa), published to crates.io by a GPUI contributor
 # (huacnlee) as `gpui-pre*`. Chosen because:
 #  - the crates.io `gpui 0.2.2` pulls `xattr 0.2.3`, which no longer compiles against recent `libc`;

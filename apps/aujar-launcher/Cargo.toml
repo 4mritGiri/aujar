@@ -77,3 +77,6 @@ assets = [
     { source = "README.md", dest = "/usr/share/doc/aujar/README.md", mode = "0644", doc = true },
     { source = "LICENSE", dest = "/usr/share/licenses/aujar/LICENSE", mode = "0644", license = true },
 ]
+
+[dev-dependencies]
+tempfile = "3"

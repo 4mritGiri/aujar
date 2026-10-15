@@ -3,9 +3,13 @@
 use std::{collections::HashSet, fmt::Write as _, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
+use aujar_config::Settings;
 use aujar_core::Capability;
 use aujar_ipc::{
     MouseBordersRequest, MouseBordersResponse, MouseBordersStatus, Request, Response, send,
+};
+use aujar_mouse_borders::{
+    keystore::KeyStore, layout::MachineName, net, pairing::PairingCode, settings_edit,
 };
 use clap::{Subcommand, ValueEnum};
 
@@ -47,6 +51,20 @@ pub enum KeyAction {
 pub enum MwbAction {
     /// Show whether sharing works, which machines are connected and what happened recently.
     Status,
+
+    /// Print a pairing code: the security key and the layout in one line to paste on your
+    /// other machines. Creates the key and adds this machine to the layout if needed.
+    Pair,
+
+    /// Join the machines of a pairing code made with `pair` on another machine.
+    Join {
+        /// The code, starting with `aujar-pair1`.
+        code: String,
+
+        /// Replace this machine's security key if it has a different one.
+        #[arg(long)]
+        force: bool,
+    },
 
     /// Manage the security key.
     Key {
@@ -94,6 +112,10 @@ pub enum MwbAction {
 pub async fn run(action: MwbAction, socket: PathBuf) -> Result<()> {
     match action {
         MwbAction::Service => service().await,
+
+        MwbAction::Pair => pair(),
+
+        MwbAction::Join { code, force } => join(&code, force),
 
         MwbAction::Status => match ask(&socket, MouseBordersRequest::Status).await? {
             MouseBordersResponse::Status(status) => {
@@ -206,6 +228,92 @@ async fn key(socket: &std::path::Path, action: KeyAction) -> Result<()> {
             done(socket, MouseBordersRequest::SetKey { key, force }).await
         }
     }
+}
+
+/// Settings and key changes that make this machine ready to hand out a pairing code.
+/// Returns the code. Nothing is written by this function; the caller saves the settings.
+fn make_pairing_code(
+    settings: &mut Settings,
+    store: &KeyStore,
+    host: Option<std::net::IpAddr>,
+) -> Result<String> {
+    let mb = &mut settings.mouse_borders;
+    let local = settings_edit::local_name(mb);
+
+    settings_edit::add_machine(mb, &local, None)?;
+    mb.enabled = true;
+
+    let key = match store.load()? {
+        Some(key) => key,
+        None => store.generate(false)?,
+    };
+
+    Ok(PairingCode::from_settings(mb, key, &local, host)?.encode())
+}
+
+/// Adopt a pairing code into `settings` and store its key. A different existing key is only
+/// replaced with `force`. Returns a message for the user.
+fn join_with_code(
+    settings: &mut Settings,
+    store: &KeyStore,
+    text: &str,
+    force: bool,
+) -> Result<String> {
+    let code = PairingCode::parse(text)?;
+
+    if let Some(existing) = store.load()?
+        && existing != code.key
+        && !force
+    {
+        bail!(
+            "this machine already has a different security key; machines still using it \
+             would disconnect. Run again with --force to replace it"
+        );
+    }
+
+    let local: MachineName = settings_edit::local_name(&settings.mouse_borders);
+    let joined = code.apply(&mut settings.mouse_borders, &local)?;
+
+    store.save(&code.key, true)?;
+
+    Ok(format!(
+        "Joined {} machines as `{local}`{}.",
+        joined.machines,
+        if joined.added_local {
+            " (this machine was added to the layout)"
+        } else {
+            ""
+        }
+    ))
+}
+
+fn pair() -> Result<()> {
+    let mut settings = Settings::load_or_default();
+    let code = make_pairing_code(
+        &mut settings,
+        &KeyStore::user_default(),
+        net::pick_host(&net::local_networks()),
+    )?;
+
+    settings.save().context("cannot save settings")?;
+
+    println!("Pairing code:\n\n    {code}\n");
+    println!("On your other machine run:\n\n    aujar mwb join '{code}'\n");
+    println!("Or click \"Join from clipboard\" in Settings \u{2192} Mouse Borders.");
+    println!("The code contains your security key: do not share it.");
+
+    Ok(())
+}
+
+fn join(code: &str, force: bool) -> Result<()> {
+    let mut settings = Settings::load_or_default();
+    let message = join_with_code(&mut settings, &KeyStore::user_default(), code, force)?;
+
+    settings.save().context("cannot save settings")?;
+    println!("{message}");
+    println!("Mouse Borders is on. Check with `aujar mwb status`.");
+
+    Ok(())
 }
 
 /// Human-readable status.
@@ -461,5 +569,108 @@ mod tests {
 
         assert!(text.contains("event 19") && text.contains("event 12"));
         assert!(!text.contains("event 11"));
+    }
+
+    fn temp_store() -> (tempfile::TempDir, KeyStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = KeyStore::new(dir.path().join("mouse-borders.key"));
+
+        (dir, store)
+    }
+
+    fn named(name: &str) -> Settings {
+        let mut settings = Settings::default();
+        settings.mouse_borders.machine_name = name.into();
+        settings.mouse_borders.receive_dir = "/tmp/aujar-cli-test".into();
+
+        settings
+    }
+
+    #[test]
+    fn pairing_two_machines_end_to_end() {
+        let (_a_dir, a_store) = temp_store();
+        let (_b_dir, b_store) = temp_store();
+        let mut desk = named("desk");
+        let mut laptop = named("laptop");
+
+        // First machine: makes the key, adds itself, turns the feature on.
+        let code =
+            make_pairing_code(&mut desk, &a_store, Some("192.168.1.10".parse().unwrap())).unwrap();
+        assert!(code.starts_with("aujar-pair1;row;"), "{code}");
+        assert!(desk.mouse_borders.enabled);
+        assert_eq!(desk.mouse_borders.machines.len(), 1);
+
+        // Second machine joins: same key, layout adopted, itself appended.
+        let message = join_with_code(&mut laptop, &b_store, &code, false).unwrap();
+        assert!(message.contains("added to the layout"), "{message}");
+        assert_eq!(a_store.load().unwrap(), b_store.load().unwrap());
+        assert_eq!(laptop.mouse_borders.machines.len(), 2);
+
+        // Second machine hands its code back: the first one now knows both.
+        let reply = make_pairing_code(&mut laptop, &b_store, None).unwrap();
+        join_with_code(&mut desk, &a_store, &reply, false).unwrap();
+
+        assert_eq!(desk.mouse_borders.machines, laptop.mouse_borders.machines);
+        assert!(
+            aujar_mouse_borders::config::EngineConfig::from_settings(&desk.mouse_borders).is_ok()
+        );
+    }
+
+    #[test]
+    fn joining_never_silently_replaces_a_different_key() {
+        let (_a_dir, a_store) = temp_store();
+        let (_b_dir, b_store) = temp_store();
+        let code = make_pairing_code(&mut named("desk"), &a_store, None).unwrap();
+
+        b_store.generate(false).unwrap();
+        let before = b_store.load().unwrap();
+        let mut laptop = named("laptop");
+
+        let error = join_with_code(&mut laptop, &b_store, &code, false)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("--force"), "{error}");
+        assert_eq!(b_store.load().unwrap(), before, "the key must be untouched");
+        assert!(
+            laptop.mouse_borders.machines.is_empty(),
+            "so must the layout"
+        );
+
+        join_with_code(&mut laptop, &b_store, &code, true).unwrap();
+        assert_eq!(b_store.load().unwrap(), a_store.load().unwrap());
+    }
+
+    #[test]
+    fn a_bad_code_changes_nothing() {
+        let (_dir, store) = temp_store();
+        let mut settings = named("laptop");
+
+        assert!(join_with_code(&mut settings, &store, "not a code", false).is_err());
+        assert!(store.load().unwrap().is_none());
+        assert!(!settings.mouse_borders.enabled);
+    }
+
+    #[test]
+    fn pair_and_join_parse_as_commands() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            action: MwbAction,
+        }
+
+        assert!(matches!(
+            Cli::try_parse_from(["x", "pair"]).unwrap().action,
+            MwbAction::Pair
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["x", "join", "aujar-pair1;row;k", "--force"])
+                .unwrap()
+                .action,
+            MwbAction::Join { force: true, .. }
+        ));
+        assert!(Cli::try_parse_from(["x", "join"]).is_err());
     }
 }

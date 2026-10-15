@@ -44,6 +44,24 @@ pub fn local_networks() -> Vec<LocalNet> {
         .collect()
 }
 
+/// The address to give other machines for reaching this one: a private LAN IPv4 address if
+/// there is one, otherwise any other IPv4 address (link-local `169.254/16` excluded).
+pub fn pick_host(networks: &[LocalNet]) -> Option<IpAddr> {
+    let v4: Vec<Ipv4Addr> = networks
+        .iter()
+        .filter_map(|network| match network.ip {
+            IpAddr::V4(ip) if !ip.is_link_local() && !ip.is_loopback() => Some(ip),
+            _ => None,
+        })
+        .collect();
+
+    v4.iter()
+        .find(|ip| ip.is_private())
+        .or_else(|| v4.first())
+        .copied()
+        .map(IpAddr::V4)
+}
+
 /// Whether `peer` is on one of `networks`. Loopback always counts: it never leaves the
 /// machine. IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) are treated as IPv4.
 pub fn is_same_subnet(peer: IpAddr, networks: &[LocalNet]) -> bool {
@@ -164,6 +182,21 @@ mod tests {
         assert!(!is_same_subnet(ip("fd01::1"), &nets));
         assert!(is_same_subnet(ip("::ffff:192.168.1.9"), &nets));
         assert!(!is_same_subnet(ip("::ffff:192.168.7.9"), &nets));
+    }
+
+    #[test]
+    fn the_advertised_address_prefers_the_private_lan() {
+        let nets = [
+            net("169.254.3.4", 16),
+            net("203.0.113.9", 24),
+            net("192.168.1.10", 24),
+            net("fd00::5", 64),
+        ];
+
+        assert_eq!(pick_host(&nets), Some(ip("192.168.1.10")));
+        assert_eq!(pick_host(&nets[..2]), Some(ip("203.0.113.9")));
+        assert_eq!(pick_host(&nets[..1]), None);
+        assert_eq!(pick_host(&[]), None);
     }
 
     #[test]

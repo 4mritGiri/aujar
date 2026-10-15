@@ -1,18 +1,74 @@
-//! The settings window. Every change is applied and saved immediately to
-//! `~/.config/aujar/settings.toml`; the launcher re-reads it each time it opens, and the
-//! daemon reloads its plugins when the file changes.
+//! The settings window: a sidebar of pages, each a stack of grouped rows.
+//!
+//! Every change is applied and saved immediately to `~/.config/aujar/settings.toml`; the
+//! launcher re-reads it each time it opens, and the daemon reloads its plugins and Mouse
+//! Borders when the file changes.
+//!
+//! This file is the shell (state, sidebar, header and the building blocks); each page lives
+//! in `settings_view/<page>.rs`.
 
 use crate::theme::Palette;
-use aujar_config::{Accent, Engine, Settings, Theme};
+use aujar_config::Settings;
 use gpui::{
-    AnyElement, App, Context, FocusHandle, Focusable, KeyDownEvent, SharedString, Stateful,
-    Window, div, prelude::*, px, rgb, rgba,
+    AnyElement, App, Context, FocusHandle, Focusable, KeyDownEvent, SharedString, Stateful, Window,
+    div, prelude::*, px, rgb, rgba, svg,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Appearance,
+    Search,
+    Web,
+    MouseBorders,
+    General,
+}
+
+impl Page {
+    const ALL: [Page; 5] = [
+        Page::Appearance,
+        Page::Search,
+        Page::Web,
+        Page::MouseBorders,
+        Page::General,
+    ];
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Search => "Search plugins",
+            Self::Web => "Web search",
+            Self::MouseBorders => "Mouse Borders",
+            Self::General => "General",
+        }
+    }
+
+    fn blurb(self) -> &'static str {
+        match self {
+            Self::Appearance => "Colors, and what the launcher window shows",
+            Self::Search => "Choose what the launcher can find and answer",
+            Self::Web => "Where the \"search the web\" row and keyword shortcuts go",
+            Self::MouseBorders => "Use one keyboard and mouse across your computers",
+            Self::General => "Shortcut, files and history",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Appearance => "icons/sliders.svg",
+            Self::Search => "icons/search.svg",
+            Self::Web => "icons/globe.svg",
+            Self::MouseBorders => "icons/mouse.svg",
+            Self::General => "icons/app.svg",
+        }
+    }
+}
 
 pub struct SettingsView {
     settings: Settings,
     palette: Palette,
     status: Option<String>,
+    page: Page,
+    mouse_borders: mouse_borders::State,
     pub focus_handle: FocusHandle,
 }
 
@@ -20,10 +76,14 @@ impl SettingsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let settings = Settings::load_or_default();
 
+        Self::keep_mouse_borders_status_fresh(cx);
+
         Self {
             palette: Palette::from_settings(&settings),
             settings,
             status: None,
+            page: Page::Appearance,
+            mouse_borders: mouse_borders::State::default(),
             focus_handle: cx.focus_handle(),
         }
     }
@@ -50,6 +110,7 @@ impl SettingsView {
 
     // ---- Building blocks ----
 
+    /// A titled group of rows in a rounded card.
     fn section(&self, title: &str, rows: Vec<AnyElement>) -> AnyElement {
         let pal = self.palette;
 
@@ -61,29 +122,47 @@ impl SettingsView {
                 div()
                     .px_1()
                     .text_xs()
-                    .text_color(rgb(pal.text_dim))
+                    .text_color(rgb(pal.text_faint))
                     .child(title.to_uppercase()),
             )
-            .child(
+            .child(self.card(rows))
+            .into_any_element()
+    }
+
+    /// Rows in a rounded card, separated by hairlines, without a title.
+    fn card(&self, rows: Vec<AnyElement>) -> AnyElement {
+        let pal = self.palette;
+
+        div()
+            .flex()
+            .flex_col()
+            .rounded_lg()
+            .border_1()
+            .border_color(rgba(pal.border))
+            .bg(rgba(pal.subtle))
+            .children(rows.into_iter().enumerate().map(|(index, row)| {
                 div()
-                    .flex()
-                    .flex_col()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(rgba(pal.border))
-                    .bg(rgba(pal.subtle))
-                    .children(rows.into_iter().enumerate().map(|(index, row)| {
-                        div()
-                            .when(index > 0, |this| {
-                                this.border_t_1().border_color(rgba(pal.divider))
-                            })
-                            .child(row)
-                    })),
-            )
+                    .when(index > 0, |this| {
+                        this.border_t_1().border_color(rgba(pal.divider))
+                    })
+                    .child(row)
+            }))
             .into_any_element()
     }
 
     fn row(&self, label: &str, hint: &str, control: impl IntoElement) -> AnyElement {
+        self.row_with_badge(label, None, hint, control)
+    }
+
+    /// A row whose label may carry a small badge, e.g. `Online` for plugins that use the
+    /// network.
+    fn row_with_badge(
+        &self,
+        label: &str,
+        badge: Option<&str>,
+        hint: &str,
+        control: impl IntoElement,
+    ) -> AnyElement {
         let pal = self.palette;
 
         div()
@@ -99,8 +178,36 @@ impl SettingsView {
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .child(div().text_sm().text_color(rgb(pal.text)).child(label.to_owned()))
-                    .child(div().text_xs().text_color(rgb(pal.text_dim)).child(hint.to_owned())),
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(pal.text))
+                                    .child(label.to_owned()),
+                            )
+                            .children(badge.map(|badge| {
+                                div()
+                                    .px_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(rgba(pal.keycap_border))
+                                    .text_xs()
+                                    .text_color(rgb(pal.text_dim))
+                                    .child(badge.to_owned())
+                            })),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(pal.text_dim))
+                            .child(hint.to_owned()),
+                    ),
             )
             .child(control)
             .into_any_element()
@@ -135,11 +242,76 @@ impl SettingsView {
             .text_sm()
             .border_1()
             .border_color(rgba(pal.keycap_border))
-            .when(selected, |this| this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent)))
+            .when(selected, |this| {
+                this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent))
+            })
             .when(!selected, |this| {
-                this.text_color(rgb(pal.text)).hover(|style| style.bg(rgba(pal.hover)))
+                this.text_color(rgb(pal.text))
+                    .hover(|style| style.bg(rgba(pal.hover)))
             })
             .child(label.to_owned())
+    }
+
+    fn glyph(&self, path: &'static str, size: f32, color: u32) -> impl IntoElement {
+        svg()
+            .path(path)
+            .size(px(size))
+            .flex_shrink_0()
+            .text_color(rgb(color))
+    }
+
+    /// A row of mutually exclusive choices.
+    fn choices(&self, pills: Vec<Stateful<gpui::Div>>) -> AnyElement {
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .justify_end()
+            .gap_2()
+            .children(pills)
+            .into_any_element()
+    }
+
+    fn nav_item(&self, page: Page, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
+        let pal = self.palette;
+        let selected = self.page == page;
+
+        div()
+            .id(SharedString::from(format!("nav-{page:?}")))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .cursor_pointer()
+            .text_sm()
+            .when(selected, |this| {
+                this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent))
+            })
+            .when(!selected, |this| {
+                this.text_color(rgb(pal.text))
+                    .hover(|style| style.bg(rgba(pal.hover)))
+            })
+            .child(self.glyph(
+                page.icon(),
+                16.,
+                if selected {
+                    pal.on_accent
+                } else {
+                    pal.text_dim
+                },
+            ))
+            .child(page.title())
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.page = page;
+                cx.notify();
+
+                if page == Page::MouseBorders {
+                    this.refresh_mouse_borders(cx);
+                }
+            }))
     }
 }
 
@@ -152,6 +324,18 @@ macro_rules! toggle_row {
         }));
 
         $this.row($label, $hint, control)
+    }};
+}
+
+/// Like [`toggle_row!`], with a badge next to the label.
+macro_rules! toggle_row_badged {
+    ($this:ident, $cx:ident, $id:literal, $label:expr, $badge:expr, $hint:expr, $($field:tt)+) => {{
+        let on = $this.settings.$($field)+;
+        let control = $this.switch($id, on).on_click($cx.listener(|this, _event, _window, cx| {
+            this.mutate(cx, |settings| settings.$($field)+ = !settings.$($field)+);
+        }));
+
+        $this.row_with_badge($label, Some($badge), $hint, control)
     }};
 }
 
@@ -197,6 +381,13 @@ macro_rules! stepper_row {
     }};
 }
 
+// Pages come after the macros so they can use them.
+mod appearance;
+mod general;
+mod mouse_borders;
+mod plugins;
+mod web;
+
 impl Focusable for SettingsView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -206,182 +397,101 @@ impl Focusable for SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pal = self.palette;
+        let page = self.page;
 
-        // ---- Appearance ----
-        let theme_control = div()
+        let content = match page {
+            Page::Appearance => self.appearance_page(cx),
+            Page::Search => self.plugins_page(cx),
+            Page::Web => self.web_page(cx),
+            Page::MouseBorders => self.mouse_borders_page(cx),
+            Page::General => self.general_page(cx),
+        };
+
+        let sidebar = div()
             .flex()
-            .flex_row()
-            .gap_2()
+            .flex_col()
+            .flex_shrink_0()
+            .w(px(212.))
+            .h_full()
+            .gap_1()
+            .p_3()
+            .bg(rgba(pal.subtle))
+            .border_r_1()
+            .border_color(rgba(pal.divider))
             .child(
-                self.pill("theme-dark".into(), "Dark", self.settings.appearance.theme == Theme::Dark)
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.mutate(cx, |settings| settings.appearance.theme = Theme::Dark)
-                    })),
+                div()
+                    .flex()
+                    .flex_col()
+                    .px_3()
+                    .pt_2()
+                    .pb_4()
+                    .child(div().text_lg().text_color(rgb(pal.text)).child("Aujar"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(pal.text_dim))
+                            .child("Settings"),
+                    ),
             )
+            .children(Page::ALL.map(|page| self.nav_item(page, cx)))
+            .child(div().flex_1())
             .child(
-                self.pill("theme-light".into(), "Light", self.settings.appearance.theme == Theme::Light)
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.mutate(cx, |settings| settings.appearance.theme = Theme::Light)
-                    })),
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_xs()
+                    .text_color(rgb(pal.text_faint))
+                    .child(
+                        self.status
+                            .clone()
+                            .unwrap_or_else(|| "Changes save automatically".to_owned()),
+                    ),
             );
 
-        let accent_control = div().flex().flex_row().gap_2().children(Accent::ALL.map(|accent| {
-            let selected = self.settings.appearance.accent == accent;
-
-            div()
-                .id(SharedString::from(format!("accent-{accent:?}")))
-                .size(px(24.))
-                .rounded_full()
-                .cursor_pointer()
-                .bg(rgb(accent.rgb()))
-                .border_2()
-                .border_color(if selected { rgb(pal.text) } else { rgb(accent.rgb()) })
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.mutate(cx, |settings| settings.appearance.accent = accent)
-                }))
-        }));
-
-        let appearance = self.section(
-            "Appearance",
-            vec![
-                self.row("Theme", "Launcher and settings colors", theme_control),
-                self.row("Accent color", "Selected rows and switches", accent_control),
-                stepper_row!(self, cx, "width", "Width", "Launcher width in pixels", 40, " px", appearance.width),
-                stepper_row!(self, cx, "max", "Results per section", "Applications shown (other sections show fewer)", 1, "", appearance.max_results),
-                toggle_row!(self, cx, "icons", "App icons", "Show application icons next to results", appearance.show_icons),
-                toggle_row!(self, cx, "footer", "Keyboard hints", "Show the shortcut bar at the bottom", appearance.show_footer),
-                toggle_row!(self, cx, "preview", "Preview pane", "Details of the selected result on the right", appearance.show_preview),
-                toggle_row!(self, cx, "recents", "Recent & frequent", "Show what you use most when the search box is empty", appearance.show_recents),
-                toggle_row!(self, cx, "blur", "Close when clicking away", "Hide the launcher when it loses focus", appearance.close_on_blur),
-            ],
-        );
-
-        // ---- Plugins ----
-        let plugins = self.section(
-            "Search plugins",
-            vec![
-                toggle_row!(self, cx, "p-apps", "Applications", "Installed desktop applications", plugins.applications),
-                toggle_row!(self, cx, "p-calc", "Calculator", "Math: 2*(3+4), 2^10, 10 % 3", plugins.calculator),
-                toggle_row!(self, cx, "p-units", "Unit converter", "10 km to mi, 100 f to c, 2 gb to mb", plugins.units),
-                toggle_row!(self, cx, "p-currency", "Currency converter", "100 usd to eur. Downloads exchange rates (curl) about twice a day", plugins.currency),
-                toggle_row!(self, cx, "p-clip", "Clipboard history", "Type clip or cb. Records what you copy (in memory only)", plugins.clipboard),
-                toggle_row!(self, cx, "p-files", "Files & folders", "Search file names under your home folder", plugins.files),
-                toggle_row!(self, cx, "p-system", "System commands", "Lock, sleep, restart, shut down, log out, settings", plugins.system),
-                toggle_row!(self, cx, "p-dict", "Dictionary", "define word, meaning of word, Ctrl+L. Sends only that word to dictionaryapi.dev", plugins.dictionary),
-                toggle_row!(self, cx, "p-weather", "Weather", "weather paris. Sends only the place to Open-Meteo", plugins.weather),
-                toggle_row!(self, cx, "p-imperial", "Fahrenheit and mph", "Weather in imperial units", weather.imperial),
-                toggle_row!(self, cx, "p-stocks", "Stocks", "stock aapl, $tsla. Sends only the ticker to Yahoo Finance (delayed quotes)", plugins.stocks),
-                toggle_row!(self, cx, "p-sports", "Sports scores", "nba, premier league, nfl lakers. Sends only the league to ESPN", plugins.sports),
-                toggle_row!(self, cx, "p-windows", "Window switching", "< name lists open windows. GNOME needs the extension: aujar gnome-extension install", plugins.windows),
-                toggle_row!(self, cx, "p-shell", "Shell commands", "> command runs it in a shell. Runs arbitrary commands: off by default", plugins.shell),
-            ],
-        );
-
-        // ---- Web ----
-        let engine_control = div().flex().flex_row().flex_wrap().gap_2().children(Engine::ALL.map(|engine| {
-            let selected = self.settings.web.engine == engine;
-
-            self.pill(SharedString::from(format!("engine-{}", engine.name())), engine.name(), selected)
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.mutate(cx, |settings| settings.web.engine = engine)
-                }))
-        }));
-
-        let shortcut_list = self
-            .settings
-            .web
-            .shortcuts
-            .iter()
-            .map(|shortcut| format!("{} = {}", shortcut.keyword, shortcut.name))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let web = self.section(
-            "Web search",
-            vec![
-                self.row("Search engine", "Used by the \"Search the web\" row and `? query`", engine_control),
-                self.row(
-                    "Shortcuts",
-                    "Type a keyword and a query, e.g. `g rust lifetimes`. Add more in the config file.",
-                    div().max_w(px(260.)).text_xs().text_color(rgb(pal.text_dim)).child(shortcut_list),
-                ),
-            ],
-        );
-
-        // ---- About ----
-        let open_config = self
-            .pill("open-config".into(), "Open config file", false)
-            .on_click(cx.listener(|this, _event, _window, cx| {
-                // Make sure the file exists so the editor has something to open.
-                this.mutate(cx, |_| {});
-
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(Settings::path())
-                    .spawn();
-            }));
-
-        let clear_history = self
-            .pill("clear-history".into(), "Clear history", false)
-            .on_click(cx.listener(|this, _event, _window, cx| {
-                this.status = Some(match aujar_config::History::default().save() {
-                    Ok(()) => "History cleared".to_owned(),
-                    Err(error) => format!("Could not clear: {error:#}"),
-                });
-                cx.notify();
-            }));
-
-        let about = self.section(
-            "Shortcut & config",
-            vec![
-                self.row(
-                    "Launcher shortcut",
-                    "Set with `aujar shortcut install --keys '<Super>space'` (GNOME), or in your desktop's keyboard settings: `aujar launcher toggle`.",
-                    div(),
-                ),
-                self.row("Config file", &Settings::path().display().to_string(), open_config),
-                self.row("Launch history", "Recent and frequent items (stored in ~/.local/state/aujar)", clear_history),
-            ],
-        );
+        let header = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_6()
+            .py_4()
+            .border_b_1()
+            .border_color(rgba(pal.divider))
+            .child(div().text_xl().child(page.title()))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(pal.text_dim))
+                    .child(page.blurb()),
+            );
 
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
             .flex()
-            .flex_col()
+            .flex_row()
             .size_full()
             .bg(rgba(pal.card))
             .text_color(rgb(pal.text))
+            .child(sidebar)
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px_6()
-                    .py_4()
-                    .border_b_1()
-                    .border_color(rgba(pal.divider))
-                    .child(div().text_xl().child("Aujar Settings"))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(pal.text_dim))
-                            .child(self.status.clone().unwrap_or_else(|| "Changes save automatically".to_owned())),
-                    ),
-            )
-            .child(
-                div()
-                    .id("settings-scroll")
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .gap_5()
-                    .p_6()
-                    .overflow_y_scroll()
-                    .child(appearance)
-                    .child(plugins)
-                    .child(web)
-                    .child(about),
+                    .min_w(px(0.))
+                    .h_full()
+                    .child(header)
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("scroll-{page:?}")))
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .gap_5()
+                            .p_6()
+                            .overflow_y_scroll()
+                            .children(content),
+                    ),
             )
     }
 }

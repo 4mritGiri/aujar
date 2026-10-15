@@ -2337,7 +2337,7 @@ fn open_launcher(
 }
 
 fn open_settings(cx: &mut App) -> Option<WindowHandle<SettingsView>> {
-    let bounds = Bounds::centered(None, size(px(760.), px(700.)), cx);
+    let bounds = Bounds::centered(None, size(px(940.), px(700.)), cx);
 
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),

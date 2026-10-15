@@ -9,37 +9,54 @@ following you. It is Aujar's take on Microsoft's *Mouse Without Borders*.
 
 ## Quick start
 
-On every machine, install Aujar and make the daemon run (`systemctl --user enable --now aujar`).
+On every machine install Aujar and make sure the daemon runs (`systemctl --user enable --now aujar`).
+Then connect them with a **pairing code**: one line holding the security key and the layout, so
+you never type a key or an address.
 
-1. **Describe the layout** in `~/.config/aujar/settings.toml`. The same text can go on every
-   machine ([full example](../config/mouse-borders.example.toml)):
+**In the settings window** (open the launcher, then Settings → **Mouse Borders**):
 
-   ```toml
-   [mouse_borders]
-   enabled = true
-   machine_name = "desk"          # this machine; empty means the hostname
+1. On the first machine click **Copy pairing code**. This turns Mouse Borders on, creates the key
+   and adds the machine to the layout.
+2. On the second machine click **Join from clipboard**. It adopts the key and layout and adds itself.
+3. On the second machine click **Copy pairing code**, and on the first click **Join from clipboard**,
+   so the first machine learns about the second. With three or four machines, send the *latest*
+   code to every machine that is already part of the layout.
+4. Check the **Status** card at the top of the page: machines show as connected.
+5. Arrange the machines under **Layout** (◀ ▶ move a machine one slot, the picture above the list
+   shows the desk) and give your user access to the input devices
+   ([Permissions](#permissions)); then push the pointer through a screen edge.
 
-   [[mouse_borders.machines]]
-   name = "desk"
-   slot = 0                       # left to right on your desk
+**From the command line** it is the same flow:
 
-   [[mouse_borders.machines]]
-   name = "laptop"
-   slot = 1
-   address = "192.168.1.20"       # optional; otherwise "laptop" is looked up by name
-   ```
+```bash
+aujar mwb pair                       # first machine: prints the code
+aujar mwb join 'aujar-pair1;row;…'   # other machines
+aujar mwb status
+```
 
-2. **Pair the machines** with a security key. Create it on one machine and copy it to the others:
+`join` refuses to replace a different security key unless you add `--force`, and a pairing code
+contains the key: treat it like a password and do not paste it anywhere public.
 
-   ```bash
-   aujar mwb key generate                 # on the first machine; prints the key
-   aujar mwb key set K7QD-2XJP-...        # on every other machine
-   ```
+**Or write the settings by hand** in `~/.config/aujar/settings.toml` (the same text works on every
+machine, see [the example](../config/mouse-borders.example.toml)):
 
-3. **Check** with `aujar mwb status`. Machines connect on their own (port 15101).
+```toml
+[mouse_borders]
+enabled = true
+machine_name = "desk"          # this machine; empty means the hostname
 
-4. **Give your user access to the input devices** (see [Permissions](#permissions)), log out and
-   in, and push the pointer through the edge of your screen.
+[[mouse_borders.machines]]
+name = "desk"
+slot = 0                       # left to right on your desk
+
+[[mouse_borders.machines]]
+name = "laptop"
+slot = 1
+address = "192.168.1.20"       # optional; otherwise "laptop" is looked up by name
+```
+
+and create the key with `aujar mwb key generate` on one machine and `aujar mwb key set <KEY>` on the
+others.
 
 ## What works
 
@@ -51,7 +68,7 @@ On every machine, install Aujar and make the daemon run (`systemctl --user enabl
 | File transfer, 100 MB limit | ✅ CLI | `aujar mwb send laptop file…`. Drag-and-drop and paste-a-file are 📅 |
 | Service mode (login screen, elevated windows) | ✅ | A least-privilege system service ([below](#service-mode)) |
 | Multi-machine input mode | ✅ | `Ctrl+Alt+M` |
-| Device layout: row or 2×2 | ✅ config · 📅 visual editor | Edit `matrix` and `slot`; no drag-and-drop editor yet |
+| Device layout: row or 2×2 | ✅ | Settings window (picture and ◀ ▶ buttons) or `matrix` and `slot` in the config; drag-and-drop 📅 |
 | Wrap mouse | ✅ | `wrap_mouse = true` |
 | Easy Mouse (always / hold Shift / hold Ctrl / off) | ✅ | `easy_mouse = …`, toggle with `Ctrl+Alt+E` |
 | Block mouse at corners | ✅ | `block_corners = true` |
@@ -85,6 +102,8 @@ if the machine you are controlling disconnects, input returns to you immediately
 
 ```text
 aujar mwb status              # state, machines, recent events, problems
+aujar mwb pair                # print a pairing code for your other machines
+aujar mwb join '<code>'       # join the machines of a pairing code
 aujar mwb key generate|show|set
 aujar mwb switch laptop       # or `local`
 aujar mwb easy-mouse on|off
@@ -204,7 +223,7 @@ to work for that user. Logs: `journalctl -u aujar-mouse-borders`.
   L-shaped arrangement can land the pointer off-screen unless `move_relatively` is on.
 * Edge switching and `hide_mouse_at_edge` need X11. The virtual-terminal shortcuts are not
   forwarded.
-* No visual layout editor, drag-and-drop or paste-a-file transfer yet.
+* No drag-and-drop in the layout editor and no drag-and-drop or paste-a-file transfer yet.
 * This was developed against in-memory and loopback tests plus two real daemons on one host. The
   evdev, uinput and X11 code paths could not be exercised on physical hardware in CI: expect
   to report some device-specific bugs.

@@ -94,7 +94,7 @@ cargo run -p aujar-launcher-app -- color convert '#FF8800'
 Share one keyboard, mouse, clipboard and files between your machines ([guide](docs/MOUSE_BORDERS.md)):
 
 ```bash
-cargo run -p aujar-launcher-app -- mwb key generate      # then `mwb key set <KEY>` elsewhere
+cargo run -p aujar-launcher-app -- mwb pair              # prints a pairing code; `mwb join '<code>'` elsewhere
 cargo run -p aujar-launcher-app -- mwb status
 cargo run -p aujar-launcher-app -- mwb send laptop report.pdf
 ```

@@ -54,7 +54,7 @@ or screen capture, so each feature lists its backend per session type.
 | Quick preview | Peek | — | 📅 | 📅 | 📅 | 📅 | 📅 | |
 | Image utilities | Image Resizer | — | 📅 | 📅 | 📅 | 📅 | 📅 | Pure Rust, no session dependency |
 | Keyboard remapping | Keyboard Manager | — | ⚠️ | ⚠️ (evdev/uinput, needs privileges) | ⚠️ | ⚠️ | ⚠️ | Privileged helper; design under review |
-| Mouse Without Borders | Mouse Without Borders | `modules/mouse-borders` | ✅ engine, encrypted protocol, CLI, system service, 120+ tests; evdev/uinput/X11 backends compile-checked and smoke-tested with two real daemons, not yet on physical hardware. Visual layout editor and drag-and-drop 📅 ([MOUSE_BORDERS](MOUSE_BORDERS.md)) | ✅ edges + shortcuts | ⚠️ shortcuts only: no pointer position on Wayland | ⚠️ shortcuts only | ⚠️ shortcuts only | evdev capture, uinput injection, X11 pointer; InputCapture portal 📅 |
+| Mouse Without Borders | Mouse Without Borders | `modules/mouse-borders` | ✅ engine, encrypted protocol, CLI, system service, 120+ tests; evdev/uinput/X11 backends compile-checked and smoke-tested with two real daemons, not yet on physical hardware. Layout editor in the settings window (drag-and-drop 📅) ([MOUSE_BORDERS](MOUSE_BORDERS.md)) | ✅ edges + shortcuts | ⚠️ shortcuts only: no pointer position on Wayland | ⚠️ shortcuts only | ⚠️ shortcuts only | evdev capture, uinput injection, X11 pointer; InputCapture portal 📅 |
 | Mouse utilities (find my mouse, highlighter) | Mouse Utilities | — | 📅 | ❌ generic / ⚠️ per compositor | ⚠️ | ⚠️ | ⚠️ | |
 | Text extractor (OCR) | Text Extractor | — | 📅 | 📅 | 📅 | 📅 | 📅 | Screen capture + Tesseract |
 | Awake (inhibit sleep) | Awake | — | 📅 | 📅 | 📅 (logind / portal Inhibit) | 📅 | 📅 | |
