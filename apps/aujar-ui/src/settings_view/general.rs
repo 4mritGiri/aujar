@@ -17,16 +17,6 @@ impl SettingsView {
                     .spawn();
             }));
 
-        let clear_history = self
-            .pill("clear-history".into(), "Clear history", false)
-            .on_click(cx.listener(|this, _event, _window, cx| {
-                this.status = Some(match aujar_config::History::default().save() {
-                    Ok(()) => "History cleared".to_owned(),
-                    Err(error) => format!("Could not clear: {error:#}"),
-                });
-                cx.notify();
-            }));
-
         vec![
             self.section(
                 "Launcher",
@@ -37,15 +27,29 @@ impl SettingsView {
                 )],
             ),
             self.section(
-                "Files",
+                "Launcher keys",
                 vec![
-                    self.row("Config file", &Settings::path().display().to_string(), open_config),
-                    self.row(
-                        "Launch history",
-                        "Recent and frequent items (stored in ~/.local/state/aujar)",
-                        clear_history,
-                    ),
+                    self.row("Open a result", "Launch the selected row", self.keycap("Enter").into_any_element()),
+                    self.row("Show in folder", "Reveal the selected file in your file manager", self.keycap("Ctrl+Enter").into_any_element()),
+                    self.row("Actions menu", "Also: right-click a row", self.keycap("Ctrl+K").into_any_element()),
+                    self.row("Look up a word", "Define the selected text or the query", self.keycap("Ctrl+L").into_any_element()),
+                    self.row("Copy", "Copy the path, URL or answer of the selected row", self.keycap("Ctrl+C").into_any_element()),
+                    self.row("Launch row 1 to 9", "Skip the arrow keys", self.keycap("Alt+1\u{2026}9").into_any_element()),
+                    self.row("Settings", "Open this window from the launcher", self.keycap("Ctrl+,").into_any_element()),
+                    self.row("Close", "First press clears the search, the second closes", self.keycap("Esc").into_any_element()),
                 ],
+            ),
+            self.section(
+                "Settings window",
+                vec![
+                    self.row("Search settings", "Find a setting by name", self.keycap("Ctrl+F").into_any_element()),
+                    self.row("Back / forward", "Between pages you visited", self.keycap("Alt+\u{2190} / \u{2192}").into_any_element()),
+                    self.row("Move the window", "Drag the title bar. Double-click it to zoom", div()),
+                ],
+            ),
+            self.section(
+                "Files",
+                vec![self.row("Config file", &Settings::path().display().to_string(), open_config)],
             ),
             self.section(
                 "About",

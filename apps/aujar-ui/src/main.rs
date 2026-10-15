@@ -16,7 +16,7 @@ mod settings_view;
 mod theme;
 
 use anyhow::{Result, bail};
-use aujar_config::{History, Settings};
+use aujar_config::{History, LauncherPosition, Settings};
 use aujar_ipc::{
     Event, ExecuteRequest, LauncherCommand, Request, Response, SearchHit, SearchRequest, send,
     subscribe,
@@ -24,8 +24,9 @@ use aujar_ipc::{
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, ExternalDragPayload, FileDragPaths,
     FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ScrollHandle, SharedString, Window, WindowBackgroundAppearance,
-    WindowBounds, WindowHandle, WindowOptions, div, img, prelude::*, px, rgb, rgba, size, svg,
+    MouseMoveEvent, ScrollHandle, SharedString, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowHandle, WindowOptions,
+    div, img, point, prelude::*, px, rgb, rgba, size, svg,
 };
 use gpui_platform::application;
 use model::{
@@ -44,7 +45,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use theme::Palette;
+use theme::{Palette, rounded_px};
 
 /// Window height; the card inside is content-sized and the rest is transparent.
 const WINDOW_H: f32 = 640.0;
@@ -152,8 +153,11 @@ fn web_hit(title: String, subtitle: String, url: String) -> SearchHit {
 /// Details shown in the right-hand panel for the selected result.
 struct Preview {
     title: String,
-    badge: &'static str,
+    /// What it is, under the title: "PDF document", "Folder", "Application", ...
+    badge: String,
     rows: Vec<(&'static str, String)>,
+    /// A few names from inside a folder.
+    entries: Vec<String>,
     /// First lines of a text file, or the full text of a clipboard entry.
     text: Option<String>,
     image: Option<PathBuf>,
@@ -283,13 +287,47 @@ fn read_text_preview(path: &Path) -> Option<String> {
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
+/// A short, human description of a file by its extension (Spotlight's "Kind").
+fn file_kind(path: &Path, is_dir: bool) -> String {
+    if is_dir {
+        return "Folder".to_owned();
+    }
+
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+
+    match extension.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "tif" | "tiff" | "avif" => {
+            format!("{} image", extension.to_uppercase())
+        }
+        "pdf" => "PDF document".to_owned(),
+        "md" | "markdown" => "Markdown document".to_owned(),
+        "txt" | "log" => "Plain text".to_owned(),
+        "doc" | "docx" | "odt" | "rtf" | "" => "Document".to_owned(),
+        "xls" | "xlsx" | "ods" | "csv" => "Spreadsheet".to_owned(),
+        "ppt" | "pptx" | "odp" => "Presentation".to_owned(),
+        "zip" | "tar" | "gz" | "xz" | "bz2" | "zst" | "7z" | "rar" => "Archive".to_owned(),
+        "mp3" | "flac" | "ogg" | "wav" | "m4a" | "opus" => "Audio".to_owned(),
+        "mp4" | "mkv" | "webm" | "mov" | "avi" => "Video".to_owned(),
+        "rs" | "py" | "js" | "ts" | "c" | "h" | "cpp" | "java" | "go" | "sh" | "css" | "html"
+        | "sql" | "toml" | "yaml" | "yml" | "json" | "xml" => {
+            format!("{} source", extension.to_uppercase())
+        }
+        other => format!("{} file", other.to_uppercase()),
+    }
+}
+
 fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
     let (badge, _) = kind_meta(&hit.kind);
 
     let mut preview = Preview {
         title: hit.title.clone(),
-        badge,
+        badge: badge.to_owned(),
         rows: Vec::new(),
+        entries: Vec::new(),
         text: None,
         image: None,
         thumb_request: None,
@@ -301,15 +339,28 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
                 return preview;
             };
 
-            if let Some(parent) = hit.subtitle.clone() {
-                preview.rows.push(("Location", parent));
-            }
-
             if let Ok(meta) = fs::metadata(&path) {
+                preview.badge = file_kind(&path, meta.is_dir());
+
                 if meta.is_dir() {
                     if let Ok(entries) = fs::read_dir(&path) {
                         // Bounded: a huge directory must not stall the UI thread.
-                        let count = entries.take(5001).count();
+                        let mut count = 0usize;
+                        let mut names: Vec<String> = Vec::new();
+
+                        for entry in entries.take(5001).flatten() {
+                            count += 1;
+
+                            let name = entry.file_name().to_string_lossy().into_owned();
+
+                            if names.len() < 60 && !name.starts_with('.') {
+                                names.push(name);
+                            }
+                        }
+
+                        names.sort_by_key(|name| name.to_lowercase());
+                        names.truncate(8);
+                        preview.entries = names;
 
                         preview.rows.push((
                             "Contains",
@@ -320,11 +371,17 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
                     preview.rows.push(("Size", human_size(meta.len())));
                 }
 
-                if let Ok(elapsed) = meta
-                    .modified()
-                    .and_then(|time| SystemTime::now().duration_since(time).map_err(std::io::Error::other))
-                {
+                let since = |time: std::io::Result<SystemTime>| {
+                    time.and_then(|time| SystemTime::now().duration_since(time).map_err(std::io::Error::other))
+                        .ok()
+                };
+
+                if let Some(elapsed) = since(meta.modified()) {
                     preview.rows.push(("Modified", age_text(elapsed)));
+                }
+
+                if let Some(elapsed) = since(meta.created()) {
+                    preview.rows.push(("Created", age_text(elapsed)));
                 }
 
                 if meta.is_file() {
@@ -348,6 +405,10 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
                         preview.text = read_text_preview(&path);
                     }
                 }
+            }
+
+            if let Some(parent) = hit.subtitle.clone() {
+                preview.rows.push(("Location", parent));
             }
         }
         "clip" => {
@@ -495,6 +556,35 @@ struct LauncherView {
     clips: Vec<String>,
     requests: async_channel::Sender<UiRequest>,
     focus_handle: FocusHandle,
+    /// Window position when the launcher opened, and the latest one (whole pixels), used to
+    /// remember where you moved it. Only tracked where the app can place windows (not Wayland).
+    first_origin: Option<(i32, i32)>,
+    last_origin: Option<(i32, i32)>,
+}
+
+/// Wayland compositors decide where windows go and never tell the app where they are, so a
+/// position can be set and read back on X11 only. Dragging a window works on both.
+fn can_place_windows() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_none()
+}
+
+impl Drop for LauncherView {
+    /// Save the position the launcher was left at, when it should reopen there.
+    fn drop(&mut self) {
+        let remember = self.settings.appearance.launcher_position == LauncherPosition::Remember;
+
+        if !remember || self.first_origin == self.last_origin {
+            return;
+        }
+
+        if let Some(origin) = self.last_origin {
+            let mut settings = Settings::load_or_default();
+
+            settings.appearance.launcher_origin = Some(origin);
+
+            let _ = settings.save();
+        }
+    }
 }
 
 /// Longest query accepted, in characters.
@@ -531,6 +621,8 @@ impl LauncherView {
             clips,
             requests,
             focus_handle: cx.focus_handle(),
+            first_origin: None,
+            last_origin: None,
         };
 
         view.show_empty_state();
@@ -1751,7 +1843,7 @@ impl LauncherView {
             .into_any_element()
     }
 
-    fn render_preview(&self) -> Option<AnyElement> {
+    fn render_preview(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let preview = self.preview.as_ref()?;
         let hit = self.results.get(self.selected)?;
         let pal = self.palette;
@@ -1857,16 +1949,15 @@ impl LauncherView {
             _ => {}
         }
 
-        Some(
+        // Answer cards (definitions, weather, stocks, scores) keep a compact header with their
+        // details below; everything else gets a Spotlight-style preview.
+        let rich = matches!(hit.kind.as_str(), "definition" | "weather" | "stock" | "sports");
+
+        let header: AnyElement = if rich {
             div()
                 .flex()
                 .flex_col()
                 .gap_3()
-                .w(px(268.))
-                .flex_shrink_0()
-                .p_4()
-                .border_l_1()
-                .border_color(rgba(pal.divider))
                 .child(self.leading(hit, 56.))
                 .child(
                     div()
@@ -1880,36 +1971,185 @@ impl LauncherView {
                                 .text_color(rgb(pal.text))
                                 .child(preview.title.clone()),
                         )
-                        .child(div().text_xs().text_color(rgb(pal.text_dim)).child(preview.badge)),
+                        .child(div().text_xs().text_color(rgb(pal.text_dim)).child(preview.badge.clone())),
                 )
-                .when_some(preview.image.clone(), |this, path| {
-                    this.child(img(path).w_full().max_h(px(170.)).rounded_md())
-                })
-                .children(preview.rows.iter().map(|(name, value)| {
+                .into_any_element()
+        } else {
+            // The big preview: the image or PDF page, the start of a text file, or a large icon.
+            let hero: AnyElement = if let Some(path) = preview.image.clone() {
+                rounded_px(div(), 12.)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w_full()
+                    .h(px(176.))
+                    .overflow_hidden()
+                    .bg(rgba(pal.subtle))
+                    .child(img(path).w_full().max_h(px(176.)))
+                    .into_any_element()
+            } else if let Some(text) = preview.text.clone() {
+                rounded_px(div(), 12.)
+                    .w_full()
+                    .h(px(176.))
+                    .p_3()
+                    .overflow_hidden()
+                    .bg(rgba(pal.subtle))
+                    .text_xs()
+                    .text_color(rgb(pal.text_dim))
+                    .child(text)
+                    .into_any_element()
+            } else {
+                rounded_px(div(), 12.)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w_full()
+                    .h(px(132.))
+                    .bg(rgba(pal.subtle))
+                    .child(self.leading(hit, 84.))
+                    .into_any_element()
+            };
+
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(hero)
+                .child(
                     div()
                         .flex()
                         .flex_col()
-                        .child(label(name))
-                        .child(div().text_sm().text_color(rgb(pal.text)).child(value.clone()))
+                        .items_center()
+                        .gap_0p5()
+                        .px_2()
+                        .child(
+                            div()
+                                .text_base()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_center()
+                                .text_color(rgb(pal.text))
+                                .line_clamp(2)
+                                .child(preview.title.clone()),
+                        )
+                        .child(div().text_xs().text_color(rgb(pal.text_dim)).child(preview.badge.clone())),
+                )
+                .into_any_element()
+        };
+
+        // "Information": label on the left, value on the right.
+        let info = (!preview.rows.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1p5()
+                .pt_3()
+                .border_t_1()
+                .border_color(rgba(pal.divider))
+                .child(label("Information"))
+                .children(preview.rows.iter().map(|(name, value)| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_3()
+                        .text_sm()
+                        .child(
+                            div()
+                                .w(px(72.))
+                                .flex_shrink_0()
+                                .text_color(rgb(pal.text_faint))
+                                .child((*name).to_owned()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .text_color(rgb(pal.text))
+                                .truncate()
+                                .child(value.clone()),
+                        )
                 }))
-                .when_some(preview.text.clone(), |this, text| {
-                    this.child(
-                        div()
-                            .p_2()
-                            .rounded_md()
-                            .bg(rgba(pal.subtle))
-                            .overflow_hidden()
-                            .text_xs()
-                            .text_color(rgb(pal.text_dim))
-                            .child(text),
-                    )
+        });
+
+        let contents = (!preview.entries.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .pt_3()
+                .border_t_1()
+                .border_color(rgba(pal.divider))
+                .child(label("Contents"))
+                .children(preview.entries.iter().map(|name| {
+                    div()
+                        .text_xs()
+                        .text_color(rgb(pal.text_dim))
+                        .truncate()
+                        .child(name.clone())
+                }))
+        });
+
+        // Open / Show in Folder, like Quick Look's buttons.
+        let button = |id: &'static str, text: &'static str, primary: bool, reveal: bool, cx: &mut Context<Self>| {
+            rounded_px(div(), 8.)
+                .id(id)
+                .flex()
+                .items_center()
+                .justify_center()
+                .flex_1()
+                .h(px(32.))
+                .cursor_pointer()
+                .text_sm()
+                .when(primary, |this| this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent)))
+                .when(!primary, |this| {
+                    this.bg(rgba(pal.subtle))
+                        .border_1()
+                        .border_color(rgba(pal.border))
+                        .text_color(rgb(pal.text))
+                        .hover(|style| style.bg(rgba(pal.hover)))
                 })
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    this.launch_selected(reveal, window, cx);
+                }))
+                .child(text)
+        };
+
+        let is_file = matches!(hit.kind.as_str(), "file" | "folder");
+        let launchable = is_file || hit.kind == "application";
+
+        let buttons = launchable.then(|| {
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .pt_1()
+                .child(button("preview-open", kind_meta(&hit.kind).1, true, false, cx))
+                .when(is_file, |this| {
+                    this.child(button("preview-reveal", "Show in Folder", false, true, cx))
+                })
+        });
+
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .w(px(304.))
+                .max_h(px(LIST_MAX_H + 48.))
+                .flex_shrink_0()
+                .overflow_hidden()
+                .p_4()
+                .border_l_1()
+                .border_color(rgba(pal.divider))
+                .child(header)
+                .children(info)
+                .children(contents)
                 .children(body)
+                .children(buttons)
                 .into_any_element(),
         )
     }
 
-    fn render_footer(&self) -> impl IntoElement {
+    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let pal = self.palette;
         let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
 
@@ -1953,6 +2193,12 @@ impl LauncherView {
             .py_2()
             .border_t_1()
             .border_color(rgba(pal.divider))
+            .when(self.settings.appearance.launcher_movable, |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_this, _event, window, _cx| window.start_window_move()),
+                )
+            })
             .children(hints.into_iter().map(|(keys, label)| {
                 div()
                     .flex()
@@ -2072,6 +2318,8 @@ impl LauncherView {
                 cx.listener(|this, event: &MouseDownEvent, _window, cx| {
                     let end = this.query.len();
 
+                    // The search field edits text; only the bar around it moves the window.
+                    cx.stop_propagation();
                     this.mouse_down_at(end, if event.click_count >= 2 { 3 } else { 1 }, event.modifiers.shift, cx);
                 }),
             )
@@ -2109,6 +2357,7 @@ impl LauncherView {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                        cx.stop_propagation();
                         this.mouse_down_at(index, event.click_count, event.modifiers.shift, cx);
                     }),
                 )
@@ -2187,17 +2436,16 @@ impl Render for LauncherView {
         }
 
         let show_footer = self.settings.appearance.show_footer;
-        let preview = self.render_preview();
+        let preview = self.render_preview(cx);
         let menu = self.render_menu(cx);
 
-        let card = div()
+        let card = rounded_px(div(), pal.radius)
             .flex()
             .flex_col()
             .w_full()
             .bg(rgba(pal.card))
             .border_1()
             .border_color(rgba(pal.border))
-            .rounded_2xl()
             .overflow_hidden()
             .text_color(rgb(pal.text))
             // The search bar.
@@ -2209,6 +2457,13 @@ impl Render for LauncherView {
                     .gap_3()
                     .px_5()
                     .py_4()
+                    // Drag the bar (outside the text) to move the launcher.
+                    .when(self.settings.appearance.launcher_movable, |this| {
+                        this.on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_this, _event, window, _cx| window.start_window_move()),
+                        )
+                    })
                     .child(self.glyph("icons/search.svg", 22., pal.text_faint))
                     .child(self.render_query(cx)),
             )
@@ -2253,7 +2508,7 @@ impl Render for LauncherView {
                         .child(status),
                 )
             })
-            .when(show_footer, |this| this.child(self.render_footer()));
+            .when(show_footer, |this| this.child(self.render_footer(cx)));
 
         // The window is transparent: only the card is painted, so with no results it collapses
         // to the search bar. The menu floats above it.
@@ -2273,6 +2528,46 @@ impl Render for LauncherView {
     }
 }
 
+/// Where the launcher window goes, from the Appearance settings.
+fn launcher_bounds(settings: &Settings, cx: &App) -> Bounds<gpui::Pixels> {
+    let launcher_size = size(px(settings.appearance.width as f32), px(WINDOW_H));
+    let centered = Bounds::centered(None, launcher_size, cx);
+
+    if !can_place_windows() {
+        return centered;
+    }
+
+    match settings.appearance.launcher_position {
+        LauncherPosition::Center => centered,
+        // Horizontally centered in the upper part of the screen, like Spotlight. Only the
+        // top of the (tall, transparent) window is painted.
+        LauncherPosition::Top => match cx.primary_display() {
+            Some(display) => {
+                let area = display.bounds();
+                let (left, top) = (f32::from(area.origin.x), f32::from(area.origin.y));
+                let (screen_w, screen_h) = (f32::from(area.size.width), f32::from(area.size.height));
+                let x = left + (screen_w - settings.appearance.width as f32) / 2.0;
+                let y = top + (screen_h * 0.16).min((screen_h - WINDOW_H).max(0.0));
+
+                Bounds::new(point(px(x), px(y)), launcher_size)
+            }
+            None => centered,
+        },
+        LauncherPosition::Remember => match settings.appearance.launcher_origin {
+            Some((x, y)) => Bounds::new(point(px(x as f32), px(y as f32)), launcher_size),
+            None => centered,
+        },
+    }
+}
+
+fn background_for(settings: &Settings) -> WindowBackgroundAppearance {
+    if settings.appearance.blur {
+        WindowBackgroundAppearance::Blurred
+    } else {
+        WindowBackgroundAppearance::Transparent
+    }
+}
+
 fn open_launcher(
     cx: &mut App,
     requests: async_channel::Sender<UiRequest>,
@@ -2280,8 +2575,7 @@ fn open_launcher(
 ) -> Option<WindowHandle<LauncherView>> {
     // Re-read the settings every time, so changes apply on the next open.
     let settings = Settings::load_or_default();
-    let width = settings.appearance.width as f32;
-    let bounds = Bounds::centered(None, size(px(width), px(WINDOW_H)), cx);
+    let bounds = launcher_bounds(&settings, cx);
 
     // Best effort: whatever is on the clipboard now joins the history (on GNOME/Wayland the
     // background watcher cannot see the clipboard, so this is how entries get captured).
@@ -2292,6 +2586,8 @@ fn open_launcher(
     }
 
     let close_on_blur = settings.appearance.close_on_blur;
+    let track_position = can_place_windows()
+        && settings.appearance.launcher_position == LauncherPosition::Remember;
     let snapshot = clips.clone();
 
     // A new window: forget any earlier drag, and invalidate its auto-close timer.
@@ -2301,7 +2597,7 @@ fn open_launcher(
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,
-        window_background: WindowBackgroundAppearance::Transparent,
+        window_background: background_for(&settings),
         app_id: Some("aujar-launcher".into()),
         ..Default::default()
     };
@@ -2312,6 +2608,20 @@ fn open_launcher(
 
         // Without focus, key events never reach the view.
         window.focus(&focus_handle, cx);
+
+        // Note where the window sits, so a drag can be remembered (X11 only).
+        if track_position {
+            view.update(cx, |_view, cx| {
+                cx.observe_window_bounds(window, |this, window, _cx| {
+                    let origin = window.bounds().origin;
+                    let origin = (f32::from(origin.x).round() as i32, f32::from(origin.y).round() as i32);
+
+                    this.first_origin.get_or_insert(origin);
+                    this.last_origin = Some(origin);
+                })
+                .detach();
+            });
+        }
 
         // Click-away closes the launcher. The grace period ignores the focus churn that
         // compositors (especially Wayland) produce while a new window is being mapped.
@@ -2337,10 +2647,21 @@ fn open_launcher(
 }
 
 fn open_settings(cx: &mut App) -> Option<WindowHandle<SettingsView>> {
-    let bounds = Bounds::centered(None, size(px(940.), px(700.)), cx);
+    let settings = Settings::load_or_default();
+    let bounds = Bounds::centered(None, size(px(980.), px(720.)), cx);
 
+    // The settings window draws its own title bar and frame (traffic lights, rounded corners,
+    // translucency), so ask for client-side decorations and a transparent surface.
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions {
+            title: Some("Aujar Settings".into()),
+            appears_transparent: true,
+            traffic_light_position: None,
+        }),
+        window_decorations: Some(WindowDecorations::Client),
+        window_background: background_for(&settings),
+        window_min_size: Some(size(px(720.), px(520.))),
         app_id: Some("aujar-settings".into()),
         ..Default::default()
     };

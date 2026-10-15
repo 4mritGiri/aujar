@@ -3,7 +3,8 @@ mod settings;
 
 pub use history::{History, HistoryEntry};
 pub use settings::{
-    Accent, Appearance, EasyMouse, Engine, Files, Machine, MatrixMode, MouseBorders,
+    Accent, Appearance, EasyMouse, Engine, Files, LauncherPosition, Machine, MatrixMode,
+    MouseBorders,
     MouseBordersHotkeys, Plugins, Settings, SwitchKeys, Theme, Weather, Web, WebShortcut,
 };
 

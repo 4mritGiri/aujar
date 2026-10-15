@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- **Settings window restyled** like a macOS window: its own rounded, translucent frame with traffic-light buttons, sidebar toggle, back/forward, a breadcrumb pill, settings search (Ctrl+F) and a `...` menu; drag the title bar to move, double-click to zoom, drag the edges to resize. New Files and History pages in a collapsible "Data" group.
+- **Appearance**: opacity, corner radius, blur behind windows, window buttons on/off; launcher "Move by dragging" and "Opens at" (top / center / last place; placement works on X11, dragging works everywhere).
+- **Launcher**: drag the search bar or footer to move it; Spotlight-style preview pane with a large preview, kind, information table, folder contents and Open / Show in Folder buttons.
 - **Redesigned settings window**: a sidebar with pages (Appearance, Search plugins, Web search, Mouse Borders, General), page titles and descriptions, plugins grouped by what they touch with an `Online` badge on those that use the network, one file per page.
 - **Mouse Borders page** in the settings window: live status, pairing, a visual layout editor, switching and sharing options. Pairing codes (`aujar mwb pair`, `aujar mwb join`, or Copy / Join in the window) carry the security key and layout so nothing has to be typed.
 - **Mouse Borders** (`modules/mouse-borders`, `aujar mwb ...`): share one keyboard and mouse between up to four Linux machines, with edge switching (X11), `Ctrl+Alt+1..4` jumping (X11 and Wayland), a shared clipboard (text and images), file transfer (100 MB), multi-machine input, wrap, Easy Mouse modes, corner blocking, relative movement, keep-awake and remote lock. Encrypted with a Noise `XXpsk3` channel keyed by a generated security key; off by default. Optional least-privilege system service for the login screen. See [MOUSE_BORDERS](docs/MOUSE_BORDERS.md).

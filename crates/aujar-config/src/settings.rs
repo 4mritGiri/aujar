@@ -16,6 +16,36 @@ pub enum Theme {
     Light,
 }
 
+/// Where the launcher appears when it opens. Wayland compositors choose the position of a
+/// new window themselves, so this is honoured on X11 and macOS-style setups only; dragging
+/// the window works everywhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LauncherPosition {
+    /// Centered on the screen.
+    Center,
+    /// Horizontally centered, in the upper part of the screen (like Spotlight).
+    Top,
+    /// Wherever it was when you last moved it.
+    Remember,
+}
+
+impl LauncherPosition {
+    pub const ALL: [LauncherPosition; 3] = [
+        LauncherPosition::Top,
+        LauncherPosition::Center,
+        LauncherPosition::Remember,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            LauncherPosition::Center => "Center",
+            LauncherPosition::Top => "Top",
+            LauncherPosition::Remember => "Last place",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Accent {
@@ -109,6 +139,21 @@ pub struct Appearance {
     pub show_recents: bool,
     /// Hide the launcher when it loses focus (click elsewhere).
     pub close_on_blur: bool,
+    /// Window opacity in percent (both windows). Lower values let the desktop show through.
+    pub opacity: u32,
+    /// Corner radius of the windows, in pixels.
+    pub corner_radius: u32,
+    /// Ask the compositor to blur what is behind the windows, where it supports that.
+    pub blur: bool,
+    /// Draw macOS-style close / minimize / zoom buttons in the settings window.
+    pub traffic_lights: bool,
+    /// The launcher can be moved by dragging its search bar.
+    pub launcher_movable: bool,
+    /// Where the launcher opens.
+    pub launcher_position: LauncherPosition,
+    /// Last launcher position (`x`, `y` in pixels), saved when you move it. Used when
+    /// `launcher_position = "remember"`.
+    pub launcher_origin: Option<(i32, i32)>,
 }
 
 impl Default for Appearance {
@@ -123,6 +168,13 @@ impl Default for Appearance {
             show_preview: true,
             show_recents: true,
             close_on_blur: true,
+            opacity: 96,
+            corner_radius: 16,
+            blur: false,
+            traffic_lights: true,
+            launcher_movable: true,
+            launcher_position: LauncherPosition::Top,
+            launcher_origin: None,
         }
     }
 }
@@ -447,6 +499,8 @@ impl Settings {
     pub fn sanitized(mut self) -> Self {
         self.appearance.width = self.appearance.width.clamp(480, 1000);
         self.appearance.max_results = self.appearance.max_results.clamp(3, 12);
+        self.appearance.opacity = self.appearance.opacity.clamp(60, 100);
+        self.appearance.corner_radius = self.appearance.corner_radius.clamp(0, 28);
         self.files.max_depth = self.files.max_depth.clamp(1, 8);
 
         let mb = &mut self.mouse_borders;
@@ -510,6 +564,40 @@ mod tests {
 
         assert_eq!(settings.appearance.width, 480);
         assert_eq!(settings.appearance.max_results, 12);
+    }
+
+    #[test]
+    fn sanitized_clamps_window_look() {
+        let mut settings = Settings::default();
+        settings.appearance.opacity = 3;
+        settings.appearance.corner_radius = 400;
+
+        let settings = settings.sanitized();
+
+        assert_eq!(settings.appearance.opacity, 60);
+        assert_eq!(settings.appearance.corner_radius, 28);
+    }
+
+    #[test]
+    fn old_appearance_files_get_the_new_window_defaults() {
+        let settings: Settings = toml::from_str("[appearance]\nwidth = 600\n").unwrap();
+
+        assert_eq!(settings.appearance.width, 600);
+        assert!(settings.appearance.launcher_movable);
+        assert!(settings.appearance.traffic_lights);
+        assert_eq!(settings.appearance.launcher_position, LauncherPosition::Top);
+        assert_eq!(settings.appearance.launcher_origin, None);
+    }
+
+    #[test]
+    fn launcher_origin_round_trips() {
+        let mut settings = Settings::default();
+        settings.appearance.launcher_position = LauncherPosition::Remember;
+        settings.appearance.launcher_origin = Some((-40, 220));
+
+        let text = toml::to_string_pretty(&settings).unwrap();
+
+        assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
     }
 
     #[test]
