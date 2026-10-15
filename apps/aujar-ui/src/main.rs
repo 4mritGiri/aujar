@@ -484,6 +484,37 @@ static DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Bumped each time the launcher opens, so a stale auto-close timer leaves a newer window alone.
 static LAUNCHER_GENERATION: AtomicU64 = AtomicU64::new(0);
 static UI_SENDER: OnceLock<async_channel::Sender<UiMessage>> = OnceLock::new();
+/// True while a launcher window exists (the clipboard watcher pauses then: `wl-paste` can steal
+/// focus on GNOME/Wayland, which made the launcher close itself right after opening).
+static LAUNCHER_ALIVE: AtomicBool = AtomicBool::new(false);
+/// Until this time (ms since the epoch) focus loss is expected and must not close the launcher:
+/// set while the user drags the launcher around, and just after a background clipboard read.
+static BLUR_IGNORE_UNTIL: AtomicU64 = AtomicU64::new(0);
+
+/// Diagnostics on stderr when `AUJAR_DEBUG` is set (run `AUJAR_DEBUG=1 aujar-ui`).
+fn debug(message: &str) {
+    if std::env::var_os("AUJAR_DEBUG").is_some() {
+        eprintln!("aujar-ui[{}ms]: {message}", now_ms() % 100_000);
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn ignore_blur_for(duration: Duration) {
+    BLUR_IGNORE_UNTIL.fetch_max(now_ms() + duration.as_millis() as u64, Ordering::SeqCst);
+}
+
+/// Start moving the launcher with the compositor. The compositor grabs the pointer, so the
+/// window briefly loses focus: that must not count as a click-away.
+fn begin_window_move(window: &mut Window) {
+    ignore_blur_for(Duration::from_secs(5));
+    window.start_window_move();
+}
 
 /// How long the window stays alive after a drag leaves it, so the receiving app can read the
 /// file list. Then it closes by itself.
@@ -1897,11 +1928,12 @@ impl LauncherView {
                             .items_center()
                             .justify_between()
                             .gap_2()
+                            .w_full()
                             .text_sm()
-                            .child(div().w(px(42.)).text_color(rgb(pal.text)).child(name))
-                            .child(div().flex_1().truncate().text_color(rgb(pal.text_dim)).child(condition))
-                            .child(div().text_color(rgb(pal.text)).child(high))
-                            .child(div().text_color(rgb(pal.text_faint)).child(low))
+                            .child(div().w(px(42.)).flex_shrink_0().text_color(rgb(pal.text)).child(name))
+                            .child(div().flex_1().min_w(px(0.)).truncate().text_color(rgb(pal.text_dim)).child(condition))
+                            .child(div().flex_shrink_0().text_color(rgb(pal.text)).child(high))
+                            .child(div().flex_shrink_0().w(px(34.)).text_right().text_color(rgb(pal.text_faint)).child(low))
                             .into_any_element(),
                     );
                 }
@@ -2134,6 +2166,7 @@ impl LauncherView {
                 .flex_col()
                 .gap_3()
                 .w(px(304.))
+                .max_w_full()
                 .max_h(px(LIST_MAX_H + 48.))
                 .flex_shrink_0()
                 .overflow_hidden()
@@ -2196,7 +2229,7 @@ impl LauncherView {
             .when(self.settings.appearance.launcher_movable, |this| {
                 this.on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|_this, _event, window, _cx| window.start_window_move()),
+                    cx.listener(|_this, _event, window, _cx| begin_window_move(window)),
                 )
             })
             .children(hints.into_iter().map(|(keys, label)| {
@@ -2438,7 +2471,6 @@ impl Render for LauncherView {
         let show_footer = self.settings.appearance.show_footer;
         let preview = self.render_preview(cx);
         let menu = self.render_menu(cx);
-
         let card = rounded_px(div(), pal.radius)
             .flex()
             .flex_col()
@@ -2461,7 +2493,7 @@ impl Render for LauncherView {
                     .when(self.settings.appearance.launcher_movable, |this| {
                         this.on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|_this, _event, window, _cx| window.start_window_move()),
+                            cx.listener(|_this, _event, window, _cx| begin_window_move(window)),
                         )
                     })
                     .child(self.glyph("icons/search.svg", 22., pal.text_faint))
@@ -2478,6 +2510,7 @@ impl Render for LauncherView {
                                 .flex()
                                 .flex_col()
                                 .flex_1()
+                                .min_w(px(0.))
                                 .max_h(px(LIST_MAX_H))
                                 .overflow_y_scroll()
                                 .track_scroll(&self.scroll)
@@ -2593,6 +2626,9 @@ fn open_launcher(
     // A new window: forget any earlier drag, and invalidate its auto-close timer.
     DRAG_ACTIVE.store(false, Ordering::SeqCst);
     LAUNCHER_GENERATION.fetch_add(1, Ordering::SeqCst);
+    LAUNCHER_ALIVE.store(true, Ordering::SeqCst);
+    // Opening can shuffle focus around, e.g. a clipboard poll that was in flight.
+    ignore_blur_for(Duration::from_millis(800));
 
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -2608,6 +2644,11 @@ fn open_launcher(
 
         // Without focus, key events never reach the view.
         window.focus(&focus_handle, cx);
+
+        view.update(cx, |_view, cx| {
+            cx.on_release(|_this, _cx| LAUNCHER_ALIVE.store(false, Ordering::SeqCst))
+                .detach();
+        });
 
         // Note where the window sits, so a drag can be remembered (X11 only).
         if track_position {
@@ -2630,12 +2671,30 @@ fn open_launcher(
 
             view.update(cx, |_view, cx| {
                 cx.observe_window_activation(window, move |_this, window, _cx| {
-                    if !window.is_window_active()
-                        && opened.elapsed() > Duration::from_millis(500)
-                        && !DRAG_ACTIVE.load(Ordering::SeqCst)
-                    {
-                        window.remove_window();
+                    if window.is_window_active() {
+                        // Focus is back (drag finished, background read done): resume normal
+                        // click-away behaviour shortly after.
+                        ignore_blur_for(Duration::from_millis(300));
+                        return;
                     }
+
+                    if opened.elapsed() <= Duration::from_millis(500)
+                        || DRAG_ACTIVE.load(Ordering::SeqCst)
+                    {
+                        return;
+                    }
+
+                    debug("window lost focus");
+
+                    if now_ms() < BLUR_IGNORE_UNTIL.load(Ordering::SeqCst) {
+                        debug("  ignored (expected focus loss)");
+                        // Expected focus loss (window drag / clipboard poll): take focus back.
+                        window.activate_window();
+                        return;
+                    }
+
+                    debug("  closing: click-away");
+                    window.remove_window();
                 })
                 .detach();
             });
@@ -2734,6 +2793,14 @@ fn handle_message(
         }
         UiMessage::Launcher(command) => {
             let is_open = state.launcher.is_some();
+            debug(&format!(
+                "launcher command: {} (open: {is_open})",
+                match command {
+                    LauncherCommand::Show => "show",
+                    LauncherCommand::Hide => "hide",
+                    _ => "toggle",
+                }
+            ));
 
             let want_open = match command {
                 LauncherCommand::Show => true,
@@ -3002,9 +3069,14 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
 
             ticks = ticks.wrapping_add(1);
 
-            if !enabled {
+            // Never poll while the launcher is open: `wl-paste` can take focus for a moment on
+            // GNOME/Wayland, which closed the launcher. (open_launcher captures the clipboard
+            // itself.)
+            if !enabled || LAUNCHER_ALIVE.load(Ordering::SeqCst) {
                 continue;
             }
+
+            ignore_blur_for(Duration::from_millis(1500));
 
             match Command::new(program).args(args).output() {
                 Ok(output) if output.status.success() => {
@@ -3038,7 +3110,37 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
     });
 }
 
+/// Only one UI per user session. A second one (say, the installed service plus a dev build)
+/// would also subscribe to the daemon, so every shortcut press opened two launchers that
+/// fought over focus and closed each other.
+fn ensure_single_instance() -> Option<std::os::unix::net::UnixListener> {
+    use std::os::unix::net::{UnixListener, UnixStream};
+
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let path = dir.join("aujar-ui.lock");
+
+    match UnixListener::bind(&path) {
+        Ok(listener) => Some(listener),
+        Err(_) => {
+            // Taken: a live instance answers; a stale file left by a crash does not.
+            if UnixStream::connect(&path).is_ok() {
+                return None;
+            }
+
+            let _ = fs::remove_file(&path);
+            UnixListener::bind(&path).ok()
+        }
+    }
+}
+
 fn main() {
+    let Some(_instance) = ensure_single_instance() else {
+        eprintln!("aujar-ui: already running (stop it first: systemctl --user stop aujar-ui)");
+        return;
+    };
+
     let (message_tx, message_rx) = async_channel::unbounded::<UiMessage>();
     let (request_tx, request_rx) = async_channel::unbounded::<UiRequest>();
 

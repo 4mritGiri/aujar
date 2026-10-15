@@ -16,11 +16,33 @@
 use crate::theme::{Palette, rounded_px};
 use aujar_config::Settings;
 use gpui::{
-    AnyElement, App, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton, ResizeEdge,
-    SharedString, Stateful, Window, WindowBackgroundAppearance, div, prelude::*, px, rgb, rgba,
-    svg,
+    AnyElement, AnyView, App, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton,
+    ResizeEdge, SharedString, Stateful, Window, WindowBackgroundAppearance, div, prelude::*, px,
+    rgb, rgba, svg,
 };
 use std::process::Command;
+
+/// A small text bubble shown on hover.
+struct Tip {
+    text: SharedString,
+    bg: u32,
+    fg: u32,
+    border: u32,
+}
+
+impl Render for Tip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        rounded_px(div(), 7.)
+            .px_2()
+            .py_1()
+            .text_xs()
+            .border_1()
+            .border_color(rgba(self.border))
+            .bg(rgba(self.bg))
+            .text_color(rgb(self.fg))
+            .child(self.text.clone())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -377,6 +399,8 @@ impl SettingsView {
             .overflow_hidden()
             .children(rows.into_iter().enumerate().map(|(index, row)| {
                 div()
+                    .w_full()
+                    .min_w(px(0.))
                     .when(index > 0, |this| {
                         this.border_t_1().border_color(rgba(pal.divider))
                     })
@@ -413,6 +437,9 @@ impl SettingsView {
                     .flex()
                     .flex_col()
                     .flex_1()
+                    // Without this the text column refuses to shrink and pushes the
+                    // control out of the row; with it, long hints wrap instead.
+                    .min_w(px(0.))
                     .gap_1()
                     .child(
                         div()
@@ -444,7 +471,7 @@ impl SettingsView {
                             .child(hint.to_owned()),
                     ),
             )
-            .child(control)
+            .child(div().flex().flex_shrink_0().child(control))
             .into_any_element()
     }
 
@@ -589,17 +616,28 @@ impl SettingsView {
             .text_sm();
 
         match &self.search {
-            Some(query) => pill
-                .child(self.glyph("icons/search.svg", 15., pal.text_faint))
-                .child(if query.is_empty() {
-                    div()
-                        .text_color(rgb(pal.text_faint))
-                        .child("Search settings\u{2026}")
-                } else {
-                    div().text_color(rgb(pal.text)).child(query.clone())
-                })
-                .child(div().w(px(2.)).h(px(16.)).bg(rgb(pal.accent)))
-                .into_any_element(),
+            Some(query) => {
+                let caret = || div().flex_shrink_0().w(px(2.)).h(px(16.)).bg(rgb(pal.accent));
+
+                // Left-aligned like a real search field; the caret sits where typing happens.
+                pill.justify_start()
+                    .child(self.glyph("icons/search.svg", 15., pal.text_faint))
+                    .when(query.is_empty(), |this| {
+                        this.child(caret()).child(
+                            div()
+                                .truncate()
+                                .text_color(rgb(pal.text_faint))
+                                .child("Search settings\u{2026}"),
+                        )
+                    })
+                    .when(!query.is_empty(), |this| {
+                        this.child(
+                            div().truncate().text_color(rgb(pal.text)).child(query.clone()),
+                        )
+                        .child(caret())
+                    })
+                    .into_any_element()
+            }
             None => pill
                 .child(div().text_color(rgb(pal.text_dim)).child("Aujar"))
                 .child(div().text_color(rgb(pal.text_faint)).child("/"))
@@ -654,6 +692,7 @@ impl SettingsView {
             .children(lights)
             .child(
                 self.icon_button("tb-sidebar", "icons/sidebar.svg", true, !self.sidebar_open)
+                    .tooltip(self.tip(if self.sidebar_open { "Hide sidebar" } else { "Show sidebar" }))
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.sidebar_open = !this.sidebar_open;
                         cx.notify();
@@ -661,15 +700,18 @@ impl SettingsView {
             )
             .child(
                 self.icon_button("tb-back", "icons/chevron-left.svg", can_back, false)
+                    .tooltip(self.tip("Back"))
                     .on_click(cx.listener(|this, _event, _window, cx| this.go_back(cx))),
             )
             .child(
                 self.icon_button("tb-forward", "icons/chevron-right.svg", can_forward, false)
+                    .tooltip(self.tip("Forward"))
                     .on_click(cx.listener(|this, _event, _window, cx| this.go_forward(cx))),
             )
             .child(self.title_pill())
             .child(
                 self.icon_button("tb-search", "icons/search.svg", true, self.search.is_some())
+                    .tooltip(self.tip("Search settings"))
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         if this.search.is_some() {
                             this.close_search(cx);
@@ -680,6 +722,7 @@ impl SettingsView {
             )
             .child(
                 self.icon_button("tb-more", "icons/more.svg", true, self.menu_open)
+                    .tooltip(self.tip("More"))
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.menu_open = !this.menu_open;
                         cx.notify();
@@ -767,6 +810,74 @@ impl SettingsView {
     }
 
     // ---- Sidebar ----
+
+    /// A tooltip builder in the current palette.
+    fn tip(&self, text: &'static str) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+        let pal = self.palette;
+
+        move |_window, cx| {
+            cx.new(|_| Tip {
+                text: text.into(),
+                bg: pal.menu,
+                fg: pal.text,
+                border: pal.border,
+            })
+            .into()
+        }
+    }
+
+    /// The narrow icon-only sidebar shown while the full one is toggled off.
+    fn sidebar_rail(&self, cx: &mut Context<Self>) -> AnyElement {
+        let pal = self.palette;
+
+        let item = |page: Page, cx: &mut Context<Self>| {
+            let selected = self.page == page;
+
+            div()
+                .id(SharedString::from(format!("rail-{page:?}")))
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(36.))
+                .rounded_lg()
+                .cursor_pointer()
+                .when(selected, |this| this.bg(rgba(pal.accent_soft)))
+                .when(!selected, |this| this.hover(|style| style.bg(rgba(pal.hover))))
+                .child(self.glyph(
+                    page.icon(),
+                    18.,
+                    if selected { pal.accent_fg } else { pal.text_dim },
+                ))
+                .tooltip(self.tip(page.title()))
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.navigate(page, cx);
+                }))
+                .into_any_element()
+        };
+
+        let main: Vec<AnyElement> = Page::MAIN.into_iter().map(|page| item(page, cx)).collect();
+        let data: Vec<AnyElement> = Page::DATA.into_iter().map(|page| item(page, cx)).collect();
+
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .flex_shrink_0()
+            .w(px(56.))
+            .h_full()
+            .gap_1()
+            .pt_3()
+            .pb_3()
+            .bg(rgba(pal.sidebar))
+            .border_r_1()
+            .border_color(rgba(pal.divider))
+            .children(main)
+            .child(div().my_1().w(px(24.)).h(px(1.)).bg(rgba(pal.divider)))
+            .children(data)
+            .child(div().my_1().w(px(24.)).h(px(1.)).bg(rgba(pal.divider)))
+            .child(item(Page::General, cx))
+            .into_any_element()
+    }
 
     fn nav_item(&self, page: Page, indent: bool, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         let pal = self.palette;
@@ -1134,7 +1245,11 @@ impl Render for SettingsView {
             .flex_row()
             .flex_1()
             .min_h(px(0.))
-            .when(self.sidebar_open, |this| this.child(self.sidebar(cx)))
+            .child(if self.sidebar_open {
+                self.sidebar(cx)
+            } else {
+                self.sidebar_rail(cx)
+            })
             .child(
                 div()
                     .flex()
