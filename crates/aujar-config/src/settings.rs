@@ -203,6 +203,8 @@ pub struct Plugins {
     pub weather: bool,
     /// `stock aapl`. Only the ticker you typed is sent, to Yahoo Finance.
     pub stocks: bool,
+    /// `nepse nabil`. Only the symbol is sent, to the Fintech Nepal NEPSE API (needs a key).
+    pub nepse: bool,
     /// `nba`, `premier league`. Only the league is sent, to ESPN.
     pub sports: bool,
     /// `< name` switches to an open window. Needs a backend for your session (GNOME
@@ -224,6 +226,7 @@ impl Default for Plugins {
             dictionary: true,
             weather: true,
             stocks: true,
+            nepse: true,
             sports: true,
             windows: true,
         }

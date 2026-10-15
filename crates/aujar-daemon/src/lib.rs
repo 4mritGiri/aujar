@@ -84,6 +84,7 @@ fn launcher_options(settings: &aujar_config::Settings) -> aujar_launcher::Launch
         weather: settings.plugins.weather,
         imperial: settings.weather.imperial,
         stocks: settings.plugins.stocks,
+        nepse: settings.plugins.nepse,
         sports: settings.plugins.sports,
         windows: settings.plugins.windows,
         file_roots: settings.files.roots.clone(),

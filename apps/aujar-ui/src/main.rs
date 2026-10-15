@@ -2208,6 +2208,9 @@ impl LauncherView {
                 hints.push(("define word", "Dictionary"));
                 hints.push(("weather city", "Weather"));
                 hints.push(("stock aapl", "Stocks"));
+                if self.settings.plugins.nepse {
+                    hints.push(("nepse nabil", "NEPSE"));
+                }
                 hints.push(("nba", "Scores"));
                 hints.push(("< name", "Windows"));
             }

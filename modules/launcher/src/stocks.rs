@@ -147,7 +147,7 @@ fn fetch(symbol: &str) -> Result<Found, String> {
 }
 
 /// `1234.5` -> `1,234.50`; small prices keep more decimals.
-fn price_text(value: f64) -> String {
+pub(crate) fn price_text(value: f64) -> String {
     let decimals = if value.abs() < 1.0 { 4 } else { 2 };
     let text = format!("{:.*}", decimals, value.abs());
     let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
@@ -172,7 +172,7 @@ fn price_text(value: f64) -> String {
 }
 
 /// `1_250_000` -> `1.25M`.
-fn compact(value: f64) -> String {
+pub(crate) fn compact(value: f64) -> String {
     match value.abs() {
         v if v >= 1e9 => format!("{:.2}B", value / 1e9),
         v if v >= 1e6 => format!("{:.2}M", value / 1e6),

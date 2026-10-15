@@ -123,7 +123,7 @@ impl Page {
             }
             Self::Search => {
                 "plugins applications apps files folders windows system clipboard calculator \
-                 units currency dictionary weather stocks sports shell online"
+                 units currency dictionary weather stocks nepse nepal sports shell online"
             }
             Self::Web => "web search engine duckduckgo google brave bing startpage shortcuts keyword",
             Self::MouseBorders => "mouse keyboard share machines network clipboard files cursor",

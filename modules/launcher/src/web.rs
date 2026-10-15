@@ -208,11 +208,33 @@ pub struct Response {
 /// HTTP error statuses are returned for the caller to interpret (a 404 can mean "no such
 /// word").
 pub fn get(url: &str) -> Result<Response, String> {
+    get_with_header(url, None)
+}
+
+/// Like [`get`], with one extra request header (e.g. `Authorization: ...`). The header goes to
+/// curl through its config on stdin, never the command line, so it does not show up in `ps`.
+/// Header text with a quote or line break is refused.
+pub fn get_with_header(url: &str, header: Option<&str>) -> Result<Response, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
     if !url.starts_with("https://") {
         return Err("refusing a non-HTTPS request".to_owned());
     }
 
-    let output = Command::new("curl")
+    if header.is_some_and(|h| h.chars().any(|c| matches!(c, '"' | '\\' | '\n' | '\r'))) {
+        return Err("refusing a malformed request header".to_owned());
+    }
+
+    let mut command = Command::new("curl");
+
+    if header.is_some() {
+        command.args(["--config", "-"]).stdin(Stdio::piped());
+    } else {
+        command.stdin(Stdio::null());
+    }
+
+    let child = command
         .args([
             "-sS",
             "--location",
@@ -233,7 +255,9 @@ pub fn get(url: &str) -> Result<Response, String> {
             "--",
             url,
         ])
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 "`curl` is not installed".to_owned()
@@ -241,6 +265,16 @@ pub fn get(url: &str) -> Result<Response, String> {
                 format!("could not run curl: {error}")
             }
         })?;
+
+    let mut child = child;
+
+    if let (Some(header), Some(mut stdin)) = (header, child.stdin.take()) {
+        let _ = writeln!(stdin, "header = \"{header}\"");
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not run curl: {error}"))?;
 
     if !output.status.success() {
         return Err(match output.status.code() {

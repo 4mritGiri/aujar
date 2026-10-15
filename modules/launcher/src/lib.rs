@@ -5,6 +5,7 @@ mod dictionary;
 mod files;
 mod icons;
 mod model;
+mod nepse;
 mod ranking;
 mod recent;
 mod shell;
@@ -23,6 +24,7 @@ pub use dictionary::DictionaryProvider;
 pub use files::FilesProvider;
 pub use icons::resolve_icon;
 pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
+pub use nepse::NepseProvider;
 pub use ranking::{score, score_lowered, score_strict};
 pub use shell::ShellProvider;
 pub use sports::SportsProvider;
@@ -52,6 +54,9 @@ pub struct LauncherOptions {
     pub imperial: bool,
     /// `stock aapl`. Sends the ticker to Yahoo Finance, only when you ask.
     pub stocks: bool,
+    /// `nepse nabil`, `nepse gainers`. Sends the symbol to the Fintech Nepal NEPSE API, with
+    /// your API key, only when you ask.
+    pub nepse: bool,
     /// `nba`, `premier league`. Sends the league to ESPN, only when you ask.
     pub sports: bool,
     /// `< firefox`: switch to an open window (needs a backend for the session).
@@ -74,6 +79,7 @@ impl Default for LauncherOptions {
             weather: true,
             imperial: false,
             stocks: true,
+            nepse: true,
             sports: true,
             windows: true,
             file_roots: vec!["~".to_owned()],
@@ -160,6 +166,10 @@ impl Launcher {
 
         if options.stocks {
             launcher.register(Box::new(StocksProvider::new()));
+        }
+
+        if options.nepse {
+            launcher.register(Box::new(NepseProvider::new()));
         }
 
         if options.sports {
