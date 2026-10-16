@@ -20,7 +20,7 @@ getrandom = "0.3"
 if-addrs = "0.13"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 serde.workspace = true
-sha2 = "0.10"
+sha2 = "0.11"
 snow = "0.10"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
