@@ -645,7 +645,7 @@ dependencies = [
  "aujar-core",
  "aujar-runtime",
  "evdev",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "if-addrs",
  "postcard",
  "serde",
