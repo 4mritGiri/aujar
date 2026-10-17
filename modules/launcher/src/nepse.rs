@@ -224,6 +224,36 @@ fn find_record(value: &Value) -> Option<&Map<String, Value>> {
     }
 }
 
+/// Records for an answer that is a list, or an object keyed by name (`{"data": {"NEPSE Index":
+/// {..}, "Sensitive Index": {..}}}`): every object that carries numbers.
+fn records(value: &Value) -> Vec<&Map<String, Value>> {
+    fn walk<'a>(value: &'a Value, out: &mut Vec<&'a Map<String, Value>>) {
+        match value {
+            Value::Object(map) => {
+                if map.values().any(|inner| num(inner).is_some()) {
+                    out.push(map);
+                } else {
+                    map.values().for_each(|inner| walk(inner, out));
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|inner| walk(inner, out)),
+            _ => {}
+        }
+    }
+
+    let rows = find_rows(value);
+
+    if !rows.is_empty() {
+        return rows;
+    }
+
+    let mut out = Vec::new();
+
+    walk(value, &mut out);
+
+    out
+}
+
 // ---- Quotes --------------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -358,7 +388,7 @@ struct Page {
 }
 
 fn parse_index(value: &Value) -> Result<Page, String> {
-    let rows = find_rows(value);
+    let rows = records(value);
 
     // The answer may list several indices; prefer the main one.
     let record = rows
@@ -370,32 +400,42 @@ fn parse_index(value: &Value) -> Result<Page, String> {
         })
         .copied()
         .or_else(|| rows.first().copied())
-        .or_else(|| find_record(value))
         .ok_or_else(|| "the NEPSE service sent an unexpected answer".to_owned())?;
 
+    // `close` is the latest value; `currentValue` can lag behind it.
     let current = number_of(
         record,
-        &["currentvalue", "indexvalue", "currentindex", "closeprice", "close", "index", "value", "lastvalue"],
+        &["close", "closeprice", "currentvalue", "indexvalue", "currentindex", "index", "value", "lastvalue"],
     )
     .ok_or_else(|| "the NEPSE service sent no index value".to_owned())?;
 
-    let delta = number_of(record, &["change", "pointchange", "indexchange"]);
-    let percent = number_of(
-        record,
-        &["percentagechange", "perchange", "percentchange", "changepercent"],
-    );
+    // The sign comes from the previous close: the API's own `change` is an absolute amount.
+    let previous = number_of(record, &["previousclose", "previousdayclose"]);
 
-    let subtitle = match (delta, percent) {
-        (Some(delta), Some(percent)) => arrow_text(delta, percent),
-        (Some(delta), None) => {
-            let previous = current - delta;
-            let percent = if previous != 0.0 { delta / previous * 100.0 } else { 0.0 };
+    let moved = match previous.filter(|previous| *previous != 0.0) {
+        Some(previous) => {
+            let delta = current - previous;
 
-            arrow_text(delta, percent)
+            Some((delta, delta / previous * 100.0))
         }
-        (None, Some(percent)) => arrow_text(percent, percent),
-        (None, None) => "Nepal Stock Exchange".to_owned(),
+        None => match (
+            number_of(record, &["change", "pointchange", "indexchange"]),
+            number_of(record, &["percentagechange", "perchange", "percentchange", "changepercent"]),
+        ) {
+            (Some(delta), Some(percent)) => Some((delta, percent)),
+            (Some(delta), None) => {
+                let base = current - delta;
+
+                Some((delta, if base != 0.0 { delta / base * 100.0 } else { 0.0 }))
+            }
+            (None, Some(percent)) => Some((percent, percent)),
+            (None, None) => None,
+        },
     };
+
+    let subtitle = moved
+        .map(|(delta, percent)| arrow_text(delta, percent))
+        .unwrap_or_else(|| "Nepal Stock Exchange".to_owned());
 
     let mut lines = Vec::new();
     let mut row = |label: &str, value: Option<String>| {
@@ -404,9 +444,13 @@ fn parse_index(value: &Value) -> Result<Page, String> {
         }
     };
 
-    row("Previous close", number_of(record, &["previousclose", "previousdayclose"]).map(price_text));
-    row("High", number_of(record, &["high", "highvalue", "dayhigh"]).map(price_text));
-    row("Low", number_of(record, &["low", "lowvalue", "daylow"]).map(price_text));
+    row("Previous close", previous.map(price_text));
+    row("Day range", number_of(record, &["low", "lowvalue", "daylow"])
+        .zip(number_of(record, &["high", "highvalue", "dayhigh"]))
+        .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))));
+    row("52-week range", number_of(record, &["fiftytwoweeklow"])
+        .zip(number_of(record, &["fiftytwoweekhigh"]))
+        .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))));
     row("Turnover", number_of(record, &["turnover", "totalturnover"]).map(|v| format!("Rs {}", compact(v))));
     row("Volume", number_of(record, &["volume", "totalvolume"]).map(compact));
 
@@ -444,11 +488,32 @@ fn parse_open(value: &Value) -> Result<Page, String> {
         }
     }
 
+    // `"asOf": "2026-10-14T15:00:00"` -> `2026-10-14 15:00`.
+    fn as_of(value: &Value) -> Option<String> {
+        match value {
+            Value::Object(map) => map
+                .iter()
+                .find(|(key, inner)| norm(key) == "asof" && inner.is_string())
+                .and_then(|(_, inner)| inner.as_str().map(str::to_owned))
+                .or_else(|| map.values().find_map(as_of)),
+            _ => None,
+        }
+    }
+
     let open = open_in(value).ok_or_else(|| "the NEPSE service sent an unexpected answer".to_owned())?;
+
+    let subtitle = match as_of(value) {
+        Some(time) => {
+            let time = time.replace('T', " ");
+
+            format!("As of {}", time.get(..16).unwrap_or(&time))
+        }
+        None => "Nepal Stock Exchange".to_owned(),
+    };
 
     Ok(Page {
         title: if open { "NEPSE market is open" } else { "NEPSE market is closed" }.to_owned(),
-        subtitle: "Nepal Stock Exchange".to_owned(),
+        subtitle,
         lines: Vec::new(),
     })
 }
@@ -463,8 +528,14 @@ fn parse_movers(value: &Value, rising: bool) -> Result<Page, String> {
     let lines = quotes
         .iter()
         .map(|quote| {
+            // Direction comes from which list this is, not from the sign the API happens to use.
             let change = change_of(quote)
-                .map(|(delta, percent)| format!("  {}", arrow_text(delta, percent)))
+                .map(|(delta, percent)| {
+                    let (delta, percent) = (delta.abs(), percent.abs());
+                    let (delta, percent) = if rising { (delta, percent) } else { (-delta, -percent) };
+
+                    format!("  {}", arrow_text(delta, percent))
+                })
                 .unwrap_or_default();
 
             format!("{}|{}{change}", quote.symbol, rs(quote.price))
@@ -638,7 +709,7 @@ impl Provider for NepseProvider {
         let url = if ["index", "open", "gainers", "losers"].contains(&target) {
             HOME_PAGE.to_owned()
         } else if valid_symbol(target) {
-            format!("https://nepalstock.com.np/company/detail/{}", web::url_encode(target))
+            format!("https://merolagani.com/CompanyDetail.aspx?symbol={}", web::url_encode(target))
         } else {
             return Some(Err("not a NEPSE symbol".to_owned()));
         };
@@ -754,6 +825,66 @@ mod tests {
 
         assert_eq!(page.title, "NEPSE Index  2,015.32");
         assert!(page.subtitle.starts_with("\u{25bc} 12.50 (0.62%)"));
+    }
+
+    // Shapes copied from the live API (trimmed).
+    #[test]
+    fn reads_the_real_index_answer() {
+        let value: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":{
+                "Sensitive Index":{"id":57,"index":"Sensitive Index","close":470.17,"high":475.0075,
+                  "low":468.7695,"previousClose":474.9679,"change":4.79,"perChange":1.01,"currentValue":474.96},
+                "NEPSE Index":{"id":58,"generatedTime":"2026-10-14T15:12:09.553","index":"NEPSE Index",
+                  "close":2599.93,"high":2621.2604,"low":2592.1504,"previousClose":2621.2604,
+                  "change":21.32,"perChange":0.82,"fiftyTwoWeekHigh":2960.4,"fiftyTwoWeekLow":2400.0,
+                  "currentValue":2621.26}}}"#,
+        )
+        .unwrap();
+        let page = parse_index(&value).unwrap();
+
+        assert_eq!(page.title, "NEPSE Index  2,599.93");
+        // The API's `change` is positive although the index fell: the sign comes from the close.
+        assert!(page.subtitle.starts_with("\u{25bc} 21.33 (0.81%)"), "{}", page.subtitle);
+        assert!(page.lines.iter().any(|line| line.starts_with("52-week range|2,400.00")));
+    }
+
+    #[test]
+    fn reads_the_real_market_status_answer() {
+        let value: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":{"market_open":
+                {"isOpen":"CLOSE","asOf":"2026-10-14T15:00:00","id":80}}}"#,
+        )
+        .unwrap();
+        let page = parse_open(&value).unwrap();
+
+        assert_eq!(page.title, "NEPSE market is closed");
+        assert_eq!(page.subtitle, "As of 2026-10-14 15:00");
+    }
+
+    #[test]
+    fn reads_the_real_price_and_mover_answers() {
+        let prices: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":[
+                {"securityId":"397","securityName":"Agricultural Development Bank Limited","symbol":"ADBL",
+                 "indexId":58,"totalTradeQuantity":139162,"lastTradedPrice":328.0,
+                 "percentageChange":2.467978757,"previousClose":320.1,"closePrice":328.0}]}"#,
+        )
+        .unwrap();
+        let quotes: Vec<Quote> = find_rows(&prices).into_iter().filter_map(quote_from).collect();
+        let result = quote_result(&quotes[0]);
+
+        assert_eq!(result.title, "ADBL  Rs 328.00");
+        assert!(result.subtitle.as_deref().unwrap().starts_with("\u{25b2} 7.90 (2.47%)"));
+
+        let movers: Value = serde_json::from_str(
+            r#"{"status":"success","data":[{"symbol":"ULBSL","ltp":2626.8,"cp":2626.8,
+                "pointChange":123.8,"percentageChange":4.95,"securityName":"Upakar"}]}"#,
+        )
+        .unwrap();
+
+        assert!(parse_movers(&movers, true).unwrap().lines[0].starts_with("ULBSL|Rs 2,626.80  \u{25b2}"));
+        // Whatever sign the API uses, the losers list points down.
+        assert!(parse_movers(&movers, false).unwrap().lines[0].contains('\u{25bc}'));
     }
 
     #[test]

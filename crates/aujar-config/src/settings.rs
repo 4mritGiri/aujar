@@ -272,35 +272,41 @@ pub struct Web {
     pub shortcuts: Vec<WebShortcut>,
 }
 
-impl Default for Web {
-    fn default() -> Self {
+impl Web {
+    /// The built-in shortcuts. New settings files start with all of them; the settings page
+    /// can add back any that are missing from an older file.
+    pub fn suggested_shortcuts() -> Vec<WebShortcut> {
         let shortcut = |keyword: &str, name: &str, url: &str| WebShortcut {
             keyword: keyword.to_owned(),
             name: name.to_owned(),
             url: url.to_owned(),
         };
 
+        vec![
+            shortcut("g", "Google", "https://www.google.com/search?q="),
+            shortcut("yt", "YouTube", "https://www.youtube.com/results?search_query="),
+            shortcut("gh", "GitHub", "https://github.com/search?q="),
+            shortcut("w", "Wikipedia", "https://en.wikipedia.org/w/index.php?search="),
+            shortcut("maps", "OpenStreetMap", "https://www.openstreetmap.org/search?query="),
+            shortcut("so", "Stack Overflow", "https://stackoverflow.com/search?q="),
+            shortcut("r", "Reddit", "https://www.reddit.com/search/?q="),
+            shortcut("npm", "npm", "https://www.npmjs.com/search?q="),
+            shortcut("crates", "crates.io", "https://crates.io/search?q="),
+            shortcut("docs", "docs.rs", "https://docs.rs/releases/search?query="),
+            shortcut("pypi", "PyPI", "https://pypi.org/search/?q="),
+            shortcut("mdn", "MDN Web Docs", "https://developer.mozilla.org/en-US/search?q="),
+            shortcut("imdb", "IMDb", "https://www.imdb.com/find/?q="),
+            shortcut("a", "Amazon", "https://www.amazon.com/s?k="),
+            shortcut("tr", "Google Translate", "https://translate.google.com/?sl=auto&tl=en&text="),
+        ]
+    }
+}
+
+impl Default for Web {
+    fn default() -> Self {
         Self {
             engine: Engine::DuckDuckGo,
-            shortcuts: vec![
-                shortcut("g", "Google", "https://www.google.com/search?q="),
-                shortcut(
-                    "yt",
-                    "YouTube",
-                    "https://www.youtube.com/results?search_query=",
-                ),
-                shortcut("gh", "GitHub", "https://github.com/search?q="),
-                shortcut(
-                    "w",
-                    "Wikipedia",
-                    "https://en.wikipedia.org/w/index.php?search=",
-                ),
-                shortcut(
-                    "maps",
-                    "OpenStreetMap",
-                    "https://www.openstreetmap.org/search?query=",
-                ),
-            ],
+            shortcuts: Self::suggested_shortcuts(),
         }
     }
 }

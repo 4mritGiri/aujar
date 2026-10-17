@@ -20,7 +20,152 @@ use gpui::{
     ResizeEdge, SharedString, Stateful, Window, WindowBackgroundAppearance, div, prelude::*, px,
     rgb, rgba, svg,
 };
-use std::process::Command;
+use std::{fs, process::Command};
+
+/// What the inline text editor is changing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EditTarget {
+    /// The NEPSE API key (kept in its own private file, never in settings.toml).
+    NepseKey,
+    /// A web shortcut as `keyword | Name | URL`: `Some(index)` edits one, `None` adds one.
+    Shortcut(Option<usize>),
+}
+
+#[derive(Debug, Clone)]
+struct Editing {
+    target: EditTarget,
+    text: String,
+    error: Option<String>,
+}
+
+/// `~/.config/aujar/nepse.key`, next to settings.toml. The launcher reads the same file.
+fn nepse_key_path() -> std::path::PathBuf {
+    Settings::path().with_file_name("nepse.key")
+}
+
+fn valid_nepse_key(key: &str) -> bool {
+    (8..=200).contains(&key.len())
+        && key.matches(' ').count() <= 1
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '~' | '+' | '/' | '=' | ' ' | ':'))
+}
+
+/// Save the key with owner-only permissions; an empty key removes the file.
+fn save_nepse_key(key: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = nepse_key_path();
+
+    if key.is_empty() {
+        return match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("Could not remove the key: {error}")),
+        };
+    }
+
+    if !valid_nepse_key(key) {
+        return Err("That does not look like an API key (letters, digits and . _ - only).".to_owned());
+    }
+
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|error| format!("Could not save the key: {error}"))?;
+    }
+
+    let temp = path.with_extension("key.tmp");
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&temp)
+        .and_then(|mut file| writeln!(file, "{key}"))
+        .and_then(|()| fs::rename(&temp, &path));
+
+    written.map_err(|error| {
+        let _ = fs::remove_file(&temp);
+
+        format!("Could not save the key: {error}")
+    })
+}
+
+/// `(saved, text)` for the settings row: never the whole key.
+fn nepse_key_status() -> (bool, String) {
+    if std::env::var_os("AUJAR_NEPSE_KEY").is_some_and(|value| !value.is_empty()) {
+        return (true, "Using the key from AUJAR_NEPSE_KEY.".to_owned());
+    }
+
+    match fs::read_to_string(nepse_key_path()) {
+        Ok(text) if !text.trim().is_empty() => {
+            let key = text.trim();
+            let tail: String = key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+
+            (true, format!("Key saved (ends in {tail}). Stored only in {}", nepse_key_path().display()))
+        }
+        _ => (false, "No key yet. Paste it with Set key (Ctrl+V).".to_owned()),
+    }
+}
+
+/// Dots for all but the last four characters.
+fn mask_text(text: &str) -> String {
+    let count = text.chars().count();
+
+    if count <= 4 {
+        return text.to_owned();
+    }
+
+    let tail: String = text.chars().skip(count - 4).collect();
+
+    format!("{}{tail}", "\u{2022}".repeat(count - 4))
+}
+
+/// `keyword | Name | URL` into a shortcut, or the reason it cannot be one.
+fn parse_shortcut(
+    text: &str,
+    existing: &[aujar_config::WebShortcut],
+    editing: Option<usize>,
+) -> Result<aujar_config::WebShortcut, String> {
+    let parts: Vec<&str> = text.splitn(3, '|').map(str::trim).collect();
+
+    let [keyword, name, url] = parts.as_slice() else {
+        return Err("Write it as: keyword | Name | URL".to_owned());
+    };
+
+    if keyword.is_empty() || name.is_empty() || url.is_empty() {
+        return Err("Keyword, name and URL are all needed: keyword | Name | URL".to_owned());
+    }
+
+    if keyword.len() > 12
+        || !keyword.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("The keyword is one short word: letters, digits, - or _.".to_owned());
+    }
+
+    let keyword = keyword.to_lowercase();
+
+    if existing
+        .iter()
+        .enumerate()
+        .any(|(index, shortcut)| Some(index) != editing && shortcut.keyword.eq_ignore_ascii_case(&keyword))
+    {
+        return Err(format!("`{keyword}` is already a shortcut."));
+    }
+
+    if !(url.starts_with("https://") || url.starts_with("http://"))
+        || url.len() > 500
+        || url.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err("The URL must start with https:// and have no spaces. The search is added at its end.".to_owned());
+    }
+
+    Ok(aujar_config::WebShortcut {
+        keyword,
+        name: (*name).to_owned(),
+        url: (*url).to_owned(),
+    })
+}
 
 /// A small text bubble shown on hover.
 struct Tip {
@@ -186,6 +331,10 @@ pub struct SettingsView {
     search: Option<String>,
     /// The blur setting last applied to the window.
     applied_blur: bool,
+    /// The inline text editor, while one is open.
+    editing: Option<Editing>,
+    /// Whether a NEPSE key is available, and the line describing it.
+    nepse_key: (bool, String),
 }
 
 impl SettingsView {
@@ -208,6 +357,8 @@ impl SettingsView {
             forward: Vec::new(),
             menu_open: false,
             search: None,
+            editing: None,
+            nepse_key: nepse_key_status(),
         }
     }
 
@@ -229,6 +380,7 @@ impl SettingsView {
 
     fn show_page(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
+        self.editing = None;
 
         if page == Page::MouseBorders {
             self.refresh_mouse_borders(cx);
@@ -322,6 +474,12 @@ impl SettingsView {
             return;
         }
 
+        if self.editing.is_some() {
+            self.edit_key_down(event, cx);
+
+            return;
+        }
+
         if self.search.is_some() {
             match key {
                 "escape" => self.search = None,
@@ -363,6 +521,189 @@ impl SettingsView {
             "escape" => window.remove_window(),
             _ => {}
         }
+    }
+
+    // ---- Inline text editor ----
+
+    fn start_edit(&mut self, target: EditTarget, text: String, cx: &mut Context<Self>) {
+        self.editing = Some(Editing { target, text, error: None });
+        cx.notify();
+    }
+
+    fn edit_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.as_str();
+        let modifiers = &event.keystroke.modifiers;
+
+        match key {
+            "escape" => {
+                self.editing = None;
+                cx.notify();
+
+                return;
+            }
+            "enter" => {
+                self.commit_edit(cx);
+
+                return;
+            }
+            _ => {}
+        }
+
+        let pasted = (key == "v" && modifiers.control)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+
+        let Some(edit) = self.editing.as_mut() else {
+            return;
+        };
+
+        edit.error = None;
+
+        if key == "backspace" {
+            edit.text.pop();
+        } else if key == "u" && modifiers.control {
+            edit.text.clear();
+        } else if let Some(pasted) = pasted {
+            let clean: String = pasted.chars().filter(|c| !c.is_control()).collect();
+
+            edit.text.push_str(clean.trim());
+        } else if !modifiers.control && !modifiers.alt && !modifiers.platform {
+            if let Some(text) = event
+                .keystroke
+                .key_char
+                .as_ref()
+                .filter(|text| !text.chars().any(char::is_control))
+            {
+                edit.text.push_str(text);
+            }
+        }
+
+        // Generous, but bounded.
+        let limit = if edit.target == EditTarget::NepseKey { 200 } else { 600 };
+
+        while edit.text.chars().count() > limit {
+            edit.text.pop();
+        }
+
+        cx.notify();
+    }
+
+    fn commit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(edit) = self.editing.clone() else {
+            return;
+        };
+
+        match edit.target {
+            EditTarget::NepseKey => match save_nepse_key(edit.text.trim()) {
+                Ok(()) => {
+                    self.editing = None;
+                    self.nepse_key = nepse_key_status();
+                    self.status = Some(if edit.text.trim().is_empty() {
+                        "NEPSE key removed".to_owned()
+                    } else {
+                        "NEPSE key saved".to_owned()
+                    });
+                }
+                Err(error) => {
+                    if let Some(editing) = self.editing.as_mut() {
+                        editing.error = Some(error);
+                    }
+                }
+            },
+            EditTarget::Shortcut(index) => {
+                match parse_shortcut(&edit.text, &self.settings.web.shortcuts, index) {
+                    Ok(shortcut) => {
+                        self.editing = None;
+                        self.mutate(cx, move |settings| match index {
+                            Some(index) if index < settings.web.shortcuts.len() => {
+                                settings.web.shortcuts[index] = shortcut;
+                            }
+                            _ => settings.web.shortcuts.push(shortcut),
+                        });
+                    }
+                    Err(error) => {
+                        if let Some(editing) = self.editing.as_mut() {
+                            editing.error = Some(error);
+                        }
+                    }
+                }
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// The editor box with Save and Cancel, for the row that is being edited.
+    fn editor_row(&self, hint: &str, mask: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let edit = self.editing.as_ref()?;
+        let pal = self.palette;
+
+        let shown = if mask { mask_text(&edit.text) } else { edit.text.clone() };
+
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_4()
+                .py_3()
+                .bg(rgba(pal.hover))
+                .child(div().text_xs().text_color(rgb(pal.text_dim)).child(hint.to_owned()))
+                .child(
+                    rounded_px(div(), 8.)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_end()
+                        .gap_px()
+                        .px_3()
+                        .h(px(34.))
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(rgb(pal.accent))
+                        .bg(rgba(pal.subtle))
+                        .text_sm()
+                        .text_color(rgb(pal.text))
+                        .child(div().flex_shrink_0().whitespace_nowrap().child(shown))
+                        .child(div().flex_shrink_0().w(px(2.)).h(px(16.)).bg(rgb(pal.accent))),
+                )
+                .children(edit.error.clone().map(|error| {
+                    div().text_xs().text_color(rgb(pal.danger)).child(error)
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(pal.text_faint))
+                                .child("Enter saves \u{b7} Esc cancels \u{b7} Ctrl+V pastes"),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap_2()
+                                .child(
+                                    self.pill(SharedString::from("edit-cancel"), "Cancel", false)
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.editing = None;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    self.pill(SharedString::from("edit-save"), "Save", true)
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.commit_edit(cx);
+                                        })),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     // ---- Building blocks ----
@@ -1292,5 +1633,85 @@ impl Render for SettingsView {
             .child(frame)
             .children(handles)
             .when_some(menu, |this, menu| this.child(menu))
+    }
+}
+
+#[cfg(test)]
+mod editor_tests {
+    use super::*;
+    use aujar_config::{Web, WebShortcut};
+
+    fn existing() -> Vec<WebShortcut> {
+        Web::suggested_shortcuts()
+    }
+
+    #[test]
+    fn parses_a_shortcut_line() {
+        let shortcut = parse_shortcut(
+            "SO | Stack Overflow | https://stackoverflow.com/search?q=",
+            &[],
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(shortcut.keyword, "so");
+        assert_eq!(shortcut.name, "Stack Overflow");
+        assert_eq!(shortcut.url, "https://stackoverflow.com/search?q=");
+    }
+
+    #[test]
+    fn a_url_may_contain_pipes_and_equals() {
+        let shortcut = parse_shortcut("tr | Translate | https://x.test/?a=b|c&q=", &[], None).unwrap();
+
+        assert_eq!(shortcut.url, "https://x.test/?a=b|c&q=");
+    }
+
+    #[test]
+    fn rejects_bad_shortcuts() {
+        assert!(parse_shortcut("only one part", &[], None).is_err());
+        assert!(parse_shortcut("a | b", &[], None).is_err());
+        assert!(parse_shortcut(" | Name | https://x.test/?q=", &[], None).is_err());
+        assert!(parse_shortcut("two words | N | https://x.test/?q=", &[], None).is_err());
+        assert!(parse_shortcut("waytoolongkeyword | N | https://x.test/?q=", &[], None).is_err());
+        assert!(parse_shortcut("k | N | ftp://x.test/", &[], None).is_err());
+        assert!(parse_shortcut("k | N | javascript:alert(1)", &[], None).is_err());
+        assert!(parse_shortcut("k | N | https://x.test/a b", &[], None).is_err());
+    }
+
+    #[test]
+    fn duplicate_keywords_are_refused_except_when_editing_that_one() {
+        let list = existing();
+        let github = list.iter().position(|shortcut| shortcut.keyword == "gh").unwrap();
+
+        assert!(parse_shortcut("gh | Other | https://x.test/?q=", &list, None).is_err());
+        assert!(parse_shortcut("GH | Other | https://x.test/?q=", &list, None).is_err());
+        assert!(parse_shortcut("gh | GitHub 2 | https://x.test/?q=", &list, Some(github)).is_ok());
+    }
+
+    #[test]
+    fn the_built_in_shortcuts_are_all_valid_and_unique() {
+        let list = Web::suggested_shortcuts();
+
+        assert!(list.len() >= 10);
+
+        for (index, shortcut) in list.iter().enumerate() {
+            let line = format!("{} | {} | {}", shortcut.keyword, shortcut.name, shortcut.url);
+            let others: Vec<_> = list
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != index)
+                .map(|(_, shortcut)| shortcut.clone())
+                .collect();
+
+            assert!(parse_shortcut(&line, &others, None).is_ok(), "{line}");
+        }
+    }
+
+    #[test]
+    fn masks_all_but_the_last_four() {
+        assert_eq!(mask_text("abcdefgh"), "\u{2022}\u{2022}\u{2022}\u{2022}efgh");
+        assert_eq!(mask_text("abc"), "abc");
+        assert!(valid_nepse_key("5aYZuryN.hXlFFefyZytA9JEjRhg1MgjGrUg5uShx"));
+        assert!(!valid_nepse_key("bad key\nvalue"));
     }
 }
