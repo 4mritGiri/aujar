@@ -24,7 +24,8 @@ use std::{fs, path::PathBuf, time::Duration};
 const API: &str = "https://warehouse.fintechnepal.com.np/api/nepse";
 const TTL: Duration = Duration::from_secs(60);
 const KEY_ENV: &str = "AUJAR_NEPSE_KEY";
-const HOME_PAGE: &str = "https://merolagani.com/LatestMarket.aspx";
+/// The official NEPSE site. A company page is `{SITE}/company/detail/<securityId>`.
+const SITE: &str = "https://nepalstock.com.np";
 
 // ---- API key -------------------------------------------------------------------------------
 
@@ -111,6 +112,10 @@ impl PageKind {
 enum Intent {
     Symbol(String),
     Page(PageKind),
+}
+
+fn valid_security_id(id: &str) -> bool {
+    (1..=10).contains(&id.len()) && id.chars().all(|c| c.is_ascii_digit())
 }
 
 fn valid_symbol(symbol: &str) -> bool {
@@ -259,6 +264,8 @@ fn records(value: &Value) -> Vec<&Map<String, Value>> {
 #[derive(Debug, Clone, PartialEq)]
 struct Quote {
     symbol: String,
+    /// NEPSE's own id for the company (`securityId`), used in its company page URL.
+    security_id: Option<String>,
     name: Option<String>,
     price: f64,
     previous_close: Option<f64>,
@@ -281,8 +288,16 @@ fn quote_from(row: &Map<String, Value>) -> Option<Quote> {
         &["lasttradedprice", "ltp", "closeprice", "lastprice", "price", "close", "closingprice"],
     )?;
 
+    // `"397"` in one answer, `8098` in another.
+    let security_id = field(row, &["securityid", "companyid"]).and_then(|value| match value {
+        Value::String(id) => Some(id.trim().to_owned()),
+        Value::Number(id) => id.as_u64().map(|id| id.to_string()),
+        _ => None,
+    });
+
     Some(Quote {
         symbol,
+        security_id: security_id.filter(|id| valid_security_id(id)),
         name: field(row, &["securityname", "companyname", "name", "fullname", "companyfullname"])
             .and_then(text),
         price,
@@ -368,8 +383,14 @@ fn quote_result(quote: &Quote) -> SearchResult {
     row("Turnover", quote.turnover.map(|value| format!("Rs {}", compact(value))));
     row("Exchange", Some("NEPSE".to_owned()));
 
+    // `nepse:NABIL:397` when the company id is known, so Enter can open its official page.
+    let id = match &quote.security_id {
+        Some(security_id) => format!("nepse:{}:{security_id}", quote.symbol),
+        None => format!("nepse:{}", quote.symbol),
+    };
+
     SearchResult::new(
-        format!("nepse:{}", quote.symbol),
+        id,
         format!("{}  {}", quote.symbol, rs(quote.price)),
         ResultKind::Stock,
         1850,
@@ -705,17 +726,26 @@ impl Provider for NepseProvider {
 
     fn resolve(&self, id: &str) -> Option<Result<LaunchSpec, String>> {
         let target = id.strip_prefix("nepse:")?;
+        let (symbol, security_id) = match target.split_once(':') {
+            Some((symbol, security_id)) => (symbol, Some(security_id)),
+            None => (target, None),
+        };
 
-        let url = if ["index", "open", "gainers", "losers"].contains(&target) {
-            HOME_PAGE.to_owned()
-        } else if valid_symbol(target) {
-            format!("https://merolagani.com/CompanyDetail.aspx?symbol={}", web::url_encode(target))
-        } else {
-            return Some(Err("not a NEPSE symbol".to_owned()));
+        // Always the official NEPSE site: the company's own page when its id is known, else
+        // the home page (index, market status, movers and unknown ids).
+        let url = match security_id {
+            Some(security_id) if valid_security_id(security_id) && valid_symbol(symbol) => {
+                format!("{SITE}/company/detail/{security_id}")
+            }
+            Some(_) => return Some(Err("not a NEPSE company".to_owned())),
+            None if ["index", "open", "gainers", "losers"].contains(&symbol) || valid_symbol(symbol) => {
+                format!("{SITE}/")
+            }
+            None => return Some(Err("not a NEPSE symbol".to_owned())),
         };
 
         Some(Ok(LaunchSpec {
-            title: target.to_owned(),
+            title: symbol.to_owned(),
             program: "xdg-open".to_owned(),
             args: vec![url],
         }))
@@ -911,19 +941,39 @@ mod tests {
     }
 
     #[test]
-    fn serves_cache_and_resolves_safely() {
+    fn opens_the_official_company_page() {
         let provider = NepseProvider::new();
-        let value: Value = serde_json::from_str(TABLE).unwrap();
-        let quotes: Vec<Quote> = find_rows(&value).into_iter().filter_map(quote_from).collect();
+        let prices: Value = serde_json::from_str(
+            r#"{"data":[{"securityId":"397","symbol":"ADBL","lastTradedPrice":328.0},
+                        {"securityId":9150,"symbol":"AHL","lastTradedPrice":10.0},
+                        {"securityId":"bad id","symbol":"ZZZ","lastTradedPrice":1.0}]}"#,
+        )
+        .unwrap();
+        let quotes: Vec<Quote> = find_rows(&prices).into_iter().filter_map(quote_from).collect();
 
-        provider.table.insert("price-volume", quotes);
+        assert_eq!(quote_result(&quotes[0]).id, "nepse:ADBL:397");
+        assert_eq!(quote_result(&quotes[1]).id, "nepse:AHL:9150");
+        // An unusable id is dropped rather than put in a URL.
+        assert_eq!(quote_result(&quotes[2]).id, "nepse:ZZZ");
 
-        // `search` also needs a key; the resolve path does not.
-        let spec = provider.resolve("nepse:NABIL").unwrap().unwrap();
+        let spec = provider.resolve("nepse:ADBL:397").unwrap().unwrap();
 
         assert_eq!(spec.program, "xdg-open");
-        assert_eq!(spec.args, vec!["https://merolagani.com/CompanyDetail.aspx?symbol=NABIL"]);
-        assert_eq!(provider.resolve("nepse:gainers").unwrap().unwrap().args, vec![HOME_PAGE]);
+        assert_eq!(spec.args, vec!["https://nepalstock.com.np/company/detail/397"]);
+    }
+
+    #[test]
+    fn resolves_safely_and_never_to_other_sites() {
+        let provider = NepseProvider::new();
+
+        for id in ["nepse:NABIL", "nepse:index", "nepse:gainers", "nepse:open"] {
+            let spec = provider.resolve(id).unwrap().unwrap();
+
+            assert_eq!(spec.args, vec!["https://nepalstock.com.np/"], "{id}");
+        }
+
+        assert!(provider.resolve("nepse:NABIL:../../evil").unwrap().is_err());
+        assert!(provider.resolve("nepse:NABIL:12a").unwrap().is_err());
         assert!(provider.resolve("nepse:../x").unwrap().is_err());
         assert!(provider.resolve("stock:AAPL").is_none());
     }
