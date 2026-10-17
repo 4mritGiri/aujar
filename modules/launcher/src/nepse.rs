@@ -1,5 +1,7 @@
-//! NEPSE (Nepal Stock Exchange) lookups: `nepse nabil`, `nabil nepse`, `nepse` (the index),
-//! `nepse gainers`, `nepse losers`, `nepse open`.
+//! NEPSE (Nepal Stock Exchange) lookups: `nepse nabil`, `nabil nepse`, `nepse nic asia` (any
+//! part of a symbol or company name), `nepse` (the index), `nepse gainers`, `nepse losers`,
+//! `nepse open`, `nepse sectors`, `nepse holidays`, `nepse depth nabil`, `nepse news nabil`.
+//! An exact symbol also shows company details (sector, EPS, P/E, ...).
 //!
 //! Data comes from the Fintech Nepal warehouse API (`warehouse.fintechnepal.com.np`), which
 //! needs an API key: set `AUJAR_NEPSE_KEY`, or put the key alone in
@@ -19,10 +21,17 @@ use crate::{
     web::{self, Lookup, WebCache},
 };
 use serde_json::{Map, Value};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 const API: &str = "https://warehouse.fintechnepal.com.np/api/nepse";
 const TTL: Duration = Duration::from_secs(60);
+/// Company details change slowly.
+const DETAILS_TTL: Duration = Duration::from_secs(900);
+const MAX_MATCHES: usize = 8;
 const KEY_ENV: &str = "AUJAR_NEPSE_KEY";
 /// The official NEPSE site. A company page is `{SITE}/company/detail/<securityId>`.
 const SITE: &str = "https://nepalstock.com.np";
@@ -76,6 +85,39 @@ enum PageKind {
     Open,
     Gainers,
     Losers,
+    Sectors,
+    Holidays,
+}
+
+/// Pages about one company.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ExtraKind {
+    Depth,
+    News,
+}
+
+impl ExtraKind {
+    fn word(self) -> &'static str {
+        match self {
+            Self::Depth => "depth",
+            Self::News => "news",
+        }
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::Depth => "/market-depth/",
+            Self::News => "/company/news/symbol/",
+        }
+    }
+
+    fn from_word(word: &str) -> Option<Self> {
+        match word {
+            "depth" | "orderbook" | "book" => Some(Self::Depth),
+            "news" => Some(Self::News),
+            _ => None,
+        }
+    }
 }
 
 impl PageKind {
@@ -85,6 +127,8 @@ impl PageKind {
             Self::Open => "open",
             Self::Gainers => "gainers",
             Self::Losers => "losers",
+            Self::Sectors => "sectors",
+            Self::Holidays => "holidays",
         }
     }
 
@@ -94,6 +138,8 @@ impl PageKind {
             Self::Open => "/is-open/",
             Self::Gainers => "/top-gainers/",
             Self::Losers => "/top-losers/",
+            Self::Sectors => "/subindices/",
+            Self::Holidays => "/holidays/",
         }
     }
 
@@ -103,6 +149,8 @@ impl PageKind {
             "open" | "status" | "market" => Some(Self::Open),
             "gainers" | "gainer" | "gain" => Some(Self::Gainers),
             "losers" | "loser" | "loss" => Some(Self::Losers),
+            "sectors" | "sector" | "subindices" => Some(Self::Sectors),
+            "holidays" | "holiday" => Some(Self::Holidays),
             _ => None,
         }
     }
@@ -110,8 +158,13 @@ impl PageKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Intent {
-    Symbol(String),
+    /// Part of a symbol or company name, lower-case.
+    Find(String),
     Page(PageKind),
+    /// `nepse depth nabil`, `nepse news nabil`.
+    Extra(ExtraKind, String),
+    /// `nepse depth` without a symbol: show an example.
+    Usage(&'static str),
 }
 
 fn valid_security_id(id: &str) -> bool {
@@ -124,27 +177,71 @@ fn valid_symbol(symbol: &str) -> bool {
         && symbol.chars().any(|c| c.is_ascii_alphabetic())
 }
 
+fn find_intent(words: &[&str]) -> Option<Intent> {
+    let text = words.join(" ");
+
+    ((2..=40).contains(&text.len())
+        && text.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '&' | '-' | '.'))
+        && text.chars().any(|c| c.is_ascii_alphabetic()))
+    .then_some(Intent::Find(text))
+}
+
 fn parse_query(query: &str) -> Option<Intent> {
     let lower = query.trim().to_lowercase();
     let words: Vec<&str> = lower.split_whitespace().collect();
 
     match words.as_slice() {
         ["nepse"] => Some(Intent::Page(PageKind::Index)),
-        ["nepse", word] => match PageKind::from_word(word) {
-            Some(page) => Some(Intent::Page(page)),
-            None => {
-                let symbol = word.to_uppercase();
-
-                valid_symbol(&symbol).then_some(Intent::Symbol(symbol))
-            }
-        },
-        [word, "nepse"] => {
-            let symbol = word.to_uppercase();
-
-            valid_symbol(&symbol).then_some(Intent::Symbol(symbol))
+        ["nepse", word] if PageKind::from_word(word).is_some() => {
+            PageKind::from_word(word).map(Intent::Page)
         }
+        ["nepse", "depth"] => Some(Intent::Usage("nepse depth nabil")),
+        ["nepse", "news"] => Some(Intent::Usage("nepse news nabil")),
+        ["nepse", kind, symbol] if ExtraKind::from_word(kind).is_some() => {
+            let kind = ExtraKind::from_word(kind)?;
+            let symbol = symbol.to_uppercase();
+
+            valid_symbol(&symbol).then_some(Intent::Extra(kind, symbol))
+        }
+        ["nepse", rest @ ..] => find_intent(rest),
+        [rest @ .., "nepse"] if !rest.is_empty() => find_intent(rest),
         _ => None,
     }
+}
+
+/// Companies whose symbol or name matches `text`, best first: exact symbol, symbol prefix, all
+/// words starting a word of the name, all words inside the name, then symbol contains.
+fn find_matches<'a>(quotes: &'a [Quote], text: &str) -> Vec<(&'a Quote, u32)> {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let joined = text.replace(' ', "");
+    let mut hits = Vec::new();
+
+    for quote in quotes {
+        let symbol = quote.symbol.to_lowercase();
+        let name = quote.name.as_deref().unwrap_or("").to_lowercase();
+
+        let score = if symbol == joined {
+            1850
+        } else if symbol.starts_with(&joined) {
+            1800
+        } else if tokens.iter().all(|token| {
+            name.split(|c: char| !c.is_alphanumeric()).any(|word| word.starts_with(token))
+        }) {
+            1700
+        } else if tokens.iter().all(|token| name.contains(token)) {
+            1600
+        } else if joined.len() >= 3 && symbol.contains(&joined) {
+            1500
+        } else {
+            continue;
+        };
+
+        hits.push((quote, score));
+    }
+
+    hits.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.symbol.cmp(&b.0.symbol)));
+    hits.truncate(MAX_MATCHES);
+    hits
 }
 
 // ---- Tolerant JSON reading -----------------------------------------------------------------
@@ -211,21 +308,6 @@ fn find_rows(value: &Value) -> Vec<&Map<String, Value>> {
             .find(|rows| !rows.is_empty())
             .unwrap_or_default(),
         _ => Vec::new(),
-    }
-}
-
-/// A single record: the object itself when it carries numbers, else the first nested one.
-fn find_record(value: &Value) -> Option<&Map<String, Value>> {
-    match value {
-        Value::Array(items) => items.iter().find_map(find_record),
-        Value::Object(map) => {
-            if map.values().any(|inner| num(inner).is_some()) {
-                Some(map)
-            } else {
-                map.values().find_map(find_record)
-            }
-        }
-        _ => None,
     }
 }
 
@@ -357,7 +439,7 @@ fn rs(value: f64) -> String {
     format!("Rs {}", price_text(value))
 }
 
-fn quote_result(quote: &Quote) -> SearchResult {
+fn quote_result(quote: &Quote, score: u32, extra: &[String]) -> SearchResult {
     let mut subtitle = change_of(quote)
         .map(|(delta, percent)| arrow_text(delta, percent))
         .unwrap_or_else(|| "No change data".to_owned());
@@ -368,6 +450,7 @@ fn quote_result(quote: &Quote) -> SearchResult {
     }
 
     let mut lines = Vec::new();
+
     let mut row = |label: &str, value: Option<String>| {
         if let Some(value) = value {
             lines.push(format!("{label}|{value}"));
@@ -381,7 +464,9 @@ fn quote_result(quote: &Quote) -> SearchResult {
     }));
     row("Volume", quote.volume.map(compact));
     row("Turnover", quote.turnover.map(|value| format!("Rs {}", compact(value))));
-    row("Exchange", Some("NEPSE".to_owned()));
+
+    lines.extend(extra.iter().cloned());
+    lines.push("Exchange|NEPSE".to_owned());
 
     // `nepse:NABIL:397` when the company id is known, so Enter can open its official page.
     let id = match &quote.security_id {
@@ -393,7 +478,7 @@ fn quote_result(quote: &Quote) -> SearchResult {
         id,
         format!("{}  {}", quote.symbol, rs(quote.price)),
         ResultKind::Stock,
-        1850,
+        score,
     )
     .with_subtitle(subtitle)
     .with_detail(lines.join("\n"))
@@ -572,18 +657,20 @@ fn parse_movers(value: &Value, rising: bool) -> Result<Page, String> {
     })
 }
 
-fn parse_page(kind: PageKind, value: &Value) -> Result<Page, String> {
+fn parse_page(kind: PageKind, value: &Value, today: &str) -> Result<Page, String> {
     match kind {
         PageKind::Index => parse_index(value),
         PageKind::Open => parse_open(value),
         PageKind::Gainers => parse_movers(value, true),
         PageKind::Losers => parse_movers(value, false),
+        PageKind::Sectors => parse_sectors(value),
+        PageKind::Holidays => parse_holidays(value, today),
     }
 }
 
-fn page_result(kind: PageKind, page: &Page) -> SearchResult {
+fn page_result(id: String, page: &Page) -> SearchResult {
     let mut result = SearchResult::new(
-        format!("nepse:{}", kind.key()),
+        id,
         page.title.clone(),
         ResultKind::Stock,
         1850,
@@ -595,6 +682,386 @@ fn page_result(kind: PageKind, page: &Page) -> SearchResult {
     }
 
     result
+}
+
+// ---- Sectors, holidays, depth, news ---------------------------------------------------------
+
+fn first_text(row: &Map<String, Value>, aliases: &[&str]) -> Option<String> {
+    field(row, aliases).and_then(text)
+}
+
+/// A date as `YYYY-MM-DD` when the text starts with one (`2026-10-14T15:00:00` too).
+fn date_part(value: &str) -> Option<String> {
+    let head = value.get(..10)?;
+    let bytes = head.as_bytes();
+    let shaped = bytes.iter().enumerate().all(|(index, byte)| match index {
+        4 | 7 => *byte == b'-',
+        _ => byte.is_ascii_digit(),
+    });
+
+    shaped.then(|| head.to_owned())
+}
+
+/// `YYYY-MM-DD` for a count of days since 1970-01-01 (proleptic Gregorian).
+fn civil_date(days: i64) -> String {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_part = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_part + 2) / 5 + 1;
+    let month = if month_part < 10 { month_part + 3 } else { month_part - 9 };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// Today's date in Nepal (UTC+5:45).
+fn today_npt() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
+        + (5 * 3600 + 45 * 60);
+
+    civil_date(seconds.div_euclid(86_400))
+}
+
+fn parse_sectors(value: &Value) -> Result<Page, String> {
+    let mut sectors: Vec<(String, f64, Option<f64>)> = Vec::new();
+
+    for record in records(value) {
+        let Some(name) = first_text(record, &["index", "indexname", "name", "sectorname", "sector"]) else {
+            continue;
+        };
+        let Some(current) = number_of(
+            record,
+            &["close", "closeprice", "currentvalue", "indexvalue", "currentindex", "value", "lastvalue"],
+        ) else {
+            continue;
+        };
+
+        let percent = match number_of(record, &["previousclose", "previousdayclose"]).filter(|p| *p != 0.0) {
+            Some(previous) => Some((current - previous) / previous * 100.0),
+            None => number_of(record, &["percentagechange", "perchange", "percentchange", "changepercent"]),
+        };
+
+        sectors.push((name, current, percent));
+    }
+
+    if sectors.is_empty() {
+        return Err("the NEPSE service sent no sector indices".to_owned());
+    }
+
+    // Best performers first.
+    sectors.sort_by(|a, b| {
+        b.2.unwrap_or(f64::NEG_INFINITY)
+            .total_cmp(&a.2.unwrap_or(f64::NEG_INFINITY))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    let total = sectors.len();
+    let lines = sectors
+        .iter()
+        .take(16)
+        .map(|(name, current, percent)| match percent {
+            Some(percent) => format!("{name}|{}  {}", price_text(*current), arrow_text(*percent, *percent)),
+            None => format!("{name}|{}", price_text(*current)),
+        })
+        .collect();
+
+    Ok(Page {
+        title: "NEPSE sectors".to_owned(),
+        subtitle: format!("{total} sub-indices, best first"),
+        lines,
+    })
+}
+
+fn parse_holidays(value: &Value, today: &str) -> Result<Page, String> {
+    let mut holidays: Vec<(String, String)> = Vec::new();
+
+    for row in find_rows(value) {
+        let Some(date) = first_text(row, &["holidaydate", "date", "day", "eventdate", "holidayday", "fromdate"]) else {
+            continue;
+        };
+        let name = first_text(
+            row,
+            &["description", "holidaydescription", "holiday", "name", "title", "occasion", "remarks", "reason"],
+        )
+        .unwrap_or_else(|| "Holiday".to_owned());
+
+        holidays.push((date_part(&date).unwrap_or(date), name));
+    }
+
+    if holidays.is_empty() {
+        return Err("the NEPSE service sent no holidays".to_owned());
+    }
+
+    holidays.sort();
+
+    let upcoming: Vec<_> = holidays.iter().filter(|(date, _)| date.as_str() >= today).collect();
+
+    if upcoming.is_empty() {
+        return Ok(Page {
+            title: "No more NEPSE holidays listed".to_owned(),
+            subtitle: format!("{} holidays this year, all before today", holidays.len()),
+            lines: Vec::new(),
+        });
+    }
+
+    let (next_date, next_name) = upcoming[0];
+
+    Ok(Page {
+        title: "NEPSE holidays".to_owned(),
+        subtitle: format!("Next: {next_date} \u{b7} {next_name}"),
+        lines: upcoming
+            .iter()
+            .take(10)
+            .map(|(date, name)| format!("{date}|{name}"))
+            .collect(),
+    })
+}
+
+/// A list of records under a key that names one side of the book.
+fn depth_side<'a>(value: &'a Value, matches: &dyn Fn(&str) -> bool, depth: usize) -> Option<&'a Vec<Value>> {
+    if depth > 4 {
+        return None;
+    }
+
+    match value {
+        Value::Object(map) => map
+            .iter()
+            .find_map(|(key, inner)| match inner {
+                Value::Array(items) if matches(&norm(key)) && !items.is_empty() => Some(items),
+                _ => None,
+            })
+            .or_else(|| {
+                map.values()
+                    .filter(|inner| inner.is_object() || inner.is_array())
+                    .find_map(|inner| depth_side(inner, matches, depth + 1))
+            }),
+        Value::Array(items) => items.first().and_then(|first| depth_side(first, matches, depth + 1)),
+        _ => None,
+    }
+}
+
+/// `(price, quantity, orders)` for each order-book row.
+fn depth_rows(items: &[Value]) -> Vec<(f64, f64, Option<f64>)> {
+    items
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(|row| {
+            let price = number_of(row, &["orderbookorderprice", "orderprice", "price", "rate", "bidprice", "askprice"])?;
+            let quantity = number_of(row, &["quantity", "qty", "orderquantity", "totalquantity", "volume"])?;
+
+            Some((price, quantity, number_of(row, &["ordercount", "orders", "noofordersnumber", "numberoforders"])))
+        })
+        .collect()
+}
+
+fn parse_depth(value: &Value, symbol: &str) -> Result<Page, String> {
+    let mut buys = depth_side(value, &|key: &str| key.contains("buy") || key.contains("bid"), 0)
+        .map(|items| depth_rows(items))
+        .unwrap_or_default();
+    let mut sells = depth_side(value, &|key: &str| key.contains("sell") || key.starts_with("ask"), 0)
+        .map(|items| depth_rows(items))
+        .unwrap_or_default();
+
+    if buys.is_empty() && sells.is_empty() {
+        return Ok(Page {
+            title: format!("No market depth for {symbol}"),
+            subtitle: "The order book is empty (the market may be closed)".to_owned(),
+            lines: Vec::new(),
+        });
+    }
+
+    buys.sort_by(|a, b| b.0.total_cmp(&a.0));
+    sells.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    let side = |label: &str, rows: &[(f64, f64, Option<f64>)]| -> Vec<String> {
+        rows.iter()
+            .take(5)
+            .enumerate()
+            .map(|(index, (price, quantity, orders))| {
+                let orders = orders.map(|n| format!(" ({} orders)", n as u64)).unwrap_or_default();
+
+                format!("{label} {}|{} \u{d7} {}{orders}", index + 1, rs(*price), compact(*quantity))
+            })
+            .collect()
+    };
+
+    let mut lines = side("Buy", &buys);
+    lines.extend(side("Sell", &sells));
+
+    let mut flat = Vec::new();
+
+    flatten(value, &mut flat, 0);
+
+    for (label, alias) in [("Total buy qty", "totalbuyquantity"), ("Total sell qty", "totalsellquantity")] {
+        if let Some(total) = flat.iter().find(|(key, _)| key == alias).and_then(|(_, found)| num(found)) {
+            lines.push(format!("{label}|{}", compact(total)));
+        }
+    }
+
+    let bid = buys.first().map(|row| format!("Best bid {}", rs(row.0)));
+    let ask = sells.first().map(|row| format!("best ask {}", rs(row.0)));
+    let subtitle = [bid, ask].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+
+    Ok(Page {
+        title: format!("{symbol} market depth"),
+        subtitle,
+        lines,
+    })
+}
+
+fn parse_news(value: &Value, symbol: &str) -> Result<Page, String> {
+    let items: Vec<(String, String)> = find_rows(value)
+        .into_iter()
+        .filter_map(|row| {
+            let headline = first_text(
+                row,
+                &["newsheadline", "headline", "title", "newstitle", "subject", "newsdescription", "description"],
+            )?;
+            let date = first_text(
+                row,
+                &["addeddate", "publisheddate", "newsdate", "date", "createdat", "modifieddate", "createddate"],
+            )
+            .map(|date| date_part(&date).unwrap_or(date))
+            .unwrap_or_default();
+
+            Some((date, headline))
+        })
+        .collect();
+
+    if items.is_empty() {
+        return Ok(Page {
+            title: format!("No news for {symbol}"),
+            subtitle: "NEPSE has nothing listed for this company".to_owned(),
+            lines: Vec::new(),
+        });
+    }
+
+    let latest = items.iter().map(|(date, _)| date.as_str()).max().unwrap_or_default().to_owned();
+
+    // Headlines must not contain the `|` that separates label and value.
+    let lines = items
+        .iter()
+        .take(8)
+        .map(|(date, headline)| format!("{}|{}", if date.is_empty() { "-" } else { date }, headline.replace('|', "/")))
+        .collect();
+
+    Ok(Page {
+        title: format!("{symbol} news"),
+        subtitle: if latest.is_empty() {
+            format!("{} items", items.len())
+        } else {
+            format!("{} items \u{b7} latest {latest}", items.len())
+        },
+        lines,
+    })
+}
+
+// ---- Company details -----------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+enum Fmt {
+    Text,
+    Plain,
+    Count,
+    Money,
+}
+
+/// What to show and the field names to look for. The details endpoints do not document their
+/// answers, so each line appears only if one of its names is found anywhere in the answer.
+const DETAIL_FIELDS: &[(&str, &[&str], Fmt)] = &[
+    ("Sector", &["sectorname", "sector", "sectordescription"], Fmt::Text),
+    ("Market cap", &["marketcapitalization", "marketcap"], Fmt::Money),
+    ("Listed shares", &["stocklistedshares", "listedshares", "totallistedshares", "shareslisted"], Fmt::Count),
+    ("Paid-up capital", &["paidupcapital"], Fmt::Money),
+    ("Face value", &["facevalue"], Fmt::Plain),
+    ("EPS", &["eps", "earningpershare", "earningspershare"], Fmt::Plain),
+    ("P/E ratio", &["peratio", "pe", "priceearningratio", "priceearningsratio"], Fmt::Plain),
+    ("Book value", &["bookvalue", "networthpershare", "bookvaluepershare"], Fmt::Plain),
+    ("52-week high", &["fiftytwoweekhigh"], Fmt::Plain),
+    ("52-week low", &["fiftytwoweeklow"], Fmt::Plain),
+];
+
+/// Every scalar in the answer by normalised name, however deeply nested (first one wins).
+fn flatten<'a>(value: &'a Value, out: &mut Vec<(String, &'a Value)>, depth: usize) {
+    if depth > 4 {
+        return;
+    }
+
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map {
+                match inner {
+                    Value::Object(_) | Value::Array(_) => flatten(inner, out, depth + 1),
+                    Value::Null => {}
+                    _ => out.push((norm(key), inner)),
+                }
+            }
+        }
+        Value::Array(items) => {
+            if let Some(first) = items.first() {
+                flatten(first, out, depth + 1);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `label|value` lines for whichever known details `value` contains.
+fn detail_lines(value: &Value) -> Vec<String> {
+    let mut flat = Vec::new();
+
+    flatten(value, &mut flat, 0);
+
+    DETAIL_FIELDS
+        .iter()
+        .filter_map(|(label, aliases, format)| {
+            let found = aliases
+                .iter()
+                .find_map(|alias| flat.iter().find(|(key, _)| key == alias).map(|(_, value)| *value))?;
+
+            let shown = match format {
+                Fmt::Text => text(found)?,
+                Fmt::Plain => price_text(num(found)?),
+                Fmt::Count => compact(num(found)?),
+                Fmt::Money => format!("Rs {}", compact(num(found)?)),
+            };
+
+            Some(format!("{label}|{shown}"))
+        })
+        .collect()
+}
+
+fn fetch_details(symbol: &str) -> Result<Vec<String>, String> {
+    let symbol = web::url_encode(symbol);
+    let mut lines: Vec<String> = Vec::new();
+    let mut reached = false;
+    let mut last_error = String::new();
+
+    for path in ["/company/details/", "/company/financial-details/"] {
+        match fetch_json(&format!("{path}?symbol={symbol}")) {
+            Ok(value) => {
+                reached = true;
+
+                for line in detail_lines(&value) {
+                    let label = line.split('|').next().unwrap_or_default().to_owned();
+
+                    if !lines.iter().any(|have| have.starts_with(&format!("{label}|"))) {
+                        lines.push(line);
+                    }
+                }
+            }
+            Err(error) => last_error = error,
+        }
+    }
+
+    if reached { Ok(lines) } else { Err(last_error) }
 }
 
 // ---- Fetching ------------------------------------------------------------------------------
@@ -651,6 +1118,7 @@ fn fetch_table() -> Result<Vec<Quote>, String> {
 pub struct NepseProvider {
     table: WebCache<Vec<Quote>>,
     pages: WebCache<Page>,
+    details: WebCache<Vec<String>>,
 }
 
 impl NepseProvider {
@@ -658,6 +1126,7 @@ impl NepseProvider {
         Self {
             table: WebCache::new(),
             pages: WebCache::new(),
+            details: WebCache::new(),
         }
     }
 }
@@ -683,24 +1152,65 @@ impl Provider for NepseProvider {
         }
 
         match intent {
-            Intent::Symbol(symbol) => {
-                let what = format!("{symbol} on NEPSE");
+            Intent::Find(text) => {
+                let what = format!("{text} on NEPSE");
 
                 match self.table.get("price-volume", TTL, fetch_table) {
-                    Lookup::Loading => vec![web::loading_result(&symbol, &what)],
-                    Lookup::Failed(reason) => vec![web::failure_result(&symbol, &what, &reason)],
-                    Lookup::Ready(quotes) => match quotes.iter().find(|quote| quote.symbol == symbol) {
-                        Some(quote) => vec![quote_result(quote)],
-                        None => vec![
-                            SearchResult::new(
-                                format!("notice:nepse-{symbol}"),
-                                format!("No NEPSE scrip called {symbol}"),
-                                ResultKind::Notice,
-                                1850,
-                            )
-                            .with_subtitle("Use the trading symbol, e.g. nepse nabil"),
-                        ],
-                    },
+                    Lookup::Loading => vec![web::loading_result(&text, &what)],
+                    Lookup::Failed(reason) => vec![web::failure_result(&text, &what, &reason)],
+                    Lookup::Ready(quotes) => {
+                        let hits = find_matches(&quotes, &text);
+
+                        if hits.is_empty() {
+                            return vec![
+                                SearchResult::new(
+                                    format!("notice:nepse-{}", text.replace(' ', "-")),
+                                    format!("No NEPSE company matches \u{201c}{text}\u{201d}"),
+                                    ResultKind::Notice,
+                                    1850,
+                                )
+                                .with_subtitle("Try the symbol or part of the company name"),
+                            ];
+                        }
+
+                        let mut results = Vec::new();
+                        let mut waiting_for = None;
+
+                        for (index, (quote, score)) in hits.iter().enumerate() {
+                            // Details only for an exact symbol, and only for the top hit.
+                            let extra = if index == 0 && *score == 1850 {
+                                let symbol = quote.symbol.clone();
+                                let fetch_symbol = symbol.clone();
+
+                                match self.details.get(&symbol, DETAILS_TTL, move || {
+                                    fetch_details(&fetch_symbol)
+                                }) {
+                                    Lookup::Ready(lines) => lines,
+                                    Lookup::Loading => {
+                                        waiting_for = Some(symbol);
+                                        Vec::new()
+                                    }
+                                    // Details are a bonus: the price is shown either way.
+                                    Lookup::Failed(_) => Vec::new(),
+                                }
+                            } else {
+                                Vec::new()
+                            };
+
+                            results.push(quote_result(quote, *score, &extra));
+                        }
+
+                        // While the details load, a "loading" row makes the launcher ask again.
+                        if let Some(symbol) = waiting_for {
+                            let mut loading =
+                                web::loading_result(&format!("nepse-{symbol}"), &format!("{symbol} details"));
+
+                            loading.score = 1000;
+                            results.push(loading);
+                        }
+
+                        results
+                    }
                 }
             }
             Intent::Page(kind) => {
@@ -709,18 +1219,45 @@ impl Provider for NepseProvider {
                     PageKind::Open => "the NEPSE market status",
                     PageKind::Gainers => "NEPSE top gainers",
                     PageKind::Losers => "NEPSE top losers",
+                    PageKind::Sectors => "the NEPSE sector indices",
+                    PageKind::Holidays => "NEPSE holidays",
                 };
 
                 let lookup = self.pages.get(kind.key(), TTL, move || {
-                    parse_page(kind, &fetch_json(kind.path())?)
+                    parse_page(kind, &fetch_json(kind.path())?, &today_npt())
                 });
 
                 match lookup {
                     Lookup::Loading => vec![web::loading_result(kind.key(), what)],
                     Lookup::Failed(reason) => vec![web::failure_result(kind.key(), what, &reason)],
-                    Lookup::Ready(page) => vec![page_result(kind, &page)],
+                    Lookup::Ready(page) => vec![page_result(format!("nepse:{}", kind.key()), &page)],
                 }
             }
+            Intent::Extra(kind, symbol) => {
+                let key = format!("{}:{symbol}", kind.word());
+                let what = format!("{} for {symbol}", if kind == ExtraKind::Depth { "market depth" } else { "news" });
+                let path = format!("{}?symbol={}", kind.path(), web::url_encode(&symbol));
+                let fetch_symbol = symbol.clone();
+
+                let lookup = self.pages.get(&key, TTL, move || {
+                    let value = fetch_json(&path)?;
+
+                    match kind {
+                        ExtraKind::Depth => parse_depth(&value, &fetch_symbol),
+                        ExtraKind::News => parse_news(&value, &fetch_symbol),
+                    }
+                });
+
+                match lookup {
+                    Lookup::Loading => vec![web::loading_result(&key, &what)],
+                    Lookup::Failed(reason) => vec![web::failure_result(&key, &what, &reason)],
+                    Lookup::Ready(page) => vec![page_result(format!("nepse:{key}"), &page)],
+                }
+            }
+            Intent::Usage(example) => vec![
+                SearchResult::new("notice:nepse-usage", "Add a company symbol", ResultKind::Notice, 1850)
+                    .with_subtitle(format!("For example: {example}")),
+            ],
         }
     }
 
@@ -733,12 +1270,26 @@ impl Provider for NepseProvider {
 
         // Always the official NEPSE site: the company's own page when its id is known, else
         // the home page (index, market status, movers and unknown ids).
+        // `nepse:depth:NABIL` and `nepse:news:NABIL` have no page of their own: the home page.
+        if ExtraKind::from_word(symbol).is_some() {
+            return Some(match security_id {
+                Some(symbol) if valid_symbol(symbol) => Ok(LaunchSpec {
+                    title: symbol.to_owned(),
+                    program: "xdg-open".to_owned(),
+                    args: vec![format!("{SITE}/")],
+                }),
+                _ => Err("not a NEPSE symbol".to_owned()),
+            });
+        }
+
         let url = match security_id {
             Some(security_id) if valid_security_id(security_id) && valid_symbol(symbol) => {
                 format!("{SITE}/company/detail/{security_id}")
             }
             Some(_) => return Some(Err("not a NEPSE company".to_owned())),
-            None if ["index", "open", "gainers", "losers"].contains(&symbol) || valid_symbol(symbol) => {
+            None if ["index", "open", "gainers", "losers", "sectors", "holidays"].contains(&symbol)
+                || valid_symbol(symbol) =>
+            {
                 format!("{SITE}/")
             }
             None => return Some(Err("not a NEPSE symbol".to_owned())),
@@ -767,16 +1318,96 @@ mod tests {
 
     #[test]
     fn recognises_trigger_forms() {
-        assert_eq!(parse_query("nepse nabil"), Some(Intent::Symbol("NABIL".into())));
-        assert_eq!(parse_query("nabil nepse"), Some(Intent::Symbol("NABIL".into())));
+        assert_eq!(parse_query("nepse nabil"), Some(Intent::Find("nabil".into())));
+        assert_eq!(parse_query("nabil nepse"), Some(Intent::Find("nabil".into())));
+        assert_eq!(parse_query("NEPSE  Nic   Asia"), Some(Intent::Find("nic asia".into())));
+        assert_eq!(parse_query("hydro power nepse"), Some(Intent::Find("hydro power".into())));
         assert_eq!(parse_query("nepse"), Some(Intent::Page(PageKind::Index)));
         assert_eq!(parse_query("nepse gainers"), Some(Intent::Page(PageKind::Gainers)));
         assert_eq!(parse_query("nepse losers"), Some(Intent::Page(PageKind::Losers)));
         assert_eq!(parse_query("nepse open"), Some(Intent::Page(PageKind::Open)));
         assert_eq!(parse_query("nabil"), None);
-        assert_eq!(parse_query("nepse a b"), None);
+        assert_eq!(parse_query("nepse a"), None);
         assert_eq!(parse_query("nepse ../x"), None);
         assert_eq!(parse_query("nepse 123"), None);
+        assert_eq!(parse_query("nepse \"quoted\""), None);
+    }
+
+    fn sample_quotes() -> Vec<Quote> {
+        let value: Value = serde_json::from_str(
+            r#"{"data":[
+                {"symbol":"NIC","securityName":"NIC Asia Limited","lastTradedPrice":1},
+                {"symbol":"NICA","securityName":"NIC Asia Bank Limited","lastTradedPrice":2},
+                {"symbol":"NABIL","securityName":"Nabil Bank Limited","lastTradedPrice":3},
+                {"symbol":"HDHPC","securityName":"Himal Dolakha Hydropower Company Limited","lastTradedPrice":4},
+                {"symbol":"CHCL","securityName":"Chilime Hydropower Company Limited","lastTradedPrice":5}]}"#,
+        )
+        .unwrap();
+
+        find_rows(&value).into_iter().filter_map(quote_from).collect()
+    }
+
+    #[test]
+    fn finds_companies_by_part_of_symbol_or_name() {
+        let quotes = sample_quotes();
+        let symbols = |text: &str| -> Vec<String> {
+            find_matches(&quotes, text).iter().map(|(quote, _)| quote.symbol.clone()).collect()
+        };
+
+        // Exact symbol first, then other symbols that start with it.
+        assert_eq!(symbols("nic"), ["NIC", "NICA"]);
+        assert_eq!(find_matches(&quotes, "nic")[0].1, 1850);
+        assert_eq!(symbols("nabil"), ["NABIL"]);
+        // Words of the name, in any order.
+        assert_eq!(symbols("nic asia"), ["NIC", "NICA"]);
+        assert_eq!(symbols("hydropower company"), ["CHCL", "HDHPC"]);
+        assert_eq!(symbols("hydro"), ["CHCL", "HDHPC"]);
+        assert_eq!(symbols("bank nic"), ["NICA"]);
+        assert!(symbols("zzz").is_empty());
+    }
+
+    #[test]
+    fn matches_are_capped() {
+        let rows: Vec<String> = (0..30)
+            .map(|index| format!(r#"{{"symbol":"BK{index:02}","securityName":"Some Bank {index}","lastTradedPrice":1}}"#))
+            .collect();
+        let value: Value = serde_json::from_str(&format!(r#"{{"data":[{}]}}"#, rows.join(","))).unwrap();
+        let quotes: Vec<Quote> = find_rows(&value).into_iter().filter_map(quote_from).collect();
+
+        assert_eq!(find_matches(&quotes, "bank").len(), MAX_MATCHES);
+    }
+
+    // The details endpoints do not document their answers: these are sample shapes (nested and
+    // flat) with the field names NEPSE's own endpoints use.
+    #[test]
+    fn reads_company_details_wherever_they_are() {
+        let value: Value = serde_json::from_str(
+            r#"{"status":"success","data":{"security":{"companyName":"Nabil","stockListedShares":270000000,
+                "paidUpCapital":27000000000,"faceValue":100,"sectorName":"Commercial Banks"},
+                "securityDailyTradeDto":{"fiftyTwoWeekHigh":650.5,"fiftyTwoWeekLow":480}},
+                "financial":[{"eps":"18.25","peRatio":28.1,"bookValue":210.4}]}"#,
+        )
+        .unwrap();
+        let lines = detail_lines(&value);
+
+        assert!(lines.contains(&"Sector|Commercial Banks".to_owned()), "{lines:?}");
+        assert!(lines.contains(&"Listed shares|270.00M".to_owned()), "{lines:?}");
+        assert!(lines.contains(&"Paid-up capital|Rs 27.00B".to_owned()), "{lines:?}");
+        assert!(lines.contains(&"EPS|18.25".to_owned()), "{lines:?}");
+        assert!(lines.contains(&"P/E ratio|28.10".to_owned()), "{lines:?}");
+        assert!(lines.contains(&"52-week high|650.50".to_owned()), "{lines:?}");
+        assert!(detail_lines(&serde_json::json!({"unrelated": 1})).is_empty());
+    }
+
+    #[test]
+    fn details_appear_in_the_quote_before_the_exchange_line() {
+        let quote = &sample_quotes()[2];
+        let extra = vec!["Sector|Commercial Banks".to_owned(), "EPS|18.25".to_owned()];
+        let detail = quote_result(quote, 1850, &extra).detail.unwrap();
+        let lines: Vec<&str> = detail.lines().collect();
+
+        assert_eq!(lines[lines.len() - 3], "Sector|Commercial Banks");
+        assert_eq!(lines[lines.len() - 1], "Exchange|NEPSE");
     }
 
     #[test]
@@ -795,7 +1426,7 @@ mod tests {
 
         assert_eq!(quotes.len(), 2);
 
-        let result = quote_result(&quotes[0]);
+        let result = quote_result(&quotes[0], 1850, &[]);
 
         assert_eq!(result.title, "NABIL  Rs 512.50");
         assert!(result.subtitle.as_deref().unwrap().starts_with("\u{25b2} 7.50 (1.49%)"));
@@ -815,7 +1446,7 @@ mod tests {
 
         assert!(delta < 0.0);
         assert!((percent + 2.5).abs() < 1e-9);
-        assert!(quote_result(&quotes[1]).subtitle.unwrap().starts_with('\u{25bc}'));
+        assert!(quote_result(&quotes[1], 1850, &[]).subtitle.unwrap().starts_with('\u{25bc}'));
     }
 
     #[test]
@@ -901,7 +1532,7 @@ mod tests {
         )
         .unwrap();
         let quotes: Vec<Quote> = find_rows(&prices).into_iter().filter_map(quote_from).collect();
-        let result = quote_result(&quotes[0]);
+        let result = quote_result(&quotes[0], 1850, &[]);
 
         assert_eq!(result.title, "ADBL  Rs 328.00");
         assert!(result.subtitle.as_deref().unwrap().starts_with("\u{25b2} 7.90 (2.47%)"));
@@ -951,10 +1582,10 @@ mod tests {
         .unwrap();
         let quotes: Vec<Quote> = find_rows(&prices).into_iter().filter_map(quote_from).collect();
 
-        assert_eq!(quote_result(&quotes[0]).id, "nepse:ADBL:397");
-        assert_eq!(quote_result(&quotes[1]).id, "nepse:AHL:9150");
+        assert_eq!(quote_result(&quotes[0], 1850, &[]).id, "nepse:ADBL:397");
+        assert_eq!(quote_result(&quotes[1], 1850, &[]).id, "nepse:AHL:9150");
         // An unusable id is dropped rather than put in a URL.
-        assert_eq!(quote_result(&quotes[2]).id, "nepse:ZZZ");
+        assert_eq!(quote_result(&quotes[2], 1850, &[]).id, "nepse:ZZZ");
 
         let spec = provider.resolve("nepse:ADBL:397").unwrap().unwrap();
 
@@ -976,5 +1607,124 @@ mod tests {
         assert!(provider.resolve("nepse:NABIL:12a").unwrap().is_err());
         assert!(provider.resolve("nepse:../x").unwrap().is_err());
         assert!(provider.resolve("stock:AAPL").is_none());
+    }
+
+    // The four commands below read endpoints whose answers are not documented: these are sample
+    // shapes using the field names NEPSE's own endpoints use.
+    #[test]
+    fn recognises_the_new_commands() {
+        assert_eq!(parse_query("nepse sectors"), Some(Intent::Page(PageKind::Sectors)));
+        assert_eq!(parse_query("nepse holidays"), Some(Intent::Page(PageKind::Holidays)));
+        assert_eq!(parse_query("nepse depth nabil"), Some(Intent::Extra(ExtraKind::Depth, "NABIL".into())));
+        assert_eq!(parse_query("nepse news adbl"), Some(Intent::Extra(ExtraKind::News, "ADBL".into())));
+        assert_eq!(parse_query("nepse depth"), Some(Intent::Usage("nepse depth nabil")));
+        assert_eq!(parse_query("nepse news"), Some(Intent::Usage("nepse news nabil")));
+        assert_eq!(parse_query("nepse depth ../x"), None);
+    }
+
+    #[test]
+    fn converts_days_to_dates() {
+        assert_eq!(civil_date(0), "1970-01-01");
+        assert_eq!(civil_date(19_723), "2024-01-01");
+        assert_eq!(civil_date(20_000), "2024-10-04");
+        assert_eq!(civil_date(19_782), "2024-02-29");
+        assert_eq!(date_part("2026-10-14T15:00:00").as_deref(), Some("2026-10-14"));
+        assert_eq!(date_part("14 Oct 2026"), None);
+    }
+
+    #[test]
+    fn lists_sectors_best_first() {
+        let value: Value = serde_json::from_str(
+            r#"{"status":"success","data":{
+                "Banking SubIndex":{"index":"Banking SubIndex","close":1200.0,"previousClose":1190.0},
+                "Hydropower Index":{"index":"Hydropower Index","close":2000.0,"previousClose":2020.0},
+                "Hotels And Tourism":{"index":"Hotels And Tourism","close":5000.0,"perChange":3.5}}}"#,
+        )
+        .unwrap();
+        let page = parse_sectors(&value).unwrap();
+
+        assert_eq!(page.subtitle, "3 sub-indices, best first");
+        assert!(page.lines[0].starts_with("Hotels And Tourism|5,000.00"), "{:?}", page.lines);
+        assert!(page.lines[1].starts_with("Banking SubIndex|1,200.00  \u{25b2}"), "{:?}", page.lines);
+        assert!(page.lines[2].contains('\u{25bc}'), "{:?}", page.lines);
+    }
+
+    #[test]
+    fn lists_only_upcoming_holidays() {
+        let value: Value = serde_json::from_str(
+            r#"{"data":[
+                {"holidayDate":"2026-10-20T00:00:00","description":"Dashain"},
+                {"holidayDate":"2026-01-01","description":"New Year"},
+                {"holidayDate":"2026-10-14","description":"Today holiday"},
+                {"holidayDate":"2026-11-10","description":"Tihar"}]}"#,
+        )
+        .unwrap();
+        let page = parse_holidays(&value, "2026-10-14").unwrap();
+
+        assert_eq!(page.subtitle, "Next: 2026-10-14 \u{b7} Today holiday");
+        assert_eq!(page.lines, ["2026-10-14|Today holiday", "2026-10-20|Dashain", "2026-11-10|Tihar"]);
+
+        let past = parse_holidays(&value, "2027-01-01").unwrap();
+
+        assert_eq!(past.title, "No more NEPSE holidays listed");
+    }
+
+    #[test]
+    fn reads_market_depth() {
+        let value: Value = serde_json::from_str(
+            r#"{"data":{"totalBuyQuantity":5000,"totalSellQuantity":4200,
+                "marketDepth":{
+                  "buyMarketDepthList":[{"orderBookOrderPrice":510,"quantity":100,"orderCount":2},
+                                        {"orderBookOrderPrice":512,"quantity":300,"orderCount":5}],
+                  "sellMarketDepthList":[{"orderBookOrderPrice":515,"quantity":50,"orderCount":1},
+                                         {"orderBookOrderPrice":514,"quantity":1200,"orderCount":4}]}}}"#,
+        )
+        .unwrap();
+        let page = parse_depth(&value, "NABIL").unwrap();
+
+        assert_eq!(page.title, "NABIL market depth");
+        assert_eq!(page.subtitle, "Best bid Rs 512.00 \u{b7} best ask Rs 514.00");
+        assert_eq!(page.lines[0], "Buy 1|Rs 512.00 \u{d7} 300 (5 orders)");
+        assert_eq!(page.lines[2], "Sell 1|Rs 514.00 \u{d7} 1.2K (4 orders)");
+        assert!(page.lines.contains(&"Total buy qty|5.0K".to_owned()), "{:?}", page.lines);
+    }
+
+    #[test]
+    fn an_empty_order_book_is_not_an_error() {
+        let page = parse_depth(&serde_json::json!({"data": {"buyMarketDepthList": [], "sellMarketDepthList": []}}), "NABIL").unwrap();
+
+        assert_eq!(page.title, "No market depth for NABIL");
+    }
+
+    #[test]
+    fn reads_company_news() {
+        let value: Value = serde_json::from_str(
+            r#"{"data":[
+                {"newsHeadline":"Dividend | bonus announced","addedDate":"2026-10-12T10:00:00"},
+                {"newsHeadline":"AGM notice","addedDate":"2026-09-30T09:00:00"}]}"#,
+        )
+        .unwrap();
+        let page = parse_news(&value, "NABIL").unwrap();
+
+        assert_eq!(page.title, "NABIL news");
+        assert_eq!(page.subtitle, "2 items \u{b7} latest 2026-10-12");
+        // The separator inside a headline must not break the label|value line.
+        assert_eq!(page.lines[0], "2026-10-12|Dividend / bonus announced");
+
+        assert_eq!(parse_news(&serde_json::json!({"data": []}), "NABIL").unwrap().title, "No news for NABIL");
+    }
+
+    #[test]
+    fn new_results_open_the_home_page_only() {
+        let provider = NepseProvider::new();
+
+        for id in ["nepse:sectors", "nepse:holidays", "nepse:depth:NABIL", "nepse:news:ADBL"] {
+            let spec = provider.resolve(id).unwrap().unwrap();
+
+            assert_eq!(spec.args, vec!["https://nepalstock.com.np/"], "{id}");
+        }
+
+        assert!(provider.resolve("nepse:depth:../x").unwrap().is_err());
+        assert!(provider.resolve("nepse:news").unwrap().is_err());
     }
 }

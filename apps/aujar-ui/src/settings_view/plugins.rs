@@ -11,7 +11,7 @@ impl SettingsView {
             toggle_row_badged!(self, cx, "p-weather", "Weather", "Online", "weather paris. Sends only the place to Open-Meteo", plugins.weather),
             toggle_row!(self, cx, "p-imperial", "Fahrenheit and mph", "Show weather in imperial units", weather.imperial),
             toggle_row_badged!(self, cx, "p-stocks", "Stocks", "Online", "stock aapl, $tsla. Sends only the ticker to Yahoo Finance (delayed quotes)", plugins.stocks),
-            toggle_row_badged!(self, cx, "p-nepse", "NEPSE stocks", "Online", "nepse nabil, nepse, nepse gainers, nepse open. Sends the symbol and your API key to warehouse.fintechnepal.com.np", plugins.nepse),
+            toggle_row_badged!(self, cx, "p-nepse", "NEPSE stocks", "Online", "nepse nabil, nepse nic asia, nepse depth nabil, nepse news nabil, nepse sectors, nepse holidays, nepse gainers. Sends the symbol and your API key to warehouse.fintechnepal.com.np", plugins.nepse),
         ];
 
         // The key lives in its own owner-only file, not in settings.toml.
