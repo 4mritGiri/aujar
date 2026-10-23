@@ -15,6 +15,10 @@
 //! be found it is simply left out; if no price can be found at all, the launcher says so.
 //! Prices are for information only.
 
+mod alerts;
+
+pub use alerts::spawn_watcher as spawn_alert_watcher;
+
 use crate::{
     model::{LaunchSpec, Provider, ResultKind, SearchResult},
     stocks::{compact, price_text},
@@ -38,13 +42,18 @@ const SITE: &str = "https://nepalstock.com.np";
 
 // ---- API key -------------------------------------------------------------------------------
 
-fn key_path() -> Option<PathBuf> {
+/// `~/.config/aujar`, next to settings.toml.
+fn config_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
 
-    Some(base.join("aujar").join("nepse.key"))
+    Some(base.join("aujar"))
+}
+
+fn key_path() -> Option<PathBuf> {
+    Some(config_dir()?.join("nepse.key"))
 }
 
 /// Keys are letters, digits and a few separators, with at most one space (a scheme prefix such
@@ -156,7 +165,7 @@ impl PageKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Intent {
     /// Part of a symbol or company name, lower-case.
     Find(String),
@@ -165,6 +174,10 @@ enum Intent {
     Extra(ExtraKind, String),
     /// `nepse depth` without a symbol: show an example.
     Usage(&'static str),
+    /// `nepse alert nabil above 600`; `above` is `None` when the direction is left to us.
+    Alert { symbol: String, above: Option<bool>, price: f64 },
+    /// `nepse alerts`: the saved alerts.
+    Alerts,
 }
 
 fn valid_security_id(id: &str) -> bool {
@@ -186,6 +199,38 @@ fn find_intent(words: &[&str]) -> Option<Intent> {
     .then_some(Intent::Find(text))
 }
 
+fn alert_price(text: &str) -> Option<f64> {
+    let cleaned = text.trim_start_matches("rs").trim_start_matches("npr").replace(',', "");
+
+    cleaned.parse::<f64>().ok().filter(|price| price.is_finite() && *price > 0.0 && *price < 10_000_000.0)
+}
+
+const ALERT_EXAMPLE: &str = "nepse alert nabil above 600";
+
+/// `nabil above 600`, `nabil below 500`, `nabil 600` (direction picked from the current price).
+fn alert_intent(rest: &[&str]) -> Intent {
+    let (symbol, above, price) = match rest {
+        [symbol, price] => (*symbol, None, *price),
+        [symbol, direction, price] => {
+            let above = match *direction {
+                "above" | "over" | "up" | ">" | ">=" => Some(true),
+                "below" | "under" | "down" | "<" | "<=" => Some(false),
+                _ => return Intent::Usage(ALERT_EXAMPLE),
+            };
+
+            (*symbol, above, *price)
+        }
+        _ => return Intent::Usage(ALERT_EXAMPLE),
+    };
+
+    let symbol = symbol.to_uppercase();
+
+    match alert_price(price) {
+        Some(price) if valid_symbol(&symbol) => Intent::Alert { symbol, above, price },
+        _ => Intent::Usage(ALERT_EXAMPLE),
+    }
+}
+
 fn parse_query(query: &str) -> Option<Intent> {
     let lower = query.trim().to_lowercase();
     let words: Vec<&str> = lower.split_whitespace().collect();
@@ -195,6 +240,8 @@ fn parse_query(query: &str) -> Option<Intent> {
         ["nepse", word] if PageKind::from_word(word).is_some() => {
             PageKind::from_word(word).map(Intent::Page)
         }
+        ["nepse", "alerts"] => Some(Intent::Alerts),
+        ["nepse", "alert", rest @ ..] => Some(alert_intent(rest)),
         ["nepse", "depth"] => Some(Intent::Usage("nepse depth nabil")),
         ["nepse", "news"] => Some(Intent::Usage("nepse news nabil")),
         ["nepse", kind, symbol] if ExtraKind::from_word(kind).is_some() => {
@@ -465,7 +512,15 @@ fn quote_result(quote: &Quote, score: u32, extra: &[String]) -> SearchResult {
     row("Volume", quote.volume.map(compact));
     row("Turnover", quote.turnover.map(|value| format!("Rs {}", compact(value))));
 
-    lines.extend(extra.iter().cloned());
+    // Details may repeat something the price list already gave: keep the first.
+    for line in extra {
+        let label = line.split('|').next().unwrap_or_default();
+
+        if !lines.iter().any(|have| have.split('|').next() == Some(label)) {
+            lines.push(line.clone());
+        }
+    }
+
     lines.push("Exchange|NEPSE".to_owned());
 
     // `nepse:NABIL:397` when the company id is known, so Enter can open its official page.
@@ -917,21 +972,35 @@ fn parse_depth(value: &Value, symbol: &str) -> Result<Page, String> {
 }
 
 fn parse_news(value: &Value, symbol: &str) -> Result<Page, String> {
-    let items: Vec<(String, String)> = find_rows(value)
+    // The real answer wraps each item: `{"companyNews": {"newsHeadline": ..., "security": {..}}}`.
+    // `(date, label, headline)`; the label is the date, else the kind of news.
+    let items: Vec<(String, String, String)> = find_rows(value)
         .into_iter()
         .filter_map(|row| {
-            let headline = first_text(
+            let headline = deep_field(
                 row,
-                &["newsheadline", "headline", "title", "newstitle", "subject", "newsdescription", "description"],
-            )?;
-            let date = first_text(
-                row,
-                &["addeddate", "publisheddate", "newsdate", "date", "createdat", "modifieddate", "createddate"],
+                &["newsheadline", "headline", "newstitle", "title", "subject", "newsdescription"],
             )
+            .and_then(text)?;
+
+            let date = deep_field(
+                row,
+                &[
+                    "addeddate", "publisheddate", "newsdate", "createddate", "createdat", "modifieddate",
+                    "applicationdate", "submitteddate", "date",
+                ],
+            )
+            .and_then(text)
             .map(|date| date_part(&date).unwrap_or(date))
             .unwrap_or_default();
 
-            Some((date, headline))
+            let label = if date.is_empty() {
+                deep_field(row, &["newstype"]).and_then(text).unwrap_or_else(|| "-".to_owned())
+            } else {
+                date.clone()
+            };
+
+            Some((date, label, headline))
         })
         .collect();
 
@@ -943,13 +1012,13 @@ fn parse_news(value: &Value, symbol: &str) -> Result<Page, String> {
         });
     }
 
-    let latest = items.iter().map(|(date, _)| date.as_str()).max().unwrap_or_default().to_owned();
+    let latest = items.iter().map(|(date, _, _)| date.as_str()).max().unwrap_or_default().to_owned();
 
     // Headlines must not contain the `|` that separates label and value.
     let lines = items
         .iter()
-        .take(8)
-        .map(|(date, headline)| format!("{}|{}", if date.is_empty() { "-" } else { date }, headline.replace('|', "/")))
+        .take(40)
+        .map(|(_, label, headline)| format!("{label}|{}", headline.replace('|', "/")))
         .collect();
 
     Ok(Page {
@@ -961,6 +1030,114 @@ fn parse_news(value: &Value, symbol: &str) -> Result<Page, String> {
         },
         lines,
     })
+}
+
+// ---- Alerts ----------------------------------------------------------------------------------
+
+fn alert_notice(id: &str, title: String, subtitle: String) -> SearchResult {
+    SearchResult::new(format!("notice:{id}"), title, ResultKind::Notice, 1850).with_subtitle(subtitle)
+}
+
+/// What setting an alert would do, as a result that Enter confirms.
+fn alert_result(quote: &Quote, above: Option<bool>, target: f64) -> SearchResult {
+    let above = above.unwrap_or(target > quote.price);
+    let alert = alerts::Alert { symbol: quote.symbol.clone(), above, price: target };
+
+    if alert.reached(quote.price) {
+        return alert_notice(
+            &format!("nepse-alert-{}", quote.symbol),
+            format!("{} is already {} {}", quote.symbol, alert.word(), rs(target)),
+            format!("Now {}. Pick a price on the other side", rs(quote.price)),
+        );
+    }
+
+    let distance = (target - quote.price) / quote.price * 100.0;
+
+    SearchResult::new(
+        format!("nepse:alert:{}", alert.id_part()),
+        format!("Alert: {} {} {}", quote.symbol, alert.word(), rs(target)),
+        ResultKind::Stock,
+        1850,
+    )
+    .with_subtitle(format!("Now {} \u{b7} Enter sets it", rs(quote.price)))
+    .with_detail(
+        [
+            format!("Now|{}", rs(quote.price)),
+            format!("Target|{}", rs(target)),
+            format!("Distance|{distance:+.2}%"),
+            "Checked|every minute while the market is open".to_owned(),
+            "Notified|once, with a desktop notification".to_owned(),
+        ]
+        .join("\n"),
+    )
+}
+
+fn alerts_results(prices: Option<&[Quote]>) -> Vec<SearchResult> {
+    let saved = alerts::load();
+
+    if saved.is_empty() {
+        return vec![alert_notice(
+            "nepse-no-alerts",
+            "No price alerts".to_owned(),
+            format!("Set one: {ALERT_EXAMPLE}"),
+        )];
+    }
+
+    saved
+        .iter()
+        .enumerate()
+        .map(|(index, alert)| {
+            let now = prices
+                .and_then(|quotes| quotes.iter().find(|quote| quote.symbol == alert.symbol))
+                .map(|quote| format!("Now {}", rs(quote.price)));
+
+            SearchResult::new(
+                format!("nepse:unalert:{}", alert.id_part()),
+                format!("{} {} {}", alert.symbol, alert.word(), rs(alert.price)),
+                ResultKind::Stock,
+                1850 - index as u32,
+            )
+            .with_subtitle(format!(
+                "{}Enter removes this alert",
+                now.map(|now| format!("{now} \u{b7} ")).unwrap_or_default()
+            ))
+        })
+        .collect()
+}
+
+fn notify_spec(title: &str, body: &str) -> LaunchSpec {
+    LaunchSpec {
+        title: title.to_owned(),
+        program: "notify-send".to_owned(),
+        args: vec![
+            "--app-name=Aujar".to_owned(),
+            "--expire-time=8000".to_owned(),
+            "--".to_owned(),
+            title.to_owned(),
+            body.to_owned(),
+        ],
+    }
+}
+
+/// Enter on an alert result: save or remove it, and confirm with a notification.
+fn resolve_alert(set: bool, text: &str) -> Result<LaunchSpec, String> {
+    let alert = alerts::Alert::from_id_part(text).ok_or_else(|| "not a NEPSE alert".to_owned())?;
+
+    if set {
+        let replaced = alerts::add(alert.clone())?;
+
+        Ok(notify_spec(
+            if replaced { "Price alert updated" } else { "Price alert set" },
+            &format!("{} {} {}. You will be notified once.", alert.symbol, alert.word(), rs(alert.price)),
+        ))
+    } else {
+        alerts::remove(&alert)?;
+
+        Ok(notify_spec(
+            "Price alert removed",
+            &format!("{} {} {}", alert.symbol, alert.word(), rs(alert.price)),
+        ))
+    }
 }
 
 // ---- Company details -----------------------------------------------------------------------
@@ -976,16 +1153,26 @@ enum Fmt {
 /// What to show and the field names to look for. The details endpoints do not document their
 /// answers, so each line appears only if one of its names is found anywhere in the answer.
 const DETAIL_FIELDS: &[(&str, &[&str], Fmt)] = &[
-    ("Sector", &["sectorname", "sector", "sectordescription"], Fmt::Text),
+    // From `/company/details/` (`securityDailyTradeDto`, `security`).
+    ("Sector", &["sectordescription", "sectorname", "sector"], Fmt::Text),
+    ("Last traded on", &["businessdate"], Fmt::Text),
+    ("Open", &["openprice"], Fmt::Plain),
+    ("Day high", &["highprice", "dayhigh"], Fmt::Plain),
+    ("Day low", &["lowprice", "daylow"], Fmt::Plain),
+    ("Trades", &["totaltrades"], Fmt::Count),
     ("Market cap", &["marketcapitalization", "marketcap"], Fmt::Money),
     ("Listed shares", &["stocklistedshares", "listedshares", "totallistedshares", "shareslisted"], Fmt::Count),
-    ("Paid-up capital", &["paidupcapital"], Fmt::Money),
     ("Face value", &["facevalue"], Fmt::Plain),
-    ("EPS", &["eps", "earningpershare", "earningspershare"], Fmt::Plain),
-    ("P/E ratio", &["peratio", "pe", "priceearningratio", "priceearningsratio"], Fmt::Plain),
-    ("Book value", &["bookvalue", "networthpershare", "bookvaluepershare"], Fmt::Plain),
     ("52-week high", &["fiftytwoweekhigh"], Fmt::Plain),
     ("52-week low", &["fiftytwoweeklow"], Fmt::Plain),
+    // From `/company/financial-details/` (`fiscalReport` of the latest report).
+    ("EPS", &["epsvalue", "eps", "earningpershare", "earningspershare"], Fmt::Plain),
+    ("P/E ratio", &["pevalue", "peratio", "pe", "priceearningratio", "priceearningsratio"], Fmt::Plain),
+    ("Book value", &["networthpershare", "bookvalue", "bookvaluepershare"], Fmt::Plain),
+    ("Net profit", &["profitamount", "netprofit"], Fmt::Money),
+    ("Paid-up capital", &["paidupcapital"], Fmt::Money),
+    ("Latest report", &["quartername"], Fmt::Text),
+    ("Fiscal year", &["fyname"], Fmt::Text),
 ];
 
 /// Every scalar in the answer by normalised name, however deeply nested (first one wins).
@@ -1011,6 +1198,30 @@ fn flatten<'a>(value: &'a Value, out: &mut Vec<(String, &'a Value)>, depth: usiz
         }
         _ => {}
     }
+}
+
+/// Like [`field`], but also looks inside nested objects (`{"companyNews": {"newsHeadline": ..}}`).
+/// Fields of the row itself win over nested ones.
+fn deep_field<'a>(row: &'a Map<String, Value>, aliases: &[&str]) -> Option<&'a Value> {
+    let mut flat = Vec::new();
+
+    for (key, inner) in row {
+        match inner {
+            Value::Object(_) | Value::Array(_) => {}
+            Value::Null => {}
+            _ => flat.push((norm(key), inner)),
+        }
+    }
+
+    for inner in row.values() {
+        if matches!(inner, Value::Object(_) | Value::Array(_)) {
+            flatten(inner, &mut flat, 1);
+        }
+    }
+
+    aliases
+        .iter()
+        .find_map(|alias| flat.iter().find(|(key, _)| key == alias).map(|(_, value)| *value))
 }
 
 /// `label|value` lines for whichever known details `value` contains.
@@ -1095,6 +1306,13 @@ fn fetch_json(path: &str) -> Result<Value, String> {
     }
 
     Err("the NEPSE service refused the API key (HTTP 401/403)".to_owned())
+}
+
+/// Whether the market is open now; `None` when that cannot be told.
+fn market_is_open() -> Option<bool> {
+    let page = parse_open(&fetch_json("/is-open/").ok()?).ok()?;
+
+    Some(page.title.ends_with("open"))
 }
 
 /// Every scrip's latest price: the price/volume table, or the live market feed when that one
@@ -1254,6 +1472,34 @@ impl Provider for NepseProvider {
                     Lookup::Ready(page) => vec![page_result(format!("nepse:{key}"), &page)],
                 }
             }
+            Intent::Alert { symbol, above, price } => {
+                let what = format!("{symbol} price alert");
+
+                match self.table.get("price-volume", TTL, fetch_table) {
+                    Lookup::Loading => vec![web::loading_result(&symbol, &what)],
+                    Lookup::Failed(reason) => vec![web::failure_result(&symbol, &what, &reason)],
+                    Lookup::Ready(quotes) => match quotes.iter().find(|quote| quote.symbol == symbol) {
+                        Some(quote) => vec![alert_result(quote, above, price)],
+                        None => vec![alert_notice(
+                            &format!("nepse-{symbol}"),
+                            format!("No NEPSE scrip called {symbol}"),
+                            "Use the trading symbol, e.g. nepse alert nabil above 600".to_owned(),
+                        )],
+                    },
+                }
+            }
+            Intent::Alerts => {
+                if alerts::load().is_empty() {
+                    return alerts_results(None);
+                }
+
+                // Current prices are a bonus: the saved alerts show even when they fail.
+                match self.table.get("price-volume", TTL, fetch_table) {
+                    Lookup::Loading => vec![web::loading_result("alerts", "current prices")],
+                    Lookup::Failed(_) => alerts_results(None),
+                    Lookup::Ready(quotes) => alerts_results(Some(&quotes)),
+                }
+            }
             Intent::Usage(example) => vec![
                 SearchResult::new("notice:nepse-usage", "Add a company symbol", ResultKind::Notice, 1850)
                     .with_subtitle(format!("For example: {example}")),
@@ -1263,6 +1509,15 @@ impl Provider for NepseProvider {
 
     fn resolve(&self, id: &str) -> Option<Result<LaunchSpec, String>> {
         let target = id.strip_prefix("nepse:")?;
+
+        if let Some(text) = target.strip_prefix("alert:") {
+            return Some(resolve_alert(true, text));
+        }
+
+        if let Some(text) = target.strip_prefix("unalert:") {
+            return Some(resolve_alert(false, text));
+        }
+
         let (symbol, security_id) = match target.split_once(':') {
             Some((symbol, security_id)) => (symbol, Some(security_id)),
             None => (target, None),
@@ -1726,5 +1981,212 @@ mod tests {
 
         assert!(provider.resolve("nepse:depth:../x").unwrap().is_err());
         assert!(provider.resolve("nepse:news").unwrap().is_err());
+    }
+
+    #[test]
+    fn recognises_alert_commands() {
+        let alert = |symbol: &str, above: Option<bool>, price: f64| Intent::Alert { symbol: symbol.into(), above, price };
+
+        assert_eq!(parse_query("nepse alert nabil above 600"), Some(alert("NABIL", Some(true), 600.0)));
+        assert_eq!(parse_query("nepse alert nabil below 1,250.5"), Some(alert("NABIL", Some(false), 1250.5)));
+        assert_eq!(parse_query("nepse alert nabil > 600"), Some(alert("NABIL", Some(true), 600.0)));
+        assert_eq!(parse_query("nepse alert nabil rs600"), Some(alert("NABIL", None, 600.0)));
+        assert_eq!(parse_query("nepse alert nabil 600"), Some(alert("NABIL", None, 600.0)));
+        assert_eq!(parse_query("nepse alerts"), Some(Intent::Alerts));
+
+        for bad in [
+            "nepse alert",
+            "nepse alert nabil",
+            "nepse alert nabil above",
+            "nepse alert nabil sideways 5",
+            "nepse alert nabil above -5",
+            "nepse alert nabil above 0",
+            "nepse alert nabil above nan",
+            "nepse alert nabil above 99999999",
+            "nepse alert ../x above 5",
+        ] {
+            assert_eq!(parse_query(bad), Some(Intent::Usage(ALERT_EXAMPLE)), "{bad}");
+        }
+    }
+
+    #[test]
+    fn offers_an_alert_or_explains_why_not() {
+        let quote = &sample_quotes()[2];
+
+        // NABIL is 3.0 in the sample table.
+        let set = alert_result(quote, Some(true), 5.0);
+
+        assert_eq!(set.id, "nepse:alert:NABIL:above:5.00");
+        assert_eq!(set.title, "Alert: NABIL above Rs 5.00");
+        assert!(set.detail.unwrap().contains("Distance|+66.67%"));
+
+        // Direction picked from the price when not given.
+        assert_eq!(alert_result(quote, None, 2.0).id, "nepse:alert:NABIL:below:2.00");
+
+        // Already past the target: nothing to set.
+        let done = alert_result(quote, Some(true), 2.0);
+
+        assert_eq!(done.kind, ResultKind::Notice);
+        assert_eq!(done.title, "NABIL is already above Rs 2.00");
+    }
+
+    #[test]
+    fn alert_ids_resolve_to_a_notification_and_nothing_else() {
+        let provider = NepseProvider::new();
+
+        // Malformed ids never touch the alerts file.
+        for id in ["nepse:alert:NABIL:above:-3", "nepse:alert:../x:above:5", "nepse:unalert:junk"] {
+            assert!(provider.resolve(id).unwrap().is_err(), "{id}");
+        }
+
+        let spec = notify_spec("A title", "-n a body");
+
+        assert_eq!(spec.program, "notify-send");
+        // The text sits after `--`, so it cannot be read as an option.
+        assert_eq!(spec.args[2], "--");
+        assert_eq!(&spec.args[3..], ["A title", "-n a body"]);
+    }
+
+    // Shapes copied from the live API (trimmed), checked against the parsers.
+    #[test]
+    fn reads_the_real_sector_answer() {
+        let value: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":{
+                "Microfinance Index":{"id":64,"index":"Microfinance Index","change":23.97,"perChange":0.53,"currentValue":4507.17},
+                "Mutual Fund":{"id":66,"index":"Mutual Fund","change":0.14,"perChange":0.73,"currentValue":19.75},
+                "Investment Index":{"id":67,"index":"Investment Index","change":-0.07,"perChange":-0.08,"currentValue":94.82},
+                "Banking SubIndex":{"id":51,"index":"Banking SubIndex","change":11.4,"perChange":0.72,"currentValue":1574.47}}}"#,
+        )
+        .unwrap();
+        let page = parse_sectors(&value).unwrap();
+
+        assert_eq!(page.subtitle, "4 sub-indices, best first");
+        // Best first: Mutual Fund +0.73, Banking +0.72, Microfinance +0.53, Investment -0.08.
+        assert!(page.lines[0].starts_with("Mutual Fund|19.75  \u{25b2}"), "{:?}", page.lines);
+        assert!(page.lines[1].starts_with("Banking SubIndex|1,574.47"), "{:?}", page.lines);
+        assert!(page.lines[3].starts_with("Investment Index|94.82  \u{25bc}"), "{:?}", page.lines);
+    }
+
+    #[test]
+    fn reads_the_real_holiday_answer() {
+        let value: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":[
+                {"id":null,"instrumentTypeId":null,"holidayDate":"2026-12-30","holidayDescription":"Tamu Lhosar","activeStatus":null},
+                {"id":null,"instrumentTypeId":null,"holidayDate":"2026-11-15","holidayDescription":"Chhath Parva","activeStatus":null},
+                {"id":null,"instrumentTypeId":null,"holidayDate":"2026-10-01","holidayDescription":"Already past","activeStatus":null}]}"#,
+        )
+        .unwrap();
+        let page = parse_holidays(&value, "2026-10-23").unwrap();
+
+        // The API lists them newest first: they come out soonest first, past ones dropped.
+        assert_eq!(page.subtitle, "Next: 2026-11-15 \u{b7} Chhath Parva");
+        assert_eq!(page.lines, ["2026-11-15|Chhath Parva", "2026-12-30|Tamu Lhosar"]);
+    }
+
+    #[test]
+    fn the_real_empty_market_depth_answer_is_not_an_error() {
+        // Outside trading hours `data` is an empty string.
+        let value: Value =
+            serde_json::from_str(r#"{"status":"success","message":"Operation successful","data":""}"#).unwrap();
+        let page = parse_depth(&value, "NABIL").unwrap();
+
+        assert_eq!(page.title, "No market depth for NABIL");
+    }
+
+    #[test]
+    fn reads_the_real_nested_news_answer() {
+        let value: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":[
+                {"id":47714,"activeStatus":"A","applicationType":39,"applicationStatus":3,
+                 "companyNews":{"id":70829,"activeStatus":"A","newsSource":"Letter",
+                   "newsHeadline":"Regarding the AGM, Appointment of Directors and Statutory Auditor [NABIL] ",
+                   "newsBody":"","newsType":"Others",
+                   "security":{"id":131,"symbol":"NABIL","listingDate":"1985-11-24","faceValue":100.0}}}]}"#,
+        )
+        .unwrap();
+        let page = parse_news(&value, "NABIL").unwrap();
+
+        assert_eq!(page.title, "NABIL news");
+        // No date field in this sample (the security's listing date must not be used):
+        // the kind of news labels the line instead.
+        assert_eq!(page.lines, ["Others|Regarding the AGM, Appointment of Directors and Statutory Auditor [NABIL]"]);
+        assert_eq!(page.subtitle, "1 items");
+
+        let dated: Value = serde_json::from_str(
+            r#"{"data":[{"companyNews":{"newsHeadline":"A","addedDate":"2026-10-12T10:00:00"}},
+                        {"companyNews":{"newsHeadline":"B","addedDate":"2026-10-20T10:00:00"}}]}"#,
+        )
+        .unwrap();
+        let page = parse_news(&dated, "X1").unwrap();
+
+        assert_eq!(page.subtitle, "2 items \u{b7} latest 2026-10-20");
+        assert_eq!(page.lines[0], "2026-10-12|A");
+    }
+
+    // Shapes copied from the live API (trimmed).
+    #[test]
+    fn reads_the_real_company_detail_answers() {
+        let details: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":{
+                "securityDailyTradeDto":{"securityId":"131","openPrice":548.0,"highPrice":549.2,"lowPrice":544.0,
+                  "totalTradeQuantity":30945,"totalTrades":280,"lastTradedPrice":547.0,"previousClose":546.0,
+                  "businessDate":"2026-10-16","closePrice":547.0,"fiftyTwoWeekHigh":581.0,"fiftyTwoWeekLow":485.0},
+                "security":{"id":131,"symbol":"NABIL","isin":"NPE025A00004","listingDate":"1985-11-24",
+                  "creditRating":null,"tickSize":0.1,"instrumentType":{"id":1,"code":"EQ"},"faceValue":100.0}}}"#,
+        )
+        .unwrap();
+        let lines = detail_lines(&details);
+
+        for expected in [
+            "Last traded on|2026-10-16",
+            "Open|548.00",
+            "Day high|549.20",
+            "Day low|544.00",
+            "Trades|280",
+            "Face value|100.00",
+            "52-week high|581.00",
+            "52-week low|485.00",
+        ] {
+            assert!(lines.contains(&expected.to_owned()), "{expected}: {lines:?}");
+        }
+
+        let financial: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":[
+                {"id":46727,"activeStatus":"A","applicationType":111,"companyNews":null,
+                 "fiscalReport":{"id":6835,"quarterMaster":{"id":4,"quarterName":"Fourth Quarter"},
+                   "reportTypeMaster":{"id":2,"reportName":"Quarterly Report"},
+                   "financialYear":{"id":41,"fyName":"2025-2026","fromYear":"2025-07-17"},
+                   "peValue":18.86,"epsValue":28.36,"paidUpCapital":27056996729.0,
+                   "profitAmount":7905796000.0,"netWorthPerShare":247.28,"remarks":null}}]}"#,
+        )
+        .unwrap();
+        let lines = detail_lines(&financial);
+
+        for expected in [
+            "EPS|28.36",
+            "P/E ratio|18.86",
+            "Book value|247.28",
+            "Net profit|Rs 7.91B",
+            "Paid-up capital|Rs 27.06B",
+            "Latest report|Fourth Quarter",
+            "Fiscal year|2025-2026",
+        ] {
+            assert!(lines.contains(&expected.to_owned()), "{expected}: {lines:?}");
+        }
+    }
+
+    #[test]
+    fn details_never_repeat_a_line_the_price_list_gave() {
+        let value: Value = serde_json::from_str(
+            r#"[{"symbol":"NABIL","lastTradedPrice":547,"previousClose":546,"openPrice":540}]"#,
+        )
+        .unwrap();
+        let quote = find_rows(&value).into_iter().filter_map(quote_from).next().unwrap();
+        let extra = vec!["Open|548.00".to_owned(), "Trades|280".to_owned()];
+        let detail = quote_result(&quote, 1850, &extra).detail.unwrap();
+
+        // The price list already gave the open price, so the details one is skipped.
+        assert_eq!(detail.lines().filter(|line| line.starts_with("Open|")).count(), 1);
+        assert!(detail.contains("Trades|280"));
     }
 }

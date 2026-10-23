@@ -165,6 +165,19 @@ struct Preview {
     thumb_request: Option<PathBuf>,
 }
 
+/// What Enter does for a result, in words (NEPSE results are not stock quotes to open).
+fn action_label_for(hit: &SearchHit) -> &'static str {
+    if hit.id.starts_with("nepse:alert:") {
+        "Set alert"
+    } else if hit.id.starts_with("nepse:unalert:") {
+        "Remove alert"
+    } else if hit.id.starts_with("nepse:") {
+        "Open NEPSE site"
+    } else {
+        kind_meta(&hit.kind).1
+    }
+}
+
 fn cache_dir() -> PathBuf {
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
@@ -570,6 +583,8 @@ struct LauncherView {
     /// Index of each result among the list's child elements (section headers count).
     row_index: Vec<usize>,
     scroll: ScrollHandle,
+    /// Scroll position of the preview pane (reset whenever the selection changes).
+    preview_scroll: ScrollHandle,
     selected: usize,
     status: Option<String>,
     /// A hint (not an error), shown dimmed.
@@ -639,6 +654,7 @@ impl LauncherView {
             sections: Vec::new(),
             row_index: Vec::new(),
             scroll: ScrollHandle::new(),
+            preview_scroll: ScrollHandle::new(),
             selected: 0,
             status: None,
             notice: None,
@@ -918,7 +934,19 @@ impl LauncherView {
         }
     }
 
+    /// Scroll the preview pane by `delta` pixels (positive is down), within its content.
+    fn scroll_preview(&self, delta: f32, cx: &mut Context<Self>) {
+        let offset = self.preview_scroll.offset();
+        let furthest = f32::from(self.preview_scroll.max_offset().y).abs();
+        let y = (f32::from(offset.y) - delta).clamp(-furthest, 0.0);
+
+        self.preview_scroll.set_offset(point(offset.x, px(y)));
+        cx.notify();
+    }
+
     fn refresh_preview(&mut self) {
+        self.preview_scroll.set_offset(point(px(0.), px(0.)));
+
         self.preview = if self.settings.appearance.show_preview {
             self.results
                 .get(self.selected)
@@ -1536,6 +1564,15 @@ impl LauncherView {
                 self.move_selection(if shift { -1 } else { 1 }, cx);
                 return;
             }
+            // Long previews (news, a sector list) scroll from the keyboard too.
+            "pagedown" => {
+                self.scroll_preview(240.0, cx);
+                return;
+            }
+            "pageup" => {
+                self.scroll_preview(-240.0, cx);
+                return;
+            }
             _ => {}
         }
 
@@ -1773,7 +1810,8 @@ impl LauncherView {
             base.hover(|style| style.bg(rgba(pal.hover)))
         };
 
-        let (kind_label, action_label) = kind_meta(&hit.kind);
+        let (kind_label, _) = kind_meta(&hit.kind);
+        let action_label = action_label_for(hit);
 
         let trailing = div()
             .flex()
@@ -2160,24 +2198,35 @@ impl LauncherView {
                 })
         });
 
+        // The pane scrolls; its content keeps its natural height (flex_shrink_0) and overflows
+        // the pane's maximum height instead of being squeezed or cut off.
         Some(
             div()
+                .id("preview")
                 .flex()
                 .flex_col()
-                .gap_3()
                 .w(px(304.))
                 .max_w_full()
                 .max_h(px(LIST_MAX_H + 48.))
                 .flex_shrink_0()
-                .overflow_hidden()
-                .p_4()
+                .overflow_y_scroll()
+                .track_scroll(&self.preview_scroll)
                 .border_l_1()
                 .border_color(rgba(pal.divider))
-                .child(header)
-                .children(info)
-                .children(contents)
-                .children(body)
-                .children(buttons)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_shrink_0()
+                        .gap_3()
+                        .w_full()
+                        .p_4()
+                        .child(header)
+                        .children(info)
+                        .children(contents)
+                        .children(body)
+                        .children(buttons),
+                )
                 .into_any_element(),
         )
     }
@@ -2188,7 +2237,7 @@ impl LauncherView {
 
         match self.results.get(self.selected).filter(|hit| !is_inert(&hit.kind)) {
             Some(hit) => {
-                hints.push(("Enter", kind_meta(&hit.kind).1));
+                hints.push(("Enter", action_label_for(hit)));
 
                 match hit.kind.as_str() {
                     "file" | "folder" => {
@@ -2202,6 +2251,11 @@ impl LauncherView {
 
                 if self.settings.plugins.dictionary {
                     hints.push(("Ctrl+L", "Look up"));
+                }
+
+                // Only worth a hint when the preview actually has more to show.
+                if f32::from(self.preview_scroll.max_offset().y).abs() > 0.5 {
+                    hints.push(("PgUp/PgDn", "Scroll preview"));
                 }
             }
             None => {

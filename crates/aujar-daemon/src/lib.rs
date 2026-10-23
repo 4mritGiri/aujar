@@ -354,6 +354,9 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
         start_hotkeys(Arc::clone(&shared));
     }
 
+    // NEPSE price alerts: a thread that checks saved alerts and shows notifications.
+    aujar_launcher::spawn_nepse_alert_watcher(|| current_options().nepse);
+
     run_server(listener, Arc::clone(&shared)).await?;
 
     // Tell subscribers we are going away, and give their tasks a moment to write it.

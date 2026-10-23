@@ -10,7 +10,7 @@ and can be switched off in Settings (`[plugins] dictionary / weather / stocks / 
 | `define word`, `meaning of word`, `what does word mean`, Ctrl+L | dictionaryapi.dev | English. Enter opens the entry on Wiktionary. |
 | `weather paris`, `weather in new york`, `oslo forecast` | Open-Meteo (geocoding + forecast) | No key. `[weather] imperial = true` for °F and mph. |
 | `stock aapl`, `$tsla`, `msft share price`, `quote brk-b` | Yahoo Finance chart endpoint | Unofficial and keyless: it may rate-limit or change. Delayed quotes, for information only. |
-| `nepse nabil`, `nabil nepse`, `nepse nic asia` (part of a symbol or company name), `nepse`, `nepse gainers`, `nepse losers`, `nepse open`, `nepse sectors`, `nepse holidays`, `nepse depth nabil`, `nepse news nabil` | Fintech Nepal NEPSE API (`warehouse.fintechnepal.com.np`) | Needs an API key: paste it in Settings > Search plugins > NEPSE API key (saved with owner-only permissions in `~/.config/aujar/nepse.key`), or set `AUJAR_NEPSE_KEY`. Sent only to that host. The API documents its paths but not its answers, so parsing is tolerant; `[plugins] nepse = false` turns it off. |
+| `nepse nabil`, `nabil nepse`, `nepse nic asia` (part of a symbol or company name), `nepse`, `nepse gainers`, `nepse losers`, `nepse open`, `nepse sectors`, `nepse holidays`, `nepse depth nabil`, `nepse news nabil`, `nepse alert nabil above 600`, `nepse alerts` | Fintech Nepal NEPSE API (`warehouse.fintechnepal.com.np`) | Needs an API key: paste it in Settings > Search plugins > NEPSE API key (saved with owner-only permissions in `~/.config/aujar/nepse.key`), or set `AUJAR_NEPSE_KEY`. Sent only to that host. The API documents its paths but not its answers, so parsing is tolerant; `[plugins] nepse = false` turns it off. |
 | `nba`, `nfl scores`, `premier league`, `nba lakers`, `ucl` | ESPN public scoreboard | Unofficial and keyless. Leagues: NBA, WNBA, NFL, MLB, NHL, Premier League, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Champions League. |
 
 How it stays fast: a keystroke never waits on the network. The provider answers at once from
@@ -50,3 +50,17 @@ in flight the window ignores focus loss, and closes itself 30 s after the drag l
 
 Right-click a result, or press Ctrl+K / Shift+F10: Open (Enter), Show in Folder (Ctrl+Enter),
 Copy (Ctrl+C), Look Up (Ctrl+L), Search the Web (Ctrl+B).
+
+## NEPSE price alerts
+
+`nepse alert nabil above 600` (or `below 500`, or just `nepse alert nabil 600` to let Aujar pick the
+direction from the current price) shows what the alert would do; press Enter to save it. A short
+notification confirms it. `nepse alerts` lists them, and Enter on one removes it.
+
+- The daemon checks about once a minute while the market is open, and every ten minutes while it
+  is closed, so each check is a single cached price call. The alert fires once, then is deleted.
+- One alert per symbol and direction (setting another replaces it), at most 50 in total.
+- Alerts are kept in `~/.config/aujar/nepse-alerts.json`. Notifications use `notify-send`
+  (`libnotify-bin` on Debian/Ubuntu, `libnotify` on Fedora/Arch). If it is missing the alert is
+  kept and tried again.
+- Alerts pause while the NEPSE plugin is switched off, and need the NEPSE API key.
