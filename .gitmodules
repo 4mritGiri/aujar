@@ -1,6 +1,3 @@
-[submodule "third_party/nexdesk"]
-	path = third_party/nexdesk
-	url = https://github.com/4mritGiri/nexdesk.git
-[submodule "integrations/nexdesk"]
+[submodule "nexdesk"]
 	path = integrations/nexdesk
 	url = https://github.com/4mritGiri/nexdesk.git

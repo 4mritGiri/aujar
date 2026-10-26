@@ -579,6 +579,7 @@ dependencies = [
  "aujar-ipc",
  "aujar-launcher",
  "aujar-mouse-borders",
+ "aujar-nexdesk",
  "aujar-platform",
  "aujar-rename",
  "aujar-runtime",
@@ -608,6 +609,7 @@ dependencies = [
  "anyhow",
  "aujar-core",
  "aujar-mouse-borders",
+ "aujar-nexdesk",
  "aujar-rename",
  "serde",
  "serde_json",
@@ -706,6 +708,19 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "aujar-nexdesk"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "aujar-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

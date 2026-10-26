@@ -68,7 +68,12 @@ pub struct SearchResult {
 
 impl SearchResult {
     /// A result with no subtitle, icon or detail; chain the `with_*` helpers to fill them in.
-    pub fn new(id: impl Into<String>, title: impl Into<String>, kind: ResultKind, score: u32) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        kind: ResultKind,
+        score: u32,
+    ) -> Self {
         Self {
             id: id.into(),
             title: title.into(),

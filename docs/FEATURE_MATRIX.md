@@ -55,6 +55,7 @@ or screen capture, so each feature lists its backend per session type.
 | Image utilities | Image Resizer | — | 📅 | 📅 | 📅 | 📅 | 📅 | Pure Rust, no session dependency |
 | Keyboard remapping | Keyboard Manager | — | ⚠️ | ⚠️ (evdev/uinput, needs privileges) | ⚠️ | ⚠️ | ⚠️ | Privileged helper; design under review |
 | Mouse Without Borders (Linux, macOS, Windows) | Mouse Without Borders | `modules/mouse-borders` | ✅ engine, encrypted protocol, CLI, system service, 120+ tests; evdev/uinput/X11 backends compile-checked and smoke-tested with two real daemons, not yet on physical hardware. Layout editor in the settings window (drag-and-drop 📅) ([MOUSE_BORDERS](MOUSE_BORDERS.md)) | ✅ edges + shortcuts | ⚠️ shortcuts only: no pointer position on Wayland | ⚠️ shortcuts only | ⚠️ shortcuts only | evdev capture, uinput injection, X11 pointer; InputCapture portal 📅 |
+| NexDesk (open the remote-access manager) | — | `modules/nexdesk` | ✅ `aujar nexdesk open` / `status`; saved-connection search and a settings page 📅 ([NEXDESK](NEXDESK.md)) | ✅ | ✅ | ✅ | ✅ | process launch only, no desktop backend |
 | Mouse utilities (find my mouse, highlighter) | Mouse Utilities | — | 📅 | ❌ generic / ⚠️ per compositor | ⚠️ | ⚠️ | ⚠️ | |
 | Text extractor (OCR) | Text Extractor | — | 📅 | 📅 | 📅 | 📅 | 📅 | Screen capture + Tesseract |
 | Awake (inhibit sleep) | Awake | — | 📅 | 📅 | 📅 (logind / portal Inhibit) | 📅 | 📅 | |

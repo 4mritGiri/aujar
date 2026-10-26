@@ -187,8 +187,11 @@ fn plausible_word(word: &str) -> Option<String> {
     let word = word.trim_matches(|c| c == '-' || c == '\'').to_lowercase();
     let count = word.chars().count();
 
-    ((2..=40).contains(&count) && word.chars().all(|c| c.is_alphabetic() || c == '-' || c == '\''))
-        .then_some(word)
+    ((2..=40).contains(&count)
+        && word
+            .chars()
+            .all(|c| c.is_alphabetic() || c == '-' || c == '\''))
+    .then_some(word)
 }
 
 // ---- Context menu -------------------------------------------------------------------------
@@ -278,7 +281,12 @@ pub fn weather_parts(detail: &str) -> (Vec<String>, Vec<ForecastDay>) {
         let fields: Vec<&str> = line.split('|').collect();
 
         if let [name, condition, high, low] = fields[..] {
-            days.push((name.to_owned(), condition.to_owned(), high.to_owned(), low.to_owned()));
+            days.push((
+                name.to_owned(),
+                condition.to_owned(),
+                high.to_owned(),
+                low.to_owned(),
+            ));
         } else if !line.trim().is_empty() {
             facts.push(line.to_owned());
         }
@@ -351,8 +359,22 @@ mod tests {
     #[test]
     fn every_kind_has_a_section_icon_and_meta() {
         for kind in [
-            "application", "calculation", "file", "folder", "system", "command", "clip", "action",
-            "definition", "weather", "stock", "sports", "window", "loading", "notice", "web",
+            "application",
+            "calculation",
+            "file",
+            "folder",
+            "system",
+            "command",
+            "clip",
+            "action",
+            "definition",
+            "weather",
+            "stock",
+            "sports",
+            "window",
+            "loading",
+            "notice",
+            "web",
         ] {
             let _ = section_of(kind);
             assert!(icon_for_kind(kind, "x:y:z").starts_with("icons/"));
@@ -373,7 +395,10 @@ mod tests {
 
     #[test]
     fn loading_is_detected() {
-        assert!(has_loading(&[hit("application", "a"), hit("loading", "loading:x")]));
+        assert!(has_loading(&[
+            hit("application", "a"),
+            hit("loading", "loading:x")
+        ]));
         assert!(!has_loading(&[hit("notice", "n")]));
     }
 
@@ -386,11 +411,20 @@ mod tests {
 
     #[test]
     fn look_up_prefers_the_first_usable_source() {
-        assert_eq!(define_query(&["", "serendipity"]).as_deref(), Some("define serendipity"));
-        assert_eq!(define_query(&["Ubiquitous", "other"]).as_deref(), Some("define ubiquitous"));
+        assert_eq!(
+            define_query(&["", "serendipity"]).as_deref(),
+            Some("define serendipity")
+        );
+        assert_eq!(
+            define_query(&["Ubiquitous", "other"]).as_deref(),
+            Some("define ubiquitous")
+        );
         assert_eq!(define_query(&["define cat"]).as_deref(), Some("define cat"));
         assert_eq!(define_query(&["a 12 b"]), None);
-        assert_eq!(define_query(&["Mozilla Firefox"]).as_deref(), Some("define mozilla"));
+        assert_eq!(
+            define_query(&["Mozilla Firefox"]).as_deref(),
+            Some("define mozilla")
+        );
         assert_eq!(define_query(&[]), None);
     }
 
@@ -401,7 +435,13 @@ mod tests {
 
         assert_eq!(
             labels,
-            ["Open", "Show in Folder", "Copy Path", "Look Up in Dictionary", "Search the Web"]
+            [
+                "Open",
+                "Show in Folder",
+                "Copy Path",
+                "Look Up in Dictionary",
+                "Search the Web"
+            ]
         );
 
         let app = menu_items(&hit("application", "apps:x"), false);
@@ -414,7 +454,9 @@ mod tests {
 
     #[test]
     fn parses_weather_detail() {
-        let (facts, days) = weather_parts("Partly cloudy\nHumidity 62%\n\nToday|Partly cloudy|20\u{b0}C|11\u{b0}C\nMon|Light rain|17\u{b0}C|10\u{b0}C");
+        let (facts, days) = weather_parts(
+            "Partly cloudy\nHumidity 62%\n\nToday|Partly cloudy|20\u{b0}C|11\u{b0}C\nMon|Light rain|17\u{b0}C|10\u{b0}C",
+        );
 
         assert_eq!(facts, ["Partly cloudy", "Humidity 62%"]);
         assert_eq!(days.len(), 2);
@@ -437,7 +479,8 @@ mod tests {
 
     #[test]
     fn splits_definition_detail() {
-        let (first, lines) = definition_parts("The first.\n1. The first.\n   \u{201c}Example\u{201d}");
+        let (first, lines) =
+            definition_parts("The first.\n1. The first.\n   \u{201c}Example\u{201d}");
 
         assert_eq!(first, "The first.");
         assert_eq!(lines.len(), 2);

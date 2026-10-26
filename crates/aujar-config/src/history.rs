@@ -105,7 +105,8 @@ impl History {
         }
 
         if self.entries.len() > MAX_ENTRIES {
-            self.entries.sort_by(|a, b| b.last_used.cmp(&a.last_used));
+            self.entries
+                .sort_by_key(|entry| std::cmp::Reverse(entry.last_used));
             self.entries.truncate(MAX_ENTRIES);
         }
     }
@@ -121,7 +122,7 @@ impl History {
     pub fn recent(&self, limit: usize) -> Vec<&HistoryEntry> {
         let mut entries: Vec<&HistoryEntry> = self.entries.iter().collect();
 
-        entries.sort_by(|a, b| b.last_used.cmp(&a.last_used));
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.last_used));
         entries.truncate(limit);
 
         entries

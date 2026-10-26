@@ -28,12 +28,17 @@ pub enum Request {
     Status,
     /// Share keyboard, mouse, clipboard and files with other machines.
     MouseBorders(MouseBordersRequest),
+    /// Open the NexDesk remote-access manager, or ask whether it is installed.
+    NexDesk(NexDeskRequest),
 }
 
 /// Mouse Borders request and response types, shared with the standalone agent.
 pub use aujar_mouse_borders::api::{
     MouseBordersPeer, MouseBordersRequest, MouseBordersResponse, MouseBordersStatus,
 };
+
+/// NexDesk request and response types.
+pub use aujar_nexdesk::api::{NexDeskRequest, NexDeskResponse, NexDeskStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LauncherCommand {
@@ -61,6 +66,7 @@ impl Request {
             Self::Execute(_) => Some(Capability::ExecuteCommand),
             Self::PickColor => Some(Capability::ScreenCapture),
             Self::MouseBorders(request) => request.required_capability(),
+            Self::NexDesk(request) => request.required_capability(),
             Self::Ping
             | Self::Health
             | Self::Modules
@@ -131,6 +137,7 @@ pub enum Response {
     Color(ColorResponse),
     Status(StatusResponse),
     MouseBorders(MouseBordersResponse),
+    NexDesk(NexDeskResponse),
     /// A launcher command was broadcast to this many subscribers.
     Delivered {
         subscribers: usize,
@@ -325,6 +332,18 @@ mod tests {
         assert_eq!(
             Request::Launcher(LauncherCommand::Toggle).required_capability(),
             None
+        );
+    }
+
+    #[test]
+    fn nexdesk_open_needs_execute_command_and_status_needs_nothing() {
+        assert_eq!(
+            Request::NexDesk(NexDeskRequest::Status).required_capability(),
+            None
+        );
+        assert_eq!(
+            Request::NexDesk(NexDeskRequest::Open).required_capability(),
+            Some(Capability::ExecuteCommand)
         );
     }
 

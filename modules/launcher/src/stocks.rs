@@ -50,7 +50,14 @@ fn parse_query(query: &str) -> Option<String> {
 
     let mut symbol = None;
 
-    for prefix in ["stock price ", "stocks ", "stock ", "quote ", "ticker ", "share price "] {
+    for prefix in [
+        "stock price ",
+        "stocks ",
+        "stock ",
+        "quote ",
+        "ticker ",
+        "share price ",
+    ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
             symbol = Some(rest);
             break;
@@ -84,7 +91,10 @@ fn parse_quote(value: &serde_json::Value, requested: &str) -> Result<Found, Stri
         .ok_or_else(|| "the quote service sent an unexpected answer".to_owned())?;
 
     if let Some(error) = chart.get("error").filter(|error| !error.is_null()) {
-        let code = error.get("code").and_then(|code| code.as_str()).unwrap_or("");
+        let code = error
+            .get("code")
+            .and_then(|code| code.as_str())
+            .unwrap_or("");
 
         return if code.eq_ignore_ascii_case("Not Found") {
             Ok(Found::Unknown)
@@ -185,17 +195,29 @@ fn result_for(quote: &Quote) -> SearchResult {
     let title = if quote.currency.is_empty() {
         format!("{}  {}", quote.symbol, price_text(quote.price))
     } else {
-        format!("{}  {} {}", quote.symbol, price_text(quote.price), quote.currency)
+        format!(
+            "{}  {} {}",
+            quote.symbol,
+            price_text(quote.price),
+            quote.currency
+        )
     };
 
     // The arrow is what the UI colours green or red.
-    let change = quote.previous_close.filter(|previous| *previous != 0.0).map(|previous| {
-        let delta = quote.price - previous;
-        let percent = delta / previous * 100.0;
-        let arrow = if delta >= 0.0 { '\u{25b2}' } else { '\u{25bc}' };
+    let change = quote
+        .previous_close
+        .filter(|previous| *previous != 0.0)
+        .map(|previous| {
+            let delta = quote.price - previous;
+            let percent = delta / previous * 100.0;
+            let arrow = if delta >= 0.0 { '\u{25b2}' } else { '\u{25bc}' };
 
-        format!("{arrow} {} ({:.2}%)", price_text(delta.abs()), percent.abs())
-    });
+            format!(
+                "{arrow} {} ({:.2}%)",
+                price_text(delta.abs()),
+                percent.abs()
+            )
+        });
 
     let mut subtitle = change.unwrap_or_else(|| "No change data".to_owned());
 
@@ -212,12 +234,20 @@ fn result_for(quote: &Quote) -> SearchResult {
     };
 
     row("Previous close", quote.previous_close.map(price_text));
-    row("Day range", quote.day_low.zip(quote.day_high).map(|(low, high)| {
-        format!("{} \u{2013} {}", price_text(low), price_text(high))
-    }));
-    row("52-week range", quote.year_low.zip(quote.year_high).map(|(low, high)| {
-        format!("{} \u{2013} {}", price_text(low), price_text(high))
-    }));
+    row(
+        "Day range",
+        quote
+            .day_low
+            .zip(quote.day_high)
+            .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))),
+    );
+    row(
+        "52-week range",
+        quote
+            .year_low
+            .zip(quote.year_high)
+            .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))),
+    );
     row("Volume", quote.volume.map(compact));
     row("Exchange", quote.exchange.clone());
 
@@ -288,7 +318,10 @@ impl Provider for StocksProvider {
         Some(Ok(LaunchSpec {
             title: symbol.to_owned(),
             program: "xdg-open".to_owned(),
-            args: vec![format!("https://finance.yahoo.com/quote/{}", web::url_encode(symbol))],
+            args: vec![format!(
+                "https://finance.yahoo.com/quote/{}",
+                web::url_encode(symbol)
+            )],
         }))
     }
 }
@@ -309,7 +342,10 @@ mod tests {
         assert_eq!(parse_query("$tsla").as_deref(), Some("TSLA"));
         assert_eq!(parse_query("msft stock").as_deref(), Some("MSFT"));
         assert_eq!(parse_query("quote brk-b").as_deref(), Some("BRK-B"));
-        assert_eq!(parse_query("stock reliance.ns").as_deref(), Some("RELIANCE.NS"));
+        assert_eq!(
+            parse_query("stock reliance.ns").as_deref(),
+            Some("RELIANCE.NS")
+        );
         assert_eq!(parse_query("nvda share price").as_deref(), Some("NVDA"));
     }
 
@@ -334,7 +370,13 @@ mod tests {
         let result = result_for(&quote);
 
         assert_eq!(result.title, "AAPL  227.48 USD");
-        assert!(result.subtitle.as_deref().unwrap().starts_with("\u{25b2} 2.48 (1.10%)"));
+        assert!(
+            result
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .starts_with("\u{25b2} 2.48 (1.10%)")
+        );
         assert!(result.subtitle.as_deref().unwrap().ends_with("Apple Inc."));
 
         let detail = result.detail.unwrap();
@@ -359,11 +401,19 @@ mod tests {
             exchange: None,
         };
 
-        assert!(result_for(&quote).subtitle.unwrap().starts_with("\u{25bc} 10.00 (10.00%)"));
+        assert!(
+            result_for(&quote)
+                .subtitle
+                .unwrap()
+                .starts_with("\u{25bc} 10.00 (10.00%)")
+        );
 
         quote.previous_close = None;
 
-        assert_eq!(result_for(&quote).subtitle.as_deref(), Some("No change data"));
+        assert_eq!(
+            result_for(&quote).subtitle.as_deref(),
+            Some("No change data")
+        );
     }
 
     #[test]
@@ -373,7 +423,8 @@ mod tests {
         )
         .unwrap();
         let broken: serde_json::Value =
-            serde_json::from_str(r#"{"chart":{"result":null,"error":{"code":"Internal"}}}"#).unwrap();
+            serde_json::from_str(r#"{"chart":{"result":null,"error":{"code":"Internal"}}}"#)
+                .unwrap();
 
         assert_eq!(parse_quote(&unknown, "ZZZZ"), Ok(Found::Unknown));
         assert!(parse_quote(&broken, "ZZZZ").is_err());
@@ -393,7 +444,9 @@ mod tests {
         let provider = StocksProvider::new();
         let value: serde_json::Value = serde_json::from_str(SAMPLE).unwrap();
 
-        provider.cache.insert("AAPL", parse_quote(&value, "AAPL").unwrap());
+        provider
+            .cache
+            .insert("AAPL", parse_quote(&value, "AAPL").unwrap());
 
         assert_eq!(provider.search("stock aapl").len(), 1);
 

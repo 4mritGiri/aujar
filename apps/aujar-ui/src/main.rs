@@ -23,10 +23,10 @@ use aujar_ipc::{
 };
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, ExternalDragPayload, FileDragPaths,
-    FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ScrollHandle, SharedString, TitlebarOptions, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowHandle, WindowOptions,
-    div, img, point, prelude::*, px, rgb, rgba, size, svg,
+    FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    ScrollHandle, SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowHandle, WindowOptions, div, img, point, prelude::*, px, rgb, rgba,
+    size, svg,
 };
 use gpui_platform::application;
 use model::{
@@ -80,7 +80,10 @@ enum UiMessage {
 /// UI thread -> bridge thread.
 enum UiRequest {
     /// `attempt` > 0 is a re-ask for a lookup that was still loading: it waits a moment first.
-    Search { query: String, attempt: u32 },
+    Search {
+        query: String,
+        attempt: u32,
+    },
     Execute(String),
     OpenSettings,
     /// Ask the daemon for the file history (`kind:recent`).
@@ -204,7 +207,9 @@ fn thumb_prefix(path: &Path) -> PathBuf {
     path.hash(&mut hasher);
     modified_secs(path).hash(&mut hasher);
 
-    cache_dir().join("thumbs").join(format!("{:016x}", hasher.finish()))
+    cache_dir()
+        .join("thumbs")
+        .join(format!("{:016x}", hasher.finish()))
 }
 
 fn on_path(program: &str) -> bool {
@@ -228,7 +233,16 @@ fn generate_pdf_thumb(path: &Path) -> bool {
     }
 
     let status = Command::new("pdftoppm")
-        .args(["-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", "560"])
+        .args([
+            "-png",
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "-singlefile",
+            "-scale-to",
+            "560",
+        ])
         .arg(path)
         .arg(&prefix)
         .status();
@@ -287,7 +301,11 @@ fn read_text_preview(path: &Path) -> Option<String> {
 
     let mut buffer = Vec::new();
 
-    fs::File::open(path).ok()?.take(4096).read_to_end(&mut buffer).ok()?;
+    fs::File::open(path)
+        .ok()?
+        .take(4096)
+        .read_to_end(&mut buffer)
+        .ok()?;
 
     // A cut multi-byte character at the 4 KiB boundary is fine; NUL bytes mean binary.
     if buffer.contains(&0) {
@@ -295,7 +313,11 @@ fn read_text_preview(path: &Path) -> Option<String> {
     }
 
     let text = String::from_utf8_lossy(&buffer);
-    let lines: Vec<String> = text.lines().take(14).map(|line| first_chars(line, 70)).collect();
+    let lines: Vec<String> = text
+        .lines()
+        .take(14)
+        .map(|line| first_chars(line, 70))
+        .collect();
 
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
@@ -377,7 +399,11 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
 
                         preview.rows.push((
                             "Contains",
-                            if count > 5000 { "5,000+ items".to_owned() } else { format!("{count} items") },
+                            if count > 5000 {
+                                "5,000+ items".to_owned()
+                            } else {
+                                format!("{count} items")
+                            },
                         ));
                     }
                 } else {
@@ -385,8 +411,12 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
                 }
 
                 let since = |time: std::io::Result<SystemTime>| {
-                    time.and_then(|time| SystemTime::now().duration_since(time).map_err(std::io::Error::other))
-                        .ok()
+                    time.and_then(|time| {
+                        SystemTime::now()
+                            .duration_since(time)
+                            .map_err(std::io::Error::other)
+                    })
+                    .ok()
                 };
 
                 if let Some(elapsed) = since(meta.modified()) {
@@ -412,9 +442,13 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
                         } else if on_path("pdftoppm") {
                             preview.thumb_request = Some(path.clone());
                         }
-                    } else if IMAGE_EXTENSIONS.contains(&extension.as_str()) && meta.len() < 15_000_000 {
+                    } else if IMAGE_EXTENSIONS.contains(&extension.as_str())
+                        && meta.len() < 15_000_000
+                    {
                         preview.image = Some(path.clone());
-                    } else if TEXT_EXTENSIONS.contains(&extension.as_str()) && meta.len() < 1_000_000 {
+                    } else if TEXT_EXTENSIONS.contains(&extension.as_str())
+                        && meta.len() < 1_000_000
+                    {
                         preview.text = read_text_preview(&path);
                     }
                 }
@@ -432,13 +466,17 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
                 .and_then(|index| clips.get(index));
 
             if let Some(text) = text {
-                preview.rows.push(("Length", format!("{} characters", text.chars().count())));
+                preview
+                    .rows
+                    .push(("Length", format!("{} characters", text.chars().count())));
                 preview.text = Some(first_chars(text, 700));
             }
         }
         "calculation" => {
             if let Some(expression) = &hit.subtitle {
-                preview.rows.push(("Input", expression.trim_start_matches("= ").to_owned()));
+                preview
+                    .rows
+                    .push(("Input", expression.trim_start_matches("= ").to_owned()));
             }
 
             preview.rows.push(("Result", hit.title.clone()));
@@ -730,7 +768,9 @@ impl LauncherView {
 
         let start = self.query[..index]
             .rfind(char::is_whitespace)
-            .map_or(0, |at| at + self.query[at..].chars().next().map_or(1, char::len_utf8));
+            .map_or(0, |at| {
+                at + self.query[at..].chars().next().map_or(1, char::len_utf8)
+            });
         let end = self.query[index..]
             .find(char::is_whitespace)
             .map_or(self.query.len(), |at| index + at);
@@ -750,7 +790,8 @@ impl LauncherView {
     }
 
     fn snapshot(&mut self) {
-        self.undo.push((self.query.clone(), self.anchor, self.cursor));
+        self.undo
+            .push((self.query.clone(), self.anchor, self.cursor));
 
         if self.undo.len() > 100 {
             self.undo.remove(0);
@@ -787,7 +828,8 @@ impl LauncherView {
 
     fn undo(&mut self, cx: &mut Context<Self>) {
         if let Some(previous) = self.undo.pop() {
-            self.redo.push((self.query.clone(), self.anchor, self.cursor));
+            self.redo
+                .push((self.query.clone(), self.anchor, self.cursor));
             self.restore(previous);
             self.edited(cx);
         }
@@ -795,7 +837,8 @@ impl LauncherView {
 
     fn redo(&mut self, cx: &mut Context<Self>) {
         if let Some(next) = self.redo.pop() {
-            self.undo.push((self.query.clone(), self.anchor, self.cursor));
+            self.undo
+                .push((self.query.clone(), self.anchor, self.cursor));
             self.restore(next);
             self.edited(cx);
         }
@@ -866,7 +909,10 @@ impl LauncherView {
                 return Some(String::new());
             }
 
-            if let Some(rest) = lower.strip_prefix(keyword).filter(|rest| rest.starts_with(' ')) {
+            if let Some(rest) = lower
+                .strip_prefix(keyword)
+                .filter(|rest| rest.starts_with(' '))
+            {
                 return Some(rest.trim().to_owned());
             }
         }
@@ -955,7 +1001,11 @@ impl LauncherView {
             None
         };
 
-        if let Some(path) = self.preview.as_mut().and_then(|preview| preview.thumb_request.take()) {
+        if let Some(path) = self
+            .preview
+            .as_mut()
+            .and_then(|preview| preview.thumb_request.take())
+        {
             let _ = self.requests.try_send(UiRequest::Thumbnail(path));
         }
     }
@@ -1253,8 +1303,16 @@ impl LauncherView {
     /// Ctrl+L (Spotlight's Cmd+L): define the selected text, else the query, else the word in
     /// the selected result's title.
     fn look_up(&mut self, cx: &mut Context<Self>) {
-        let selected = if self.has_selection() { self.selected_text().to_owned() } else { String::new() };
-        let title = self.results.get(self.selected).map(|hit| hit.title.clone()).unwrap_or_default();
+        let selected = if self.has_selection() {
+            self.selected_text().to_owned()
+        } else {
+            String::new()
+        };
+        let title = self
+            .results
+            .get(self.selected)
+            .map(|hit| hit.title.clone())
+            .unwrap_or_default();
 
         match define_query(&[selected.as_str(), self.query.as_str(), title.as_str()]) {
             Some(query) => self.set_query(&query, cx),
@@ -1267,7 +1325,11 @@ impl LauncherView {
 
     /// Whether a dictionary word is available for the selected result (menu entry).
     fn can_look_up(&self) -> bool {
-        let title = self.results.get(self.selected).map(|hit| hit.title.as_str()).unwrap_or("");
+        let title = self
+            .results
+            .get(self.selected)
+            .map(|hit| hit.title.as_str())
+            .unwrap_or("");
 
         self.settings.plugins.dictionary && define_query(&[self.query.as_str(), title]).is_some()
     }
@@ -1751,7 +1813,11 @@ impl LauncherView {
         } else {
             rgb(pal.text)
         };
-        let sub_color = if selected { rgba(pal.on_accent_dim) } else { rgb(pal.text_dim) };
+        let sub_color = if selected {
+            rgba(pal.on_accent_dim)
+        } else {
+            rgb(pal.text_dim)
+        };
 
         let base = div()
             .id(SharedString::from(format!("row-{index}")))
@@ -1822,12 +1888,24 @@ impl LauncherView {
             .text_xs()
             .text_color(sub_color)
             .child(if selected {
-                if confirming { "Enter again" } else { action_label }
+                if confirming {
+                    "Enter again"
+                } else {
+                    action_label
+                }
             } else {
                 kind_label
             })
             .when(selected && !inert, |this| {
-                this.child(self.glyph("icons/enter.svg", 14., if selected { pal.on_accent } else { pal.text_dim }))
+                this.child(self.glyph(
+                    "icons/enter.svg",
+                    14.,
+                    if selected {
+                        pal.on_accent
+                    } else {
+                        pal.text_dim
+                    },
+                ))
             });
 
         if hit.kind == "calculation" {
@@ -1839,10 +1917,18 @@ impl LauncherView {
                         .flex()
                         .flex_col()
                         .flex_1()
-                        .child(div().text_xs().text_color(sub_color).child(
-                            hit.subtitle.clone().unwrap_or_else(|| "Answer".to_owned()),
-                        ))
-                        .child(div().text_3xl().text_color(title_color).child(hit.title.clone())),
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(sub_color)
+                                .child(hit.subtitle.clone().unwrap_or_else(|| "Answer".to_owned())),
+                        )
+                        .child(
+                            div()
+                                .text_3xl()
+                                .text_color(title_color)
+                                .child(hit.title.clone()),
+                        ),
                 )
                 .child(trailing)
                 .into_any_element();
@@ -1851,12 +1937,21 @@ impl LauncherView {
         if card {
             // Weather, quotes, scores and definitions: a larger row with the key facts.
             let first_definition = (hit.kind == "definition")
-                .then(|| hit.detail.as_deref().map(|detail| definition_parts(detail).0))
+                .then(|| {
+                    hit.detail
+                        .as_deref()
+                        .map(|detail| definition_parts(detail).0)
+                })
                 .flatten()
                 .filter(|text| !text.is_empty());
 
-            let subtitle_color = match (hit.kind.as_str(), hit.subtitle.as_deref().and_then(price_direction)) {
-                ("stock", Some(up)) if !selected => rgb(if up { pal.positive } else { pal.negative }),
+            let subtitle_color = match (
+                hit.kind.as_str(),
+                hit.subtitle.as_deref().and_then(price_direction),
+            ) {
+                ("stock", Some(up)) if !selected => {
+                    rgb(if up { pal.positive } else { pal.negative })
+                }
                 _ => sub_color,
             };
 
@@ -1879,10 +1974,22 @@ impl LauncherView {
                                 .child(hit.title.clone()),
                         )
                         .when_some(hit.subtitle.clone(), |this, subtitle| {
-                            this.child(div().text_sm().text_color(subtitle_color).truncate().child(subtitle))
+                            this.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(subtitle_color)
+                                    .truncate()
+                                    .child(subtitle),
+                            )
                         })
                         .when_some(first_definition, |this, text| {
-                            this.child(div().text_sm().text_color(sub_color).line_clamp(2).child(text))
+                            this.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(sub_color)
+                                    .line_clamp(2)
+                                    .child(text),
+                            )
                         }),
                 )
                 .child(trailing)
@@ -1903,9 +2010,21 @@ impl LauncherView {
                     .flex_col()
                     .flex_1()
                     .overflow_hidden()
-                    .child(div().text_base().text_color(title_color).truncate().child(hit.title.clone()))
+                    .child(
+                        div()
+                            .text_base()
+                            .text_color(title_color)
+                            .truncate()
+                            .child(hit.title.clone()),
+                    )
                     .when_some(subtitle, |this, subtitle| {
-                        this.child(div().text_xs().text_color(sub_color).truncate().child(subtitle))
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(sub_color)
+                                .truncate()
+                                .child(subtitle),
+                        )
                     }),
             )
             .child(trailing)
@@ -1951,7 +2070,13 @@ impl LauncherView {
                 let (facts, days) = weather_parts(detail);
 
                 for fact in facts {
-                    body.push(div().text_sm().text_color(rgb(pal.text)).child(fact).into_any_element());
+                    body.push(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(pal.text))
+                            .child(fact)
+                            .into_any_element(),
+                    );
                 }
 
                 if !days.is_empty() {
@@ -1968,10 +2093,30 @@ impl LauncherView {
                             .gap_2()
                             .w_full()
                             .text_sm()
-                            .child(div().w(px(42.)).flex_shrink_0().text_color(rgb(pal.text)).child(name))
-                            .child(div().flex_1().min_w(px(0.)).truncate().text_color(rgb(pal.text_dim)).child(condition))
+                            .child(
+                                div()
+                                    .w(px(42.))
+                                    .flex_shrink_0()
+                                    .text_color(rgb(pal.text))
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .truncate()
+                                    .text_color(rgb(pal.text_dim))
+                                    .child(condition),
+                            )
                             .child(div().flex_shrink_0().text_color(rgb(pal.text)).child(high))
-                            .child(div().flex_shrink_0().w(px(34.)).text_right().text_color(rgb(pal.text_faint)).child(low))
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .w(px(34.))
+                                    .text_right()
+                                    .text_color(rgb(pal.text_faint))
+                                    .child(low),
+                            )
                             .into_any_element(),
                     );
                 }
@@ -2002,7 +2147,11 @@ impl LauncherView {
                                     .flex_1()
                                     .truncate()
                                     .text_sm()
-                                    .font_weight(if won { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                    .font_weight(if won {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::NORMAL
+                                    })
                                     .text_color(rgb(if won { pal.text } else { pal.text_dim }))
                                     .child(name),
                             )
@@ -2021,7 +2170,10 @@ impl LauncherView {
 
         // Answer cards (definitions, weather, stocks, scores) keep a compact header with their
         // details below; everything else gets a Spotlight-style preview.
-        let rich = matches!(hit.kind.as_str(), "definition" | "weather" | "stock" | "sports");
+        let rich = matches!(
+            hit.kind.as_str(),
+            "definition" | "weather" | "stock" | "sports"
+        );
 
         let header: AnyElement = if rich {
             div()
@@ -2041,7 +2193,12 @@ impl LauncherView {
                                 .text_color(rgb(pal.text))
                                 .child(preview.title.clone()),
                         )
-                        .child(div().text_xs().text_color(rgb(pal.text_dim)).child(preview.badge.clone())),
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(pal.text_dim))
+                                .child(preview.badge.clone()),
+                        ),
                 )
                 .into_any_element()
         } else {
@@ -2101,7 +2258,12 @@ impl LauncherView {
                                 .line_clamp(2)
                                 .child(preview.title.clone()),
                         )
-                        .child(div().text_xs().text_color(rgb(pal.text_dim)).child(preview.badge.clone())),
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(pal.text_dim))
+                                .child(preview.badge.clone()),
+                        ),
                 )
                 .into_any_element()
         };
@@ -2159,7 +2321,11 @@ impl LauncherView {
         });
 
         // Open / Show in Folder, like Quick Look's buttons.
-        let button = |id: &'static str, text: &'static str, primary: bool, reveal: bool, cx: &mut Context<Self>| {
+        let button = |id: &'static str,
+                      text: &'static str,
+                      primary: bool,
+                      reveal: bool,
+                      cx: &mut Context<Self>| {
             rounded_px(div(), 8.)
                 .id(id)
                 .flex()
@@ -2169,7 +2335,9 @@ impl LauncherView {
                 .h(px(32.))
                 .cursor_pointer()
                 .text_sm()
-                .when(primary, |this| this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent)))
+                .when(primary, |this| {
+                    this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent))
+                })
                 .when(!primary, |this| {
                     this.bg(rgba(pal.subtle))
                         .border_1()
@@ -2192,7 +2360,13 @@ impl LauncherView {
                 .flex_row()
                 .gap_2()
                 .pt_1()
-                .child(button("preview-open", kind_meta(&hit.kind).1, true, false, cx))
+                .child(button(
+                    "preview-open",
+                    kind_meta(&hit.kind).1,
+                    true,
+                    false,
+                    cx,
+                ))
                 .when(is_file, |this| {
                     this.child(button("preview-reveal", "Show in Folder", false, true, cx))
                 })
@@ -2235,7 +2409,11 @@ impl LauncherView {
         let pal = self.palette;
         let mut hints: Vec<(&'static str, &'static str)> = Vec::new();
 
-        match self.results.get(self.selected).filter(|hit| !is_inert(&hit.kind)) {
+        match self
+            .results
+            .get(self.selected)
+            .filter(|hit| !is_inert(&hit.kind))
+        {
             Some(hit) => {
                 hints.push(("Enter", action_label_for(hit)));
 
@@ -2321,9 +2499,12 @@ impl LauncherView {
                 .h(px(MENU_ROW_H))
                 .rounded_md()
                 .cursor_pointer()
-                .when(selected, |this| this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent)))
+                .when(selected, |this| {
+                    this.bg(rgb(pal.accent)).text_color(rgb(pal.on_accent))
+                })
                 .when(!selected, |this| {
-                    this.text_color(rgb(pal.text)).hover(|style| style.bg(rgba(pal.hover)))
+                    this.text_color(rgb(pal.text))
+                        .hover(|style| style.bg(rgba(pal.hover)))
                 })
                 .on_click(cx.listener(move |this, _event, window, cx| {
                     this.perform(action, window, cx);
@@ -2332,12 +2513,19 @@ impl LauncherView {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(if selected { rgba(pal.on_accent_dim) } else { rgb(pal.text_faint) })
+                        .text_color(if selected {
+                            rgba(pal.on_accent_dim)
+                        } else {
+                            rgb(pal.text_faint)
+                        })
                         .child(item.shortcut),
                 )
         });
 
-        let dismiss = |this: &mut Self, _event: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>| {
+        let dismiss = |this: &mut Self,
+                       _event: &MouseDownEvent,
+                       _window: &mut Window,
+                       cx: &mut Context<Self>| {
             this.close_menu(cx);
         };
 
@@ -2410,7 +2598,12 @@ impl LauncherView {
 
                     // The search field edits text; only the bar around it moves the window.
                     cx.stop_propagation();
-                    this.mouse_down_at(end, if event.click_count >= 2 { 3 } else { 1 }, event.modifiers.shift, cx);
+                    this.mouse_down_at(
+                        end,
+                        if event.click_count >= 2 { 3 } else { 1 },
+                        event.modifiers.shift,
+                        cx,
+                    );
                 }),
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
@@ -2451,9 +2644,15 @@ impl LauncherView {
                         this.mouse_down_at(index, event.click_count, event.modifiers.shift, cx);
                     }),
                 )
-                .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
-                    this.mouse_drag_to(index, event.pressed_button == Some(MouseButton::Left), cx);
-                }))
+                .on_mouse_move(
+                    cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
+                        this.mouse_drag_to(
+                            index,
+                            event.pressed_button == Some(MouseButton::Left),
+                            cx,
+                        );
+                    }),
+                )
         };
 
         let mut parts: Vec<AnyElement> = Vec::new();
@@ -2465,7 +2664,8 @@ impl LauncherView {
                 parts.push(caret().into_any_element());
             }
 
-            let selected = start >= selection_start && end <= selection_end && selection_start < selection_end;
+            let selected =
+                start >= selection_start && end <= selection_end && selection_start < selection_end;
 
             parts.push(
                 div()
@@ -2557,26 +2757,27 @@ impl Render for LauncherView {
                     .child(self.render_query(cx)),
             )
             .when(!rows.is_empty(), |this| {
-                this.child(div().h(px(1.)).w_full().bg(rgba(pal.divider))).child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .child(
-                            div()
-                                .id("results")
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .max_h(px(LIST_MAX_H))
-                                .overflow_y_scroll()
-                                .track_scroll(&self.scroll)
-                                .pt_1()
-                                .pb_2()
-                                .children(rows),
-                        )
-                        .when_some(preview, |this, preview| this.child(preview)),
-                )
+                this.child(div().h(px(1.)).w_full().bg(rgba(pal.divider)))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .child(
+                                div()
+                                    .id("results")
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .max_h(px(LIST_MAX_H))
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.scroll)
+                                    .pt_1()
+                                    .pb_2()
+                                    .children(rows),
+                            )
+                            .when_some(preview, |this, preview| this.child(preview)),
+                    )
             })
             .when_some(self.notice.clone(), |this, notice| {
                 this.child(
@@ -2635,7 +2836,8 @@ fn launcher_bounds(settings: &Settings, cx: &App) -> Bounds<gpui::Pixels> {
             Some(display) => {
                 let area = display.bounds();
                 let (left, top) = (f32::from(area.origin.x), f32::from(area.origin.y));
-                let (screen_w, screen_h) = (f32::from(area.size.width), f32::from(area.size.height));
+                let (screen_w, screen_h) =
+                    (f32::from(area.size.width), f32::from(area.size.height));
                 let x = left + (screen_w - settings.appearance.width as f32) / 2.0;
                 let y = top + (screen_h * 0.16).min((screen_h - WINDOW_H).max(0.0));
 
@@ -2676,8 +2878,8 @@ fn open_launcher(
     }
 
     let close_on_blur = settings.appearance.close_on_blur;
-    let track_position = can_place_windows()
-        && settings.appearance.launcher_position == LauncherPosition::Remember;
+    let track_position =
+        can_place_windows() && settings.appearance.launcher_position == LauncherPosition::Remember;
     let snapshot = clips.clone();
 
     // A new window: forget any earlier drag, and invalidate its auto-close timer.
@@ -2712,7 +2914,10 @@ fn open_launcher(
             view.update(cx, |_view, cx| {
                 cx.observe_window_bounds(window, |this, window, _cx| {
                     let origin = window.bounds().origin;
-                    let origin = (f32::from(origin.x).round() as i32, f32::from(origin.y).round() as i32);
+                    let origin = (
+                        f32::from(origin.x).round() as i32,
+                        f32::from(origin.y).round() as i32,
+                    );
 
                     this.first_origin.get_or_insert(origin);
                     this.last_origin = Some(origin);
@@ -2877,7 +3082,11 @@ fn handle_message(
                 _ => {}
             }
         }
-        UiMessage::Results { query, results, attempt } => {
+        UiMessage::Results {
+            query,
+            results,
+            attempt,
+        } => {
             if let Some(handle) = state.launcher.as_ref() {
                 let _ = handle.update(cx, |view, _, cx| {
                     // Ignore answers for a query the user has already edited.
@@ -2993,7 +3202,11 @@ async fn serve_requests(
                 tokio::spawn(async move {
                     // Typing fast supersedes this search before it is sent (debounce); a
                     // re-ask for a loading lookup waits a little longer.
-                    let wait = if attempt == 0 { SEARCH_DEBOUNCE } else { POLL_DELAY };
+                    let wait = if attempt == 0 {
+                        SEARCH_DEBOUNCE
+                    } else {
+                        POLL_DELAY
+                    };
 
                     tokio::time::sleep(wait).await;
 
@@ -3002,7 +3215,11 @@ async fn serve_requests(
                     }
 
                     let message = match search(&socket, &query).await {
-                        Ok(results) => UiMessage::Results { query, results, attempt },
+                        Ok(results) => UiMessage::Results {
+                            query,
+                            results,
+                            attempt,
+                        },
                         Err(error) => UiMessage::Failed(format!("{error:#}")),
                     };
 
@@ -3116,7 +3333,9 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
             // The setting can change while we run; look at the file every few seconds, and
             // only parse it when it actually changed.
             if ticks % 4 == 0 {
-                let stamp = fs::metadata(Settings::path()).and_then(|meta| meta.modified()).ok();
+                let stamp = fs::metadata(Settings::path())
+                    .and_then(|meta| meta.modified())
+                    .ok();
 
                 if stamp != settings_stamp || ticks == 0 {
                     settings_stamp = stamp;
@@ -3142,13 +3361,13 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
                     // Skip huge copies (a file's contents, an image as text): not history material.
                     if output.stdout.len() <= 64 * 1024 {
                         if let Ok(text) = String::from_utf8(output.stdout) {
-                        if text != last {
-                            last = text.clone();
+                            if text != last {
+                                last = text.clone();
 
-                            if tx.send_blocking(UiMessage::Clipboard(text)).is_err() {
-                                return;
+                                if tx.send_blocking(UiMessage::Clipboard(text)).is_err() {
+                                    return;
+                                }
                             }
-                        }
                         }
                     }
                 }
@@ -3227,8 +3446,14 @@ mod tests {
 
     #[test]
     fn detects_urls() {
-        assert_eq!(url_from_query("github.com/rust-lang").as_deref(), Some("https://github.com/rust-lang"));
-        assert_eq!(url_from_query("https://example.org").as_deref(), Some("https://example.org"));
+        assert_eq!(
+            url_from_query("github.com/rust-lang").as_deref(),
+            Some("https://github.com/rust-lang")
+        );
+        assert_eq!(
+            url_from_query("https://example.org").as_deref(),
+            Some("https://example.org")
+        );
         assert_eq!(url_from_query("3.14"), None);
         assert_eq!(url_from_query("hello world.com"), None);
         assert_eq!(url_from_query("firefox"), None);

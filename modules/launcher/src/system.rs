@@ -80,17 +80,19 @@ impl SystemProvider {
         ];
 
         // Ends the whole login session without a prompt, on any systemd desktop.
-        if let Ok(session) = std::env::var("XDG_SESSION_ID") {
-            if !session.is_empty() && session.chars().all(|c| c.is_ascii_alphanumeric()) {
-                actions.push(Action {
-                    id: "system:logout",
-                    title: "Log Out",
-                    subtitle: "End this session",
-                    keywords: &["log out", "logout", "sign out"],
-                    program: "loginctl",
-                    args: vec!["terminate-session".into(), session],
-                });
-            }
+        let session = std::env::var("XDG_SESSION_ID")
+            .ok()
+            .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()));
+
+        if let Some(session) = session {
+            actions.push(Action {
+                id: "system:logout",
+                title: "Log Out",
+                subtitle: "End this session",
+                keywords: &["log out", "logout", "sign out"],
+                program: "loginctl",
+                args: vec!["terminate-session".into(), session],
+            });
         }
 
         if on_path("nmcli") {
@@ -160,7 +162,12 @@ impl SystemProvider {
                 "Switch the desktop to the dark style",
                 &["dark mode", "dark theme", "night mode"],
                 "gsettings",
-                &["set", "org.gnome.desktop.interface", "color-scheme", "prefer-dark"],
+                &[
+                    "set",
+                    "org.gnome.desktop.interface",
+                    "color-scheme",
+                    "prefer-dark",
+                ],
             ));
             actions.push(action(
                 "system:light-mode",
@@ -168,7 +175,12 @@ impl SystemProvider {
                 "Switch the desktop to the light style",
                 &["light mode", "light theme", "day mode"],
                 "gsettings",
-                &["set", "org.gnome.desktop.interface", "color-scheme", "default"],
+                &[
+                    "set",
+                    "org.gnome.desktop.interface",
+                    "color-scheme",
+                    "default",
+                ],
             ));
         }
 

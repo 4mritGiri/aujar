@@ -68,7 +68,9 @@ impl<T> Default for WebCache<T> {
 }
 
 fn lock<T>(inner: &Mutex<Inner<T>>) -> std::sync::MutexGuard<'_, Inner<T>> {
-    inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl<T: Clone + Send + 'static> WebCache<T> {
@@ -321,10 +323,7 @@ pub fn get_json(url: &str) -> Result<serde_json::Value, String> {
 }
 
 /// The three-state placeholder every lookup provider shows while it works.
-pub fn loading_result(
-    id: &str,
-    what: &str,
-) -> crate::model::SearchResult {
+pub fn loading_result(id: &str, what: &str) -> crate::model::SearchResult {
     crate::model::SearchResult::new(
         format!("loading:{id}"),
         format!("Looking up {what}\u{2026}"),
@@ -378,7 +377,10 @@ mod tests {
         });
 
         assert_eq!(first, Lookup::Loading);
-        assert_eq!(wait_ready(&cache, "k", Duration::from_secs(60)), Lookup::Ready(7));
+        assert_eq!(
+            wait_ready(&cache, "k", Duration::from_secs(60)),
+            Lookup::Ready(7)
+        );
 
         // A second ask is served from the cache.
         let counter = Arc::clone(&fetches);

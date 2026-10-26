@@ -46,9 +46,10 @@ fn nepse_key_path() -> std::path::PathBuf {
 fn valid_nepse_key(key: &str) -> bool {
     (8..=200).contains(&key.len())
         && key.matches(' ').count() <= 1
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '~' | '+' | '/' | '=' | ' ' | ':'))
+        && key.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '.' | '_' | '-' | '~' | '+' | '/' | '=' | ' ' | ':')
+        })
 }
 
 /// Save the key with owner-only permissions; an empty key removes the file.
@@ -67,7 +68,9 @@ fn save_nepse_key(key: &str) -> Result<(), String> {
     }
 
     if !valid_nepse_key(key) {
-        return Err("That does not look like an API key (letters, digits and . _ - only).".to_owned());
+        return Err(
+            "That does not look like an API key (letters, digits and . _ - only).".to_owned(),
+        );
     }
 
     if let Some(dir) = path.parent() {
@@ -100,11 +103,27 @@ fn nepse_key_status() -> (bool, String) {
     match fs::read_to_string(nepse_key_path()) {
         Ok(text) if !text.trim().is_empty() => {
             let key = text.trim();
-            let tail: String = key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+            let tail: String = key
+                .chars()
+                .rev()
+                .take(4)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
 
-            (true, format!("Key saved (ends in {tail}). Stored only in {}", nepse_key_path().display()))
+            (
+                true,
+                format!(
+                    "Key saved (ends in {tail}). Stored only in {}",
+                    nepse_key_path().display()
+                ),
+            )
         }
-        _ => (false, "No key yet. Paste it with Set key (Ctrl+V).".to_owned()),
+        _ => (
+            false,
+            "No key yet. Paste it with Set key (Ctrl+V).".to_owned(),
+        ),
     }
 }
 
@@ -138,18 +157,18 @@ fn parse_shortcut(
     }
 
     if keyword.len() > 12
-        || !keyword.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        || !keyword
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return Err("The keyword is one short word: letters, digits, - or _.".to_owned());
     }
 
     let keyword = keyword.to_lowercase();
 
-    if existing
-        .iter()
-        .enumerate()
-        .any(|(index, shortcut)| Some(index) != editing && shortcut.keyword.eq_ignore_ascii_case(&keyword))
-    {
+    if existing.iter().enumerate().any(|(index, shortcut)| {
+        Some(index) != editing && shortcut.keyword.eq_ignore_ascii_case(&keyword)
+    }) {
         return Err(format!("`{keyword}` is already a shortcut."));
     }
 
@@ -157,7 +176,10 @@ fn parse_shortcut(
         || url.len() > 500
         || url.chars().any(|c| c.is_whitespace() || c.is_control())
     {
-        return Err("The URL must start with https:// and have no spaces. The search is added at its end.".to_owned());
+        return Err(
+            "The URL must start with https:// and have no spaces. The search is added at its end."
+                .to_owned(),
+        );
     }
 
     Ok(aujar_config::WebShortcut {
@@ -270,7 +292,9 @@ impl Page {
                 "plugins applications apps files folders windows system clipboard calculator \
                  units currency dictionary weather stocks nepse nepal sports shell online"
             }
-            Self::Web => "web search engine duckduckgo google brave bing startpage shortcuts keyword",
+            Self::Web => {
+                "web search engine duckduckgo google brave bing startpage shortcuts keyword"
+            }
             Self::MouseBorders => "mouse keyboard share machines network clipboard files cursor",
             Self::Files => "files index indexed roots depth folders directories",
             Self::History => "history recent frequent clear clipboard clip launch",
@@ -526,7 +550,11 @@ impl SettingsView {
     // ---- Inline text editor ----
 
     fn start_edit(&mut self, target: EditTarget, text: String, cx: &mut Context<Self>) {
-        self.editing = Some(Editing { target, text, error: None });
+        self.editing = Some(Editing {
+            target,
+            text,
+            error: None,
+        });
         cx.notify();
     }
 
@@ -579,7 +607,11 @@ impl SettingsView {
         }
 
         // Generous, but bounded.
-        let limit = if edit.target == EditTarget::NepseKey { 200 } else { 600 };
+        let limit = if edit.target == EditTarget::NepseKey {
+            200
+        } else {
+            600
+        };
 
         while edit.text.chars().count() > limit {
             edit.text.pop();
@@ -638,7 +670,11 @@ impl SettingsView {
         let edit = self.editing.as_ref()?;
         let pal = self.palette;
 
-        let shown = if mask { mask_text(&edit.text) } else { edit.text.clone() };
+        let shown = if mask {
+            mask_text(&edit.text)
+        } else {
+            edit.text.clone()
+        };
 
         Some(
             div()
@@ -648,7 +684,12 @@ impl SettingsView {
                 .px_4()
                 .py_3()
                 .bg(rgba(pal.hover))
-                .child(div().text_xs().text_color(rgb(pal.text_dim)).child(hint.to_owned()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(pal.text_dim))
+                        .child(hint.to_owned()),
+                )
                 .child(
                     rounded_px(div(), 8.)
                         .flex()
@@ -665,11 +706,19 @@ impl SettingsView {
                         .text_sm()
                         .text_color(rgb(pal.text))
                         .child(div().flex_shrink_0().whitespace_nowrap().child(shown))
-                        .child(div().flex_shrink_0().w(px(2.)).h(px(16.)).bg(rgb(pal.accent))),
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .w(px(2.))
+                                .h(px(16.))
+                                .bg(rgb(pal.accent)),
+                        ),
                 )
-                .children(edit.error.clone().map(|error| {
-                    div().text_xs().text_color(rgb(pal.danger)).child(error)
-                }))
+                .children(
+                    edit.error
+                        .clone()
+                        .map(|error| div().text_xs().text_color(rgb(pal.danger)).child(error)),
+                )
                 .child(
                     div()
                         .flex()
@@ -914,13 +963,20 @@ impl SettingsView {
             .rounded_md()
             .when(active, |this| this.bg(rgba(pal.pill)))
             .when(enabled, |this| {
-                this.cursor_pointer().hover(|style| style.bg(rgba(pal.hover)))
+                this.cursor_pointer()
+                    .hover(|style| style.bg(rgba(pal.hover)))
             })
-            .on_mouse_down(MouseButton::Left, |_event, _window, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                cx.stop_propagation()
+            })
             .child(self.glyph(
                 glyph,
                 17.,
-                if enabled { pal.text_dim } else { pal.text_faint },
+                if enabled {
+                    pal.text_dim
+                } else {
+                    pal.text_faint
+                },
             ))
     }
 
@@ -936,7 +992,9 @@ impl SettingsView {
             .cursor_pointer()
             .bg(rgb(if active { color } else { pal.switch_off }))
             .hover(|style| style.opacity(0.8))
-            .on_mouse_down(MouseButton::Left, |_event, _window, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                cx.stop_propagation()
+            })
     }
 
     /// The pill in the middle of the title bar: `Aujar / Page`, or the search field.
@@ -958,7 +1016,13 @@ impl SettingsView {
 
         match &self.search {
             Some(query) => {
-                let caret = || div().flex_shrink_0().w(px(2.)).h(px(16.)).bg(rgb(pal.accent));
+                let caret = || {
+                    div()
+                        .flex_shrink_0()
+                        .w(px(2.))
+                        .h(px(16.))
+                        .bg(rgb(pal.accent))
+                };
 
                 // Left-aligned like a real search field; the caret sits where typing happens.
                 pill.justify_start()
@@ -973,7 +1037,10 @@ impl SettingsView {
                     })
                     .when(!query.is_empty(), |this| {
                         this.child(
-                            div().truncate().text_color(rgb(pal.text)).child(query.clone()),
+                            div()
+                                .truncate()
+                                .text_color(rgb(pal.text))
+                                .child(query.clone()),
                         )
                         .child(caret())
                     })
@@ -997,15 +1064,19 @@ impl SettingsView {
                 .items_center()
                 .gap(px(8.))
                 .pr_2()
-                .child(self.traffic_light("light-close", 0xff5f57, active).on_click(
-                    cx.listener(|_this, _event, window, _cx| window.remove_window()),
-                ))
-                .child(self.traffic_light("light-min", 0xfebc2e, active).on_click(
-                    cx.listener(|_this, _event, window, _cx| window.minimize_window()),
-                ))
-                .child(self.traffic_light("light-zoom", 0x28c840, active).on_click(
-                    cx.listener(|_this, _event, window, _cx| window.zoom_window()),
-                ))
+                .child(
+                    self.traffic_light("light-close", 0xff5f57, active)
+                        .on_click(cx.listener(|_this, _event, window, _cx| window.remove_window())),
+                )
+                .child(
+                    self.traffic_light("light-min", 0xfebc2e, active).on_click(
+                        cx.listener(|_this, _event, window, _cx| window.minimize_window()),
+                    ),
+                )
+                .child(
+                    self.traffic_light("light-zoom", 0x28c840, active)
+                        .on_click(cx.listener(|_this, _event, window, _cx| window.zoom_window())),
+                )
         });
 
         let can_back = !self.back.is_empty();
@@ -1033,7 +1104,11 @@ impl SettingsView {
             .children(lights)
             .child(
                 self.icon_button("tb-sidebar", "icons/sidebar.svg", true, !self.sidebar_open)
-                    .tooltip(self.tip(if self.sidebar_open { "Hide sidebar" } else { "Show sidebar" }))
+                    .tooltip(self.tip(if self.sidebar_open {
+                        "Hide sidebar"
+                    } else {
+                        "Show sidebar"
+                    }))
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.sidebar_open = !this.sidebar_open;
                         cx.notify();
@@ -1082,38 +1157,52 @@ impl SettingsView {
 
         let pal = self.palette;
 
-        let rows = MenuAction::ALL.iter().enumerate().map(|(index, (action, label, shortcut))| {
-            let action = *action;
+        let rows = MenuAction::ALL
+            .iter()
+            .enumerate()
+            .map(|(index, (action, label, shortcut))| {
+                let action = *action;
 
-            div()
-                .child(
-                    div()
-                        .id(SharedString::from(format!("menu-{index}")))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
-                        .mx_1()
-                        .px_3()
-                        .h(px(32.))
-                        .rounded_md()
-                        .cursor_pointer()
-                        .text_color(rgb(pal.text))
-                        .hover(|style| style.bg(rgba(pal.hover)))
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            this.run_menu(action, cx);
-                        }))
-                        .child(div().text_sm().child(*label))
-                        .child(div().text_xs().text_color(rgb(pal.text_faint)).child(*shortcut)),
-                )
-                // A hairline between the editing entries and the navigation ones.
-                .when(index == 2, |this| {
-                    this.pb_1().border_b_1().border_color(rgba(pal.divider)).mb_1()
-                })
-        });
+                div()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("menu-{index}")))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .gap_4()
+                            .mx_1()
+                            .px_3()
+                            .h(px(32.))
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_color(rgb(pal.text))
+                            .hover(|style| style.bg(rgba(pal.hover)))
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.run_menu(action, cx);
+                            }))
+                            .child(div().text_sm().child(*label))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(pal.text_faint))
+                                    .child(*shortcut),
+                            ),
+                    )
+                    // A hairline between the editing entries and the navigation ones.
+                    .when(index == 2, |this| {
+                        this.pb_1()
+                            .border_b_1()
+                            .border_color(rgba(pal.divider))
+                            .mb_1()
+                    })
+            });
 
-        let dismiss = |this: &mut Self, _event: &gpui::MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>| {
+        let dismiss = |this: &mut Self,
+                       _event: &gpui::MouseDownEvent,
+                       _window: &mut Window,
+                       cx: &mut Context<Self>| {
             this.menu_open = false;
             cx.notify();
         };
@@ -1183,11 +1272,17 @@ impl SettingsView {
                 .rounded_lg()
                 .cursor_pointer()
                 .when(selected, |this| this.bg(rgba(pal.accent_soft)))
-                .when(!selected, |this| this.hover(|style| style.bg(rgba(pal.hover))))
+                .when(!selected, |this| {
+                    this.hover(|style| style.bg(rgba(pal.hover)))
+                })
                 .child(self.glyph(
                     page.icon(),
                     18.,
-                    if selected { pal.accent_fg } else { pal.text_dim },
+                    if selected {
+                        pal.accent_fg
+                    } else {
+                        pal.text_dim
+                    },
                 ))
                 .tooltip(self.tip(page.title()))
                 .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -1246,7 +1341,11 @@ impl SettingsView {
             .child(self.glyph(
                 page.icon(),
                 17.,
-                if selected { pal.accent_fg } else { pal.text_dim },
+                if selected {
+                    pal.accent_fg
+                } else {
+                    pal.text_dim
+                },
             ))
             .child(page.title())
             .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -1265,7 +1364,10 @@ impl SettingsView {
 
     fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let pal = self.palette;
-        let searching = self.search.as_deref().is_some_and(|query| !query.trim().is_empty());
+        let searching = self
+            .search
+            .as_deref()
+            .is_some_and(|query| !query.trim().is_empty());
 
         let main: Vec<AnyElement> = Page::MAIN
             .into_iter()
@@ -1302,7 +1404,11 @@ impl SettingsView {
                         .child(self.glyph("icons/database.svg", 17., pal.text_dim))
                         .child(div().flex_1().child("Data"))
                         .child(self.glyph(
-                            if data_shown { "icons/chevron-down.svg" } else { "icons/chevron-right.svg" },
+                            if data_shown {
+                                "icons/chevron-down.svg"
+                            } else {
+                                "icons/chevron-right.svg"
+                            },
                             14.,
                             pal.text_faint,
                         ))
@@ -1369,7 +1475,9 @@ impl SettingsView {
         let handle = |edge_kind: ResizeEdge, cx: &mut Context<Self>| {
             div().absolute().on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |_this, _event, window, _cx| window.start_window_resize(edge_kind)),
+                cx.listener(move |_this, _event, window, _cx| {
+                    window.start_window_resize(edge_kind)
+                }),
             )
         };
 
@@ -1542,7 +1650,11 @@ impl Render for SettingsView {
 
         let titlebar = self.titlebar(active, cx);
         let menu = self.render_menu(cx);
-        let handles = if filled { Vec::new() } else { self.resize_handles(cx) };
+        let handles = if filled {
+            Vec::new()
+        } else {
+            self.resize_handles(cx)
+        };
 
         let header = div()
             .flex()
@@ -1620,7 +1732,9 @@ impl Render for SettingsView {
             .size_full()
             .overflow_hidden()
             .bg(rgba(pal.card))
-            .when(!filled, |this| this.border_1().border_color(rgba(pal.border)))
+            .when(!filled, |this| {
+                this.border_1().border_color(rgba(pal.border))
+            })
             .text_color(rgb(pal.text))
             .child(titlebar)
             .child(body);
@@ -1661,7 +1775,8 @@ mod editor_tests {
 
     #[test]
     fn a_url_may_contain_pipes_and_equals() {
-        let shortcut = parse_shortcut("tr | Translate | https://x.test/?a=b|c&q=", &[], None).unwrap();
+        let shortcut =
+            parse_shortcut("tr | Translate | https://x.test/?a=b|c&q=", &[], None).unwrap();
 
         assert_eq!(shortcut.url, "https://x.test/?a=b|c&q=");
     }
@@ -1681,7 +1796,10 @@ mod editor_tests {
     #[test]
     fn duplicate_keywords_are_refused_except_when_editing_that_one() {
         let list = existing();
-        let github = list.iter().position(|shortcut| shortcut.keyword == "gh").unwrap();
+        let github = list
+            .iter()
+            .position(|shortcut| shortcut.keyword == "gh")
+            .unwrap();
 
         assert!(parse_shortcut("gh | Other | https://x.test/?q=", &list, None).is_err());
         assert!(parse_shortcut("GH | Other | https://x.test/?q=", &list, None).is_err());
@@ -1695,7 +1813,10 @@ mod editor_tests {
         assert!(list.len() >= 10);
 
         for (index, shortcut) in list.iter().enumerate() {
-            let line = format!("{} | {} | {}", shortcut.keyword, shortcut.name, shortcut.url);
+            let line = format!(
+                "{} | {} | {}",
+                shortcut.keyword, shortcut.name, shortcut.url
+            );
             let others: Vec<_> = list
                 .iter()
                 .enumerate()
@@ -1709,7 +1830,10 @@ mod editor_tests {
 
     #[test]
     fn masks_all_but_the_last_four() {
-        assert_eq!(mask_text("abcdefgh"), "\u{2022}\u{2022}\u{2022}\u{2022}efgh");
+        assert_eq!(
+            mask_text("abcdefgh"),
+            "\u{2022}\u{2022}\u{2022}\u{2022}efgh"
+        );
         assert_eq!(mask_text("abc"), "abc");
         assert!(valid_nepse_key("5aYZuryN.hXlFFefyZytA9JEjRhg1MgjGrUg5uShx"));
         assert!(!valid_nepse_key("bad key\nvalue"));

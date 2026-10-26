@@ -61,9 +61,10 @@ fn key_path() -> Option<PathBuf> {
 fn valid_key(key: &str) -> bool {
     (8..=200).contains(&key.len())
         && key.matches(' ').count() <= 1
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '~' | '+' | '/' | '=' | ' ' | ':'))
+        && key.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '.' | '_' | '-' | '~' | '+' | '/' | '=' | ' ' | ':')
+        })
 }
 
 fn api_key() -> Option<String> {
@@ -175,7 +176,11 @@ enum Intent {
     /// `nepse depth` without a symbol: show an example.
     Usage(&'static str),
     /// `nepse alert nabil above 600`; `above` is `None` when the direction is left to us.
-    Alert { symbol: String, above: Option<bool>, price: f64 },
+    Alert {
+        symbol: String,
+        above: Option<bool>,
+        price: f64,
+    },
     /// `nepse alerts`: the saved alerts.
     Alerts,
 }
@@ -194,15 +199,23 @@ fn find_intent(words: &[&str]) -> Option<Intent> {
     let text = words.join(" ");
 
     ((2..=40).contains(&text.len())
-        && text.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '&' | '-' | '.'))
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '&' | '-' | '.'))
         && text.chars().any(|c| c.is_ascii_alphabetic()))
     .then_some(Intent::Find(text))
 }
 
 fn alert_price(text: &str) -> Option<f64> {
-    let cleaned = text.trim_start_matches("rs").trim_start_matches("npr").replace(',', "");
+    let cleaned = text
+        .trim_start_matches("rs")
+        .trim_start_matches("npr")
+        .replace(',', "");
 
-    cleaned.parse::<f64>().ok().filter(|price| price.is_finite() && *price > 0.0 && *price < 10_000_000.0)
+    cleaned
+        .parse::<f64>()
+        .ok()
+        .filter(|price| price.is_finite() && *price > 0.0 && *price < 10_000_000.0)
 }
 
 const ALERT_EXAMPLE: &str = "nepse alert nabil above 600";
@@ -226,7 +239,11 @@ fn alert_intent(rest: &[&str]) -> Intent {
     let symbol = symbol.to_uppercase();
 
     match alert_price(price) {
-        Some(price) if valid_symbol(&symbol) => Intent::Alert { symbol, above, price },
+        Some(price) if valid_symbol(&symbol) => Intent::Alert {
+            symbol,
+            above,
+            price,
+        },
         _ => Intent::Usage(ALERT_EXAMPLE),
     }
 }
@@ -272,7 +289,8 @@ fn find_matches<'a>(quotes: &'a [Quote], text: &str) -> Vec<(&'a Quote, u32)> {
         } else if symbol.starts_with(&joined) {
             1800
         } else if tokens.iter().all(|token| {
-            name.split(|c: char| !c.is_alphanumeric()).any(|word| word.starts_with(token))
+            name.split(|c: char| !c.is_alphanumeric())
+                .any(|word| word.starts_with(token))
         }) {
             1700
         } else if tokens.iter().all(|token| name.contains(token)) {
@@ -408,13 +426,30 @@ struct Quote {
 }
 
 fn quote_from(row: &Map<String, Value>) -> Option<Quote> {
-    let symbol = field(row, &["symbol", "stocksymbol", "securitysymbol", "scripsymbol", "ticker"])
-        .and_then(text)?
-        .to_uppercase();
+    let symbol = field(
+        row,
+        &[
+            "symbol",
+            "stocksymbol",
+            "securitysymbol",
+            "scripsymbol",
+            "ticker",
+        ],
+    )
+    .and_then(text)?
+    .to_uppercase();
 
     let price = number_of(
         row,
-        &["lasttradedprice", "ltp", "closeprice", "lastprice", "price", "close", "closingprice"],
+        &[
+            "lasttradedprice",
+            "ltp",
+            "closeprice",
+            "lastprice",
+            "price",
+            "close",
+            "closingprice",
+        ],
     )?;
 
     // `"397"` in one answer, `8098` in another.
@@ -427,28 +462,67 @@ fn quote_from(row: &Map<String, Value>) -> Option<Quote> {
     Some(Quote {
         symbol,
         security_id: security_id.filter(|id| valid_security_id(id)),
-        name: field(row, &["securityname", "companyname", "name", "fullname", "companyfullname"])
-            .and_then(text),
+        name: field(
+            row,
+            &[
+                "securityname",
+                "companyname",
+                "name",
+                "fullname",
+                "companyfullname",
+            ],
+        )
+        .and_then(text),
         price,
         previous_close: number_of(
             row,
-            &["previousclose", "previousdayclose", "previousdaycloseprice", "prevclose", "previousclosingprice"],
+            &[
+                "previousclose",
+                "previousdayclose",
+                "previousdaycloseprice",
+                "prevclose",
+                "previousclosingprice",
+            ],
         ),
         change_percent: number_of(
             row,
-            &["percentagechange", "percentchange", "perchange", "changepercent", "pricechangepercent", "changepct"],
+            &[
+                "percentagechange",
+                "percentchange",
+                "perchange",
+                "changepercent",
+                "pricechangepercent",
+                "changepct",
+            ],
         ),
-        point_change: number_of(row, &["pointchange", "pricechange", "change", "diff", "difference"]),
+        point_change: number_of(
+            row,
+            &["pointchange", "pricechange", "change", "diff", "difference"],
+        ),
         open: number_of(row, &["openprice", "open"]),
         high: number_of(row, &["highprice", "high", "dayhigh", "maxprice"]),
         low: number_of(row, &["lowprice", "low", "daylow", "minprice"]),
         volume: number_of(
             row,
-            &["totaltradequantity", "totaltradedquantity", "totaltradedvolume", "volume", "sharestraded", "totalquantity", "lasttradedvolume"],
+            &[
+                "totaltradequantity",
+                "totaltradedquantity",
+                "totaltradedvolume",
+                "volume",
+                "sharestraded",
+                "totalquantity",
+                "lasttradedvolume",
+            ],
         ),
         turnover: number_of(
             row,
-            &["totaltradevalue", "totaltradedvalue", "turnover", "totalturnover", "amount"],
+            &[
+                "totaltradevalue",
+                "totaltradedvalue",
+                "turnover",
+                "totalturnover",
+                "amount",
+            ],
         ),
     })
 }
@@ -470,7 +544,11 @@ fn change_of(quote: &Quote) -> Option<(f64, f64)> {
 
     quote.point_change.map(|delta| {
         let previous = quote.price - delta;
-        let percent = if previous != 0.0 { delta / previous * 100.0 } else { 0.0 };
+        let percent = if previous != 0.0 {
+            delta / previous * 100.0
+        } else {
+            0.0
+        };
 
         (delta, percent)
     })
@@ -479,7 +557,11 @@ fn change_of(quote: &Quote) -> Option<(f64, f64)> {
 fn arrow_text(delta: f64, percent: f64) -> String {
     let arrow = if delta >= 0.0 { '\u{25b2}' } else { '\u{25bc}' };
 
-    format!("{arrow} {} ({:.2}%)", price_text(delta.abs()), percent.abs())
+    format!(
+        "{arrow} {} ({:.2}%)",
+        price_text(delta.abs()),
+        percent.abs()
+    )
 }
 
 fn rs(value: f64) -> String {
@@ -506,17 +588,27 @@ fn quote_result(quote: &Quote, score: u32, extra: &[String]) -> SearchResult {
 
     row("Previous close", quote.previous_close.map(rs));
     row("Open", quote.open.map(rs));
-    row("Day range", quote.low.zip(quote.high).map(|(low, high)| {
-        format!("{} \u{2013} {}", price_text(low), price_text(high))
-    }));
+    row(
+        "Day range",
+        quote
+            .low
+            .zip(quote.high)
+            .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))),
+    );
     row("Volume", quote.volume.map(compact));
-    row("Turnover", quote.turnover.map(|value| format!("Rs {}", compact(value))));
+    row(
+        "Turnover",
+        quote.turnover.map(|value| format!("Rs {}", compact(value))),
+    );
 
     // Details may repeat something the price list already gave: keep the first.
     for line in extra {
         let label = line.split('|').next().unwrap_or_default();
 
-        if !lines.iter().any(|have| have.split('|').next() == Some(label)) {
+        if !lines
+            .iter()
+            .any(|have| have.split('|').next() == Some(label))
+        {
             lines.push(line.clone());
         }
     }
@@ -566,7 +658,16 @@ fn parse_index(value: &Value) -> Result<Page, String> {
     // `close` is the latest value; `currentValue` can lag behind it.
     let current = number_of(
         record,
-        &["close", "closeprice", "currentvalue", "indexvalue", "currentindex", "index", "value", "lastvalue"],
+        &[
+            "close",
+            "closeprice",
+            "currentvalue",
+            "indexvalue",
+            "currentindex",
+            "index",
+            "value",
+            "lastvalue",
+        ],
     )
     .ok_or_else(|| "the NEPSE service sent no index value".to_owned())?;
 
@@ -581,13 +682,28 @@ fn parse_index(value: &Value) -> Result<Page, String> {
         }
         None => match (
             number_of(record, &["change", "pointchange", "indexchange"]),
-            number_of(record, &["percentagechange", "perchange", "percentchange", "changepercent"]),
+            number_of(
+                record,
+                &[
+                    "percentagechange",
+                    "perchange",
+                    "percentchange",
+                    "changepercent",
+                ],
+            ),
         ) {
             (Some(delta), Some(percent)) => Some((delta, percent)),
             (Some(delta), None) => {
                 let base = current - delta;
 
-                Some((delta, if base != 0.0 { delta / base * 100.0 } else { 0.0 }))
+                Some((
+                    delta,
+                    if base != 0.0 {
+                        delta / base * 100.0
+                    } else {
+                        0.0
+                    },
+                ))
             }
             (None, Some(percent)) => Some((percent, percent)),
             (None, None) => None,
@@ -606,14 +722,26 @@ fn parse_index(value: &Value) -> Result<Page, String> {
     };
 
     row("Previous close", previous.map(price_text));
-    row("Day range", number_of(record, &["low", "lowvalue", "daylow"])
-        .zip(number_of(record, &["high", "highvalue", "dayhigh"]))
-        .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))));
-    row("52-week range", number_of(record, &["fiftytwoweeklow"])
-        .zip(number_of(record, &["fiftytwoweekhigh"]))
-        .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))));
-    row("Turnover", number_of(record, &["turnover", "totalturnover"]).map(|v| format!("Rs {}", compact(v))));
-    row("Volume", number_of(record, &["volume", "totalvolume"]).map(compact));
+    row(
+        "Day range",
+        number_of(record, &["low", "lowvalue", "daylow"])
+            .zip(number_of(record, &["high", "highvalue", "dayhigh"]))
+            .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))),
+    );
+    row(
+        "52-week range",
+        number_of(record, &["fiftytwoweeklow"])
+            .zip(number_of(record, &["fiftytwoweekhigh"]))
+            .map(|(low, high)| format!("{} \u{2013} {}", price_text(low), price_text(high))),
+    );
+    row(
+        "Turnover",
+        number_of(record, &["turnover", "totalturnover"]).map(|v| format!("Rs {}", compact(v))),
+    );
+    row(
+        "Volume",
+        number_of(record, &["volume", "totalvolume"]).map(compact),
+    );
 
     Ok(Page {
         title: format!("NEPSE Index  {}", price_text(current)),
@@ -637,14 +765,21 @@ fn parse_open(value: &Value) -> Result<Page, String> {
                     None
                 }
             }
-            Value::Object(map) => ["isopen", "open", "marketopen", "isnepseopen", "status", "marketstatus"]
-                .iter()
-                .find_map(|alias| {
-                    map.iter()
-                        .find(|(key, _)| norm(key) == *alias)
-                        .and_then(|(_, inner)| open_in(inner))
-                })
-                .or_else(|| map.values().find_map(open_in)),
+            Value::Object(map) => [
+                "isopen",
+                "open",
+                "marketopen",
+                "isnepseopen",
+                "status",
+                "marketstatus",
+            ]
+            .iter()
+            .find_map(|alias| {
+                map.iter()
+                    .find(|(key, _)| norm(key) == *alias)
+                    .and_then(|(_, inner)| open_in(inner))
+            })
+            .or_else(|| map.values().find_map(open_in)),
             _ => None,
         }
     }
@@ -661,7 +796,8 @@ fn parse_open(value: &Value) -> Result<Page, String> {
         }
     }
 
-    let open = open_in(value).ok_or_else(|| "the NEPSE service sent an unexpected answer".to_owned())?;
+    let open =
+        open_in(value).ok_or_else(|| "the NEPSE service sent an unexpected answer".to_owned())?;
 
     let subtitle = match as_of(value) {
         Some(time) => {
@@ -673,14 +809,23 @@ fn parse_open(value: &Value) -> Result<Page, String> {
     };
 
     Ok(Page {
-        title: if open { "NEPSE market is open" } else { "NEPSE market is closed" }.to_owned(),
+        title: if open {
+            "NEPSE market is open"
+        } else {
+            "NEPSE market is closed"
+        }
+        .to_owned(),
         subtitle,
         lines: Vec::new(),
     })
 }
 
 fn parse_movers(value: &Value, rising: bool) -> Result<Page, String> {
-    let quotes: Vec<Quote> = find_rows(value).into_iter().filter_map(quote_from).take(10).collect();
+    let quotes: Vec<Quote> = find_rows(value)
+        .into_iter()
+        .filter_map(quote_from)
+        .take(10)
+        .collect();
 
     if quotes.is_empty() {
         return Err("the NEPSE service sent no price rows".to_owned());
@@ -693,7 +838,11 @@ fn parse_movers(value: &Value, rising: bool) -> Result<Page, String> {
             let change = change_of(quote)
                 .map(|(delta, percent)| {
                     let (delta, percent) = (delta.abs(), percent.abs());
-                    let (delta, percent) = if rising { (delta, percent) } else { (-delta, -percent) };
+                    let (delta, percent) = if rising {
+                        (delta, percent)
+                    } else {
+                        (-delta, -percent)
+                    };
 
                     format!("  {}", arrow_text(delta, percent))
                 })
@@ -703,11 +852,19 @@ fn parse_movers(value: &Value, rising: bool) -> Result<Page, String> {
         })
         .collect::<Vec<_>>();
 
-    let (arrow, word) = if rising { ('\u{25b2}', "gainers") } else { ('\u{25bc}', "losers") };
+    let (arrow, word) = if rising {
+        ('\u{25b2}', "gainers")
+    } else {
+        ('\u{25bc}', "losers")
+    };
 
     Ok(Page {
         title: format!("NEPSE top {word}"),
-        subtitle: format!("{arrow} Top {} by price {}", quotes.len(), if rising { "gain" } else { "loss" }),
+        subtitle: format!(
+            "{arrow} Top {} by price {}",
+            quotes.len(),
+            if rising { "gain" } else { "loss" }
+        ),
         lines,
     })
 }
@@ -724,13 +881,8 @@ fn parse_page(kind: PageKind, value: &Value, today: &str) -> Result<Page, String
 }
 
 fn page_result(id: String, page: &Page) -> SearchResult {
-    let mut result = SearchResult::new(
-        id,
-        page.title.clone(),
-        ResultKind::Stock,
-        1850,
-    )
-    .with_subtitle(page.subtitle.clone());
+    let mut result = SearchResult::new(id, page.title.clone(), ResultKind::Stock, 1850)
+        .with_subtitle(page.subtitle.clone());
 
     if !page.lines.is_empty() {
         result = result.with_detail(page.lines.join("\n"));
@@ -767,7 +919,11 @@ fn civil_date(days: i64) -> String {
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_part = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * month_part + 2) / 5 + 1;
-    let month = if month_part < 10 { month_part + 3 } else { month_part - 9 };
+    let month = if month_part < 10 {
+        month_part + 3
+    } else {
+        month_part - 9
+    };
     let year = year_of_era + era * 400 + i64::from(month <= 2);
 
     format!("{year:04}-{month:02}-{day:02}")
@@ -788,20 +944,40 @@ fn parse_sectors(value: &Value) -> Result<Page, String> {
     let mut sectors: Vec<(String, f64, Option<f64>)> = Vec::new();
 
     for record in records(value) {
-        let Some(name) = first_text(record, &["index", "indexname", "name", "sectorname", "sector"]) else {
+        let Some(name) = first_text(
+            record,
+            &["index", "indexname", "name", "sectorname", "sector"],
+        ) else {
             continue;
         };
         let Some(current) = number_of(
             record,
-            &["close", "closeprice", "currentvalue", "indexvalue", "currentindex", "value", "lastvalue"],
+            &[
+                "close",
+                "closeprice",
+                "currentvalue",
+                "indexvalue",
+                "currentindex",
+                "value",
+                "lastvalue",
+            ],
         ) else {
             continue;
         };
 
-        let percent = match number_of(record, &["previousclose", "previousdayclose"]).filter(|p| *p != 0.0) {
-            Some(previous) => Some((current - previous) / previous * 100.0),
-            None => number_of(record, &["percentagechange", "perchange", "percentchange", "changepercent"]),
-        };
+        let percent =
+            match number_of(record, &["previousclose", "previousdayclose"]).filter(|p| *p != 0.0) {
+                Some(previous) => Some((current - previous) / previous * 100.0),
+                None => number_of(
+                    record,
+                    &[
+                        "percentagechange",
+                        "perchange",
+                        "percentchange",
+                        "changepercent",
+                    ],
+                ),
+            };
 
         sectors.push((name, current, percent));
     }
@@ -822,7 +998,11 @@ fn parse_sectors(value: &Value) -> Result<Page, String> {
         .iter()
         .take(16)
         .map(|(name, current, percent)| match percent {
-            Some(percent) => format!("{name}|{}  {}", price_text(*current), arrow_text(*percent, *percent)),
+            Some(percent) => format!(
+                "{name}|{}  {}",
+                price_text(*current),
+                arrow_text(*percent, *percent)
+            ),
             None => format!("{name}|{}", price_text(*current)),
         })
         .collect();
@@ -838,12 +1018,31 @@ fn parse_holidays(value: &Value, today: &str) -> Result<Page, String> {
     let mut holidays: Vec<(String, String)> = Vec::new();
 
     for row in find_rows(value) {
-        let Some(date) = first_text(row, &["holidaydate", "date", "day", "eventdate", "holidayday", "fromdate"]) else {
+        let Some(date) = first_text(
+            row,
+            &[
+                "holidaydate",
+                "date",
+                "day",
+                "eventdate",
+                "holidayday",
+                "fromdate",
+            ],
+        ) else {
             continue;
         };
         let name = first_text(
             row,
-            &["description", "holidaydescription", "holiday", "name", "title", "occasion", "remarks", "reason"],
+            &[
+                "description",
+                "holidaydescription",
+                "holiday",
+                "name",
+                "title",
+                "occasion",
+                "remarks",
+                "reason",
+            ],
         )
         .unwrap_or_else(|| "Holiday".to_owned());
 
@@ -856,7 +1055,10 @@ fn parse_holidays(value: &Value, today: &str) -> Result<Page, String> {
 
     holidays.sort();
 
-    let upcoming: Vec<_> = holidays.iter().filter(|(date, _)| date.as_str() >= today).collect();
+    let upcoming: Vec<_> = holidays
+        .iter()
+        .filter(|(date, _)| date.as_str() >= today)
+        .collect();
 
     if upcoming.is_empty() {
         return Ok(Page {
@@ -880,7 +1082,11 @@ fn parse_holidays(value: &Value, today: &str) -> Result<Page, String> {
 }
 
 /// A list of records under a key that names one side of the book.
-fn depth_side<'a>(value: &'a Value, matches: &dyn Fn(&str) -> bool, depth: usize) -> Option<&'a Vec<Value>> {
+fn depth_side<'a>(
+    value: &'a Value,
+    matches: &dyn Fn(&str) -> bool,
+    depth: usize,
+) -> Option<&'a Vec<Value>> {
     if depth > 4 {
         return None;
     }
@@ -897,7 +1103,9 @@ fn depth_side<'a>(value: &'a Value, matches: &dyn Fn(&str) -> bool, depth: usize
                     .filter(|inner| inner.is_object() || inner.is_array())
                     .find_map(|inner| depth_side(inner, matches, depth + 1))
             }),
-        Value::Array(items) => items.first().and_then(|first| depth_side(first, matches, depth + 1)),
+        Value::Array(items) => items
+            .first()
+            .and_then(|first| depth_side(first, matches, depth + 1)),
         _ => None,
     }
 }
@@ -908,21 +1116,55 @@ fn depth_rows(items: &[Value]) -> Vec<(f64, f64, Option<f64>)> {
         .iter()
         .filter_map(Value::as_object)
         .filter_map(|row| {
-            let price = number_of(row, &["orderbookorderprice", "orderprice", "price", "rate", "bidprice", "askprice"])?;
-            let quantity = number_of(row, &["quantity", "qty", "orderquantity", "totalquantity", "volume"])?;
+            let price = number_of(
+                row,
+                &[
+                    "orderbookorderprice",
+                    "orderprice",
+                    "price",
+                    "rate",
+                    "bidprice",
+                    "askprice",
+                ],
+            )?;
+            let quantity = number_of(
+                row,
+                &[
+                    "quantity",
+                    "qty",
+                    "orderquantity",
+                    "totalquantity",
+                    "volume",
+                ],
+            )?;
 
-            Some((price, quantity, number_of(row, &["ordercount", "orders", "noofordersnumber", "numberoforders"])))
+            Some((
+                price,
+                quantity,
+                number_of(
+                    row,
+                    &["ordercount", "orders", "noofordersnumber", "numberoforders"],
+                ),
+            ))
         })
         .collect()
 }
 
 fn parse_depth(value: &Value, symbol: &str) -> Result<Page, String> {
-    let mut buys = depth_side(value, &|key: &str| key.contains("buy") || key.contains("bid"), 0)
-        .map(|items| depth_rows(items))
-        .unwrap_or_default();
-    let mut sells = depth_side(value, &|key: &str| key.contains("sell") || key.starts_with("ask"), 0)
-        .map(|items| depth_rows(items))
-        .unwrap_or_default();
+    let mut buys = depth_side(
+        value,
+        &|key: &str| key.contains("buy") || key.contains("bid"),
+        0,
+    )
+    .map(|items| depth_rows(items))
+    .unwrap_or_default();
+    let mut sells = depth_side(
+        value,
+        &|key: &str| key.contains("sell") || key.starts_with("ask"),
+        0,
+    )
+    .map(|items| depth_rows(items))
+    .unwrap_or_default();
 
     if buys.is_empty() && sells.is_empty() {
         return Ok(Page {
@@ -940,9 +1182,16 @@ fn parse_depth(value: &Value, symbol: &str) -> Result<Page, String> {
             .take(5)
             .enumerate()
             .map(|(index, (price, quantity, orders))| {
-                let orders = orders.map(|n| format!(" ({} orders)", n as u64)).unwrap_or_default();
+                let orders = orders
+                    .map(|n| format!(" ({} orders)", n as u64))
+                    .unwrap_or_default();
 
-                format!("{label} {}|{} \u{d7} {}{orders}", index + 1, rs(*price), compact(*quantity))
+                format!(
+                    "{label} {}|{} \u{d7} {}{orders}",
+                    index + 1,
+                    rs(*price),
+                    compact(*quantity)
+                )
             })
             .collect()
     };
@@ -954,15 +1203,26 @@ fn parse_depth(value: &Value, symbol: &str) -> Result<Page, String> {
 
     flatten(value, &mut flat, 0);
 
-    for (label, alias) in [("Total buy qty", "totalbuyquantity"), ("Total sell qty", "totalsellquantity")] {
-        if let Some(total) = flat.iter().find(|(key, _)| key == alias).and_then(|(_, found)| num(found)) {
+    for (label, alias) in [
+        ("Total buy qty", "totalbuyquantity"),
+        ("Total sell qty", "totalsellquantity"),
+    ] {
+        if let Some(total) = flat
+            .iter()
+            .find(|(key, _)| key == alias)
+            .and_then(|(_, found)| num(found))
+        {
             lines.push(format!("{label}|{}", compact(total)));
         }
     }
 
     let bid = buys.first().map(|row| format!("Best bid {}", rs(row.0)));
     let ask = sells.first().map(|row| format!("best ask {}", rs(row.0)));
-    let subtitle = [bid, ask].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} ");
+    let subtitle = [bid, ask]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ");
 
     Ok(Page {
         title: format!("{symbol} market depth"),
@@ -979,15 +1239,29 @@ fn parse_news(value: &Value, symbol: &str) -> Result<Page, String> {
         .filter_map(|row| {
             let headline = deep_field(
                 row,
-                &["newsheadline", "headline", "newstitle", "title", "subject", "newsdescription"],
+                &[
+                    "newsheadline",
+                    "headline",
+                    "newstitle",
+                    "title",
+                    "subject",
+                    "newsdescription",
+                ],
             )
             .and_then(text)?;
 
             let date = deep_field(
                 row,
                 &[
-                    "addeddate", "publisheddate", "newsdate", "createddate", "createdat", "modifieddate",
-                    "applicationdate", "submitteddate", "date",
+                    "addeddate",
+                    "publisheddate",
+                    "newsdate",
+                    "createddate",
+                    "createdat",
+                    "modifieddate",
+                    "applicationdate",
+                    "submitteddate",
+                    "date",
                 ],
             )
             .and_then(text)
@@ -995,7 +1269,9 @@ fn parse_news(value: &Value, symbol: &str) -> Result<Page, String> {
             .unwrap_or_default();
 
             let label = if date.is_empty() {
-                deep_field(row, &["newstype"]).and_then(text).unwrap_or_else(|| "-".to_owned())
+                deep_field(row, &["newstype"])
+                    .and_then(text)
+                    .unwrap_or_else(|| "-".to_owned())
             } else {
                 date.clone()
             };
@@ -1012,7 +1288,12 @@ fn parse_news(value: &Value, symbol: &str) -> Result<Page, String> {
         });
     }
 
-    let latest = items.iter().map(|(date, _, _)| date.as_str()).max().unwrap_or_default().to_owned();
+    let latest = items
+        .iter()
+        .map(|(date, _, _)| date.as_str())
+        .max()
+        .unwrap_or_default()
+        .to_owned();
 
     // Headlines must not contain the `|` that separates label and value.
     let lines = items
@@ -1035,18 +1316,28 @@ fn parse_news(value: &Value, symbol: &str) -> Result<Page, String> {
 // ---- Alerts ----------------------------------------------------------------------------------
 
 fn alert_notice(id: &str, title: String, subtitle: String) -> SearchResult {
-    SearchResult::new(format!("notice:{id}"), title, ResultKind::Notice, 1850).with_subtitle(subtitle)
+    SearchResult::new(format!("notice:{id}"), title, ResultKind::Notice, 1850)
+        .with_subtitle(subtitle)
 }
 
 /// What setting an alert would do, as a result that Enter confirms.
 fn alert_result(quote: &Quote, above: Option<bool>, target: f64) -> SearchResult {
     let above = above.unwrap_or(target > quote.price);
-    let alert = alerts::Alert { symbol: quote.symbol.clone(), above, price: target };
+    let alert = alerts::Alert {
+        symbol: quote.symbol.clone(),
+        above,
+        price: target,
+    };
 
     if alert.reached(quote.price) {
         return alert_notice(
             &format!("nepse-alert-{}", quote.symbol),
-            format!("{} is already {} {}", quote.symbol, alert.word(), rs(target)),
+            format!(
+                "{} is already {} {}",
+                quote.symbol,
+                alert.word(),
+                rs(target)
+            ),
             format!("Now {}. Pick a price on the other side", rs(quote.price)),
         );
     }
@@ -1127,8 +1418,17 @@ fn resolve_alert(set: bool, text: &str) -> Result<LaunchSpec, String> {
         let replaced = alerts::add(alert.clone())?;
 
         Ok(notify_spec(
-            if replaced { "Price alert updated" } else { "Price alert set" },
-            &format!("{} {} {}. You will be notified once.", alert.symbol, alert.word(), rs(alert.price)),
+            if replaced {
+                "Price alert updated"
+            } else {
+                "Price alert set"
+            },
+            &format!(
+                "{} {} {}. You will be notified once.",
+                alert.symbol,
+                alert.word(),
+                rs(alert.price)
+            ),
         ))
     } else {
         alerts::remove(&alert)?;
@@ -1154,21 +1454,56 @@ enum Fmt {
 /// answers, so each line appears only if one of its names is found anywhere in the answer.
 const DETAIL_FIELDS: &[(&str, &[&str], Fmt)] = &[
     // From `/company/details/` (`securityDailyTradeDto`, `security`).
-    ("Sector", &["sectordescription", "sectorname", "sector"], Fmt::Text),
+    (
+        "Sector",
+        &["sectordescription", "sectorname", "sector"],
+        Fmt::Text,
+    ),
     ("Last traded on", &["businessdate"], Fmt::Text),
     ("Open", &["openprice"], Fmt::Plain),
     ("Day high", &["highprice", "dayhigh"], Fmt::Plain),
     ("Day low", &["lowprice", "daylow"], Fmt::Plain),
     ("Trades", &["totaltrades"], Fmt::Count),
-    ("Market cap", &["marketcapitalization", "marketcap"], Fmt::Money),
-    ("Listed shares", &["stocklistedshares", "listedshares", "totallistedshares", "shareslisted"], Fmt::Count),
+    (
+        "Market cap",
+        &["marketcapitalization", "marketcap"],
+        Fmt::Money,
+    ),
+    (
+        "Listed shares",
+        &[
+            "stocklistedshares",
+            "listedshares",
+            "totallistedshares",
+            "shareslisted",
+        ],
+        Fmt::Count,
+    ),
     ("Face value", &["facevalue"], Fmt::Plain),
     ("52-week high", &["fiftytwoweekhigh"], Fmt::Plain),
     ("52-week low", &["fiftytwoweeklow"], Fmt::Plain),
     // From `/company/financial-details/` (`fiscalReport` of the latest report).
-    ("EPS", &["epsvalue", "eps", "earningpershare", "earningspershare"], Fmt::Plain),
-    ("P/E ratio", &["pevalue", "peratio", "pe", "priceearningratio", "priceearningsratio"], Fmt::Plain),
-    ("Book value", &["networthpershare", "bookvalue", "bookvaluepershare"], Fmt::Plain),
+    (
+        "EPS",
+        &["epsvalue", "eps", "earningpershare", "earningspershare"],
+        Fmt::Plain,
+    ),
+    (
+        "P/E ratio",
+        &[
+            "pevalue",
+            "peratio",
+            "pe",
+            "priceearningratio",
+            "priceearningsratio",
+        ],
+        Fmt::Plain,
+    ),
+    (
+        "Book value",
+        &["networthpershare", "bookvalue", "bookvaluepershare"],
+        Fmt::Plain,
+    ),
     ("Net profit", &["profitamount", "netprofit"], Fmt::Money),
     ("Paid-up capital", &["paidupcapital"], Fmt::Money),
     ("Latest report", &["quartername"], Fmt::Text),
@@ -1219,9 +1554,11 @@ fn deep_field<'a>(row: &'a Map<String, Value>, aliases: &[&str]) -> Option<&'a V
         }
     }
 
-    aliases
-        .iter()
-        .find_map(|alias| flat.iter().find(|(key, _)| key == alias).map(|(_, value)| *value))
+    aliases.iter().find_map(|alias| {
+        flat.iter()
+            .find(|(key, _)| key == alias)
+            .map(|(_, value)| *value)
+    })
 }
 
 /// `label|value` lines for whichever known details `value` contains.
@@ -1233,9 +1570,11 @@ fn detail_lines(value: &Value) -> Vec<String> {
     DETAIL_FIELDS
         .iter()
         .filter_map(|(label, aliases, format)| {
-            let found = aliases
-                .iter()
-                .find_map(|alias| flat.iter().find(|(key, _)| key == alias).map(|(_, value)| *value))?;
+            let found = aliases.iter().find_map(|alias| {
+                flat.iter()
+                    .find(|(key, _)| key == alias)
+                    .map(|(_, value)| *value)
+            })?;
 
             let shown = match format {
                 Fmt::Text => text(found)?,
@@ -1263,7 +1602,10 @@ fn fetch_details(symbol: &str) -> Result<Vec<String>, String> {
                 for line in detail_lines(&value) {
                     let label = line.split('|').next().unwrap_or_default().to_owned();
 
-                    if !lines.iter().any(|have| have.starts_with(&format!("{label}|"))) {
+                    if !lines
+                        .iter()
+                        .any(|have| have.starts_with(&format!("{label}|")))
+                    {
                         lines.push(line);
                     }
                 }
@@ -1299,7 +1641,11 @@ fn fetch_json(path: &str) -> Result<Value, String> {
                     .map_err(|_| "the NEPSE service sent unreadable data".to_owned());
             }
             401 | 403 => continue,
-            429 => return Err("the NEPSE service is rate limiting requests; try again in a minute".to_owned()),
+            429 => {
+                return Err(
+                    "the NEPSE service is rate limiting requests; try again in a minute".to_owned(),
+                );
+            }
             500..=599 => return Err("the NEPSE service is having problems".to_owned()),
             status => return Err(format!("the NEPSE service answered HTTP {status}")),
         }
@@ -1320,7 +1666,10 @@ fn market_is_open() -> Option<bool> {
 fn fetch_table() -> Result<Vec<Quote>, String> {
     for path in ["/price-volume/", "/live-market/"] {
         let quotes: Vec<Quote> = match fetch_json(path) {
-            Ok(value) => find_rows(&value).into_iter().filter_map(quote_from).collect(),
+            Ok(value) => find_rows(&value)
+                .into_iter()
+                .filter_map(quote_from)
+                .collect(),
             Err(error) if path == "/live-market/" => return Err(error),
             Err(_) => Vec::new(),
         };
@@ -1400,9 +1749,10 @@ impl Provider for NepseProvider {
                                 let symbol = quote.symbol.clone();
                                 let fetch_symbol = symbol.clone();
 
-                                match self.details.get(&symbol, DETAILS_TTL, move || {
-                                    fetch_details(&fetch_symbol)
-                                }) {
+                                match self
+                                    .details
+                                    .get(&symbol, DETAILS_TTL, move || fetch_details(&fetch_symbol))
+                                {
                                     Lookup::Ready(lines) => lines,
                                     Lookup::Loading => {
                                         waiting_for = Some(symbol);
@@ -1420,8 +1770,10 @@ impl Provider for NepseProvider {
 
                         // While the details load, a "loading" row makes the launcher ask again.
                         if let Some(symbol) = waiting_for {
-                            let mut loading =
-                                web::loading_result(&format!("nepse-{symbol}"), &format!("{symbol} details"));
+                            let mut loading = web::loading_result(
+                                &format!("nepse-{symbol}"),
+                                &format!("{symbol} details"),
+                            );
 
                             loading.score = 1000;
                             results.push(loading);
@@ -1448,12 +1800,21 @@ impl Provider for NepseProvider {
                 match lookup {
                     Lookup::Loading => vec![web::loading_result(kind.key(), what)],
                     Lookup::Failed(reason) => vec![web::failure_result(kind.key(), what, &reason)],
-                    Lookup::Ready(page) => vec![page_result(format!("nepse:{}", kind.key()), &page)],
+                    Lookup::Ready(page) => {
+                        vec![page_result(format!("nepse:{}", kind.key()), &page)]
+                    }
                 }
             }
             Intent::Extra(kind, symbol) => {
                 let key = format!("{}:{symbol}", kind.word());
-                let what = format!("{} for {symbol}", if kind == ExtraKind::Depth { "market depth" } else { "news" });
+                let what = format!(
+                    "{} for {symbol}",
+                    if kind == ExtraKind::Depth {
+                        "market depth"
+                    } else {
+                        "news"
+                    }
+                );
                 let path = format!("{}?symbol={}", kind.path(), web::url_encode(&symbol));
                 let fetch_symbol = symbol.clone();
 
@@ -1472,20 +1833,27 @@ impl Provider for NepseProvider {
                     Lookup::Ready(page) => vec![page_result(format!("nepse:{key}"), &page)],
                 }
             }
-            Intent::Alert { symbol, above, price } => {
+            Intent::Alert {
+                symbol,
+                above,
+                price,
+            } => {
                 let what = format!("{symbol} price alert");
 
                 match self.table.get("price-volume", TTL, fetch_table) {
                     Lookup::Loading => vec![web::loading_result(&symbol, &what)],
                     Lookup::Failed(reason) => vec![web::failure_result(&symbol, &what, &reason)],
-                    Lookup::Ready(quotes) => match quotes.iter().find(|quote| quote.symbol == symbol) {
-                        Some(quote) => vec![alert_result(quote, above, price)],
-                        None => vec![alert_notice(
-                            &format!("nepse-{symbol}"),
-                            format!("No NEPSE scrip called {symbol}"),
-                            "Use the trading symbol, e.g. nepse alert nabil above 600".to_owned(),
-                        )],
-                    },
+                    Lookup::Ready(quotes) => {
+                        match quotes.iter().find(|quote| quote.symbol == symbol) {
+                            Some(quote) => vec![alert_result(quote, above, price)],
+                            None => vec![alert_notice(
+                                &format!("nepse-{symbol}"),
+                                format!("No NEPSE scrip called {symbol}"),
+                                "Use the trading symbol, e.g. nepse alert nabil above 600"
+                                    .to_owned(),
+                            )],
+                        }
+                    }
                 }
             }
             Intent::Alerts => {
@@ -1501,8 +1869,13 @@ impl Provider for NepseProvider {
                 }
             }
             Intent::Usage(example) => vec![
-                SearchResult::new("notice:nepse-usage", "Add a company symbol", ResultKind::Notice, 1850)
-                    .with_subtitle(format!("For example: {example}")),
+                SearchResult::new(
+                    "notice:nepse-usage",
+                    "Add a company symbol",
+                    ResultKind::Notice,
+                    1850,
+                )
+                .with_subtitle(format!("For example: {example}")),
             ],
         }
     }
@@ -1542,7 +1915,8 @@ impl Provider for NepseProvider {
                 format!("{SITE}/company/detail/{security_id}")
             }
             Some(_) => return Some(Err("not a NEPSE company".to_owned())),
-            None if ["index", "open", "gainers", "losers", "sectors", "holidays"].contains(&symbol)
+            None if ["index", "open", "gainers", "losers", "sectors", "holidays"]
+                .contains(&symbol)
                 || valid_symbol(symbol) =>
             {
                 format!("{SITE}/")
@@ -1573,14 +1947,35 @@ mod tests {
 
     #[test]
     fn recognises_trigger_forms() {
-        assert_eq!(parse_query("nepse nabil"), Some(Intent::Find("nabil".into())));
-        assert_eq!(parse_query("nabil nepse"), Some(Intent::Find("nabil".into())));
-        assert_eq!(parse_query("NEPSE  Nic   Asia"), Some(Intent::Find("nic asia".into())));
-        assert_eq!(parse_query("hydro power nepse"), Some(Intent::Find("hydro power".into())));
+        assert_eq!(
+            parse_query("nepse nabil"),
+            Some(Intent::Find("nabil".into()))
+        );
+        assert_eq!(
+            parse_query("nabil nepse"),
+            Some(Intent::Find("nabil".into()))
+        );
+        assert_eq!(
+            parse_query("NEPSE  Nic   Asia"),
+            Some(Intent::Find("nic asia".into()))
+        );
+        assert_eq!(
+            parse_query("hydro power nepse"),
+            Some(Intent::Find("hydro power".into()))
+        );
         assert_eq!(parse_query("nepse"), Some(Intent::Page(PageKind::Index)));
-        assert_eq!(parse_query("nepse gainers"), Some(Intent::Page(PageKind::Gainers)));
-        assert_eq!(parse_query("nepse losers"), Some(Intent::Page(PageKind::Losers)));
-        assert_eq!(parse_query("nepse open"), Some(Intent::Page(PageKind::Open)));
+        assert_eq!(
+            parse_query("nepse gainers"),
+            Some(Intent::Page(PageKind::Gainers))
+        );
+        assert_eq!(
+            parse_query("nepse losers"),
+            Some(Intent::Page(PageKind::Losers))
+        );
+        assert_eq!(
+            parse_query("nepse open"),
+            Some(Intent::Page(PageKind::Open))
+        );
         assert_eq!(parse_query("nabil"), None);
         assert_eq!(parse_query("nepse a"), None);
         assert_eq!(parse_query("nepse ../x"), None);
@@ -1599,14 +1994,20 @@ mod tests {
         )
         .unwrap();
 
-        find_rows(&value).into_iter().filter_map(quote_from).collect()
+        find_rows(&value)
+            .into_iter()
+            .filter_map(quote_from)
+            .collect()
     }
 
     #[test]
     fn finds_companies_by_part_of_symbol_or_name() {
         let quotes = sample_quotes();
         let symbols = |text: &str| -> Vec<String> {
-            find_matches(&quotes, text).iter().map(|(quote, _)| quote.symbol.clone()).collect()
+            find_matches(&quotes, text)
+                .iter()
+                .map(|(quote, _)| quote.symbol.clone())
+                .collect()
         };
 
         // Exact symbol first, then other symbols that start with it.
@@ -1626,8 +2027,12 @@ mod tests {
         let rows: Vec<String> = (0..30)
             .map(|index| format!(r#"{{"symbol":"BK{index:02}","securityName":"Some Bank {index}","lastTradedPrice":1}}"#))
             .collect();
-        let value: Value = serde_json::from_str(&format!(r#"{{"data":[{}]}}"#, rows.join(","))).unwrap();
-        let quotes: Vec<Quote> = find_rows(&value).into_iter().filter_map(quote_from).collect();
+        let value: Value =
+            serde_json::from_str(&format!(r#"{{"data":[{}]}}"#, rows.join(","))).unwrap();
+        let quotes: Vec<Quote> = find_rows(&value)
+            .into_iter()
+            .filter_map(quote_from)
+            .collect();
 
         assert_eq!(find_matches(&quotes, "bank").len(), MAX_MATCHES);
     }
@@ -1645,12 +2050,24 @@ mod tests {
         .unwrap();
         let lines = detail_lines(&value);
 
-        assert!(lines.contains(&"Sector|Commercial Banks".to_owned()), "{lines:?}");
-        assert!(lines.contains(&"Listed shares|270.00M".to_owned()), "{lines:?}");
-        assert!(lines.contains(&"Paid-up capital|Rs 27.00B".to_owned()), "{lines:?}");
+        assert!(
+            lines.contains(&"Sector|Commercial Banks".to_owned()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"Listed shares|270.00M".to_owned()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"Paid-up capital|Rs 27.00B".to_owned()),
+            "{lines:?}"
+        );
         assert!(lines.contains(&"EPS|18.25".to_owned()), "{lines:?}");
         assert!(lines.contains(&"P/E ratio|28.10".to_owned()), "{lines:?}");
-        assert!(lines.contains(&"52-week high|650.50".to_owned()), "{lines:?}");
+        assert!(
+            lines.contains(&"52-week high|650.50".to_owned()),
+            "{lines:?}"
+        );
         assert!(detail_lines(&serde_json::json!({"unrelated": 1})).is_empty());
     }
 
@@ -1677,15 +2094,30 @@ mod tests {
     #[test]
     fn builds_a_quote_with_a_coloured_arrow() {
         let value: Value = serde_json::from_str(TABLE).unwrap();
-        let quotes: Vec<Quote> = find_rows(&value).into_iter().filter_map(quote_from).collect();
+        let quotes: Vec<Quote> = find_rows(&value)
+            .into_iter()
+            .filter_map(quote_from)
+            .collect();
 
         assert_eq!(quotes.len(), 2);
 
         let result = quote_result(&quotes[0], 1850, &[]);
 
         assert_eq!(result.title, "NABIL  Rs 512.50");
-        assert!(result.subtitle.as_deref().unwrap().starts_with("\u{25b2} 7.50 (1.49%)"));
-        assert!(result.subtitle.as_deref().unwrap().ends_with("Nabil Bank Limited"));
+        assert!(
+            result
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .starts_with("\u{25b2} 7.50 (1.49%)")
+        );
+        assert!(
+            result
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .ends_with("Nabil Bank Limited")
+        );
 
         let detail = result.detail.unwrap();
 
@@ -1696,19 +2128,31 @@ mod tests {
     #[test]
     fn falls_back_to_the_percentage_when_there_is_no_previous_close() {
         let value: Value = serde_json::from_str(TABLE).unwrap();
-        let quotes: Vec<Quote> = find_rows(&value).into_iter().filter_map(quote_from).collect();
+        let quotes: Vec<Quote> = find_rows(&value)
+            .into_iter()
+            .filter_map(quote_from)
+            .collect();
         let (delta, percent) = change_of(&quotes[1]).unwrap();
 
         assert!(delta < 0.0);
         assert!((percent + 2.5).abs() < 1e-9);
-        assert!(quote_result(&quotes[1], 1850, &[]).subtitle.unwrap().starts_with('\u{25bc}'));
+        assert!(
+            quote_result(&quotes[1], 1850, &[])
+                .subtitle
+                .unwrap()
+                .starts_with('\u{25bc}')
+        );
     }
 
     #[test]
     fn rows_without_a_price_are_skipped() {
-        let value: Value = serde_json::from_str(r#"[{"symbol":"X1"},{"symbol":"Y2","ltp":5}]"#).unwrap();
+        let value: Value =
+            serde_json::from_str(r#"[{"symbol":"X1"},{"symbol":"Y2","ltp":5}]"#).unwrap();
 
-        assert_eq!(find_rows(&value).into_iter().filter_map(quote_from).count(), 1);
+        assert_eq!(
+            find_rows(&value).into_iter().filter_map(quote_from).count(),
+            1
+        );
     }
 
     #[test]
@@ -1760,8 +2204,16 @@ mod tests {
 
         assert_eq!(page.title, "NEPSE Index  2,599.93");
         // The API's `change` is positive although the index fell: the sign comes from the close.
-        assert!(page.subtitle.starts_with("\u{25bc} 21.33 (0.81%)"), "{}", page.subtitle);
-        assert!(page.lines.iter().any(|line| line.starts_with("52-week range|2,400.00")));
+        assert!(
+            page.subtitle.starts_with("\u{25bc} 21.33 (0.81%)"),
+            "{}",
+            page.subtitle
+        );
+        assert!(
+            page.lines
+                .iter()
+                .any(|line| line.starts_with("52-week range|2,400.00"))
+        );
     }
 
     #[test]
@@ -1786,11 +2238,20 @@ mod tests {
                  "percentageChange":2.467978757,"previousClose":320.1,"closePrice":328.0}]}"#,
         )
         .unwrap();
-        let quotes: Vec<Quote> = find_rows(&prices).into_iter().filter_map(quote_from).collect();
+        let quotes: Vec<Quote> = find_rows(&prices)
+            .into_iter()
+            .filter_map(quote_from)
+            .collect();
         let result = quote_result(&quotes[0], 1850, &[]);
 
         assert_eq!(result.title, "ADBL  Rs 328.00");
-        assert!(result.subtitle.as_deref().unwrap().starts_with("\u{25b2} 7.90 (2.47%)"));
+        assert!(
+            result
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .starts_with("\u{25b2} 7.90 (2.47%)")
+        );
 
         let movers: Value = serde_json::from_str(
             r#"{"status":"success","data":[{"symbol":"ULBSL","ltp":2626.8,"cp":2626.8,
@@ -1798,7 +2259,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(parse_movers(&movers, true).unwrap().lines[0].starts_with("ULBSL|Rs 2,626.80  \u{25b2}"));
+        assert!(
+            parse_movers(&movers, true).unwrap().lines[0]
+                .starts_with("ULBSL|Rs 2,626.80  \u{25b2}")
+        );
         // Whatever sign the API uses, the losers list points down.
         assert!(parse_movers(&movers, false).unwrap().lines[0].contains('\u{25bc}'));
     }
@@ -1835,7 +2299,10 @@ mod tests {
                         {"securityId":"bad id","symbol":"ZZZ","lastTradedPrice":1.0}]}"#,
         )
         .unwrap();
-        let quotes: Vec<Quote> = find_rows(&prices).into_iter().filter_map(quote_from).collect();
+        let quotes: Vec<Quote> = find_rows(&prices)
+            .into_iter()
+            .filter_map(quote_from)
+            .collect();
 
         assert_eq!(quote_result(&quotes[0], 1850, &[]).id, "nepse:ADBL:397");
         assert_eq!(quote_result(&quotes[1], 1850, &[]).id, "nepse:AHL:9150");
@@ -1845,7 +2312,10 @@ mod tests {
         let spec = provider.resolve("nepse:ADBL:397").unwrap().unwrap();
 
         assert_eq!(spec.program, "xdg-open");
-        assert_eq!(spec.args, vec!["https://nepalstock.com.np/company/detail/397"]);
+        assert_eq!(
+            spec.args,
+            vec!["https://nepalstock.com.np/company/detail/397"]
+        );
     }
 
     #[test]
@@ -1868,12 +2338,30 @@ mod tests {
     // shapes using the field names NEPSE's own endpoints use.
     #[test]
     fn recognises_the_new_commands() {
-        assert_eq!(parse_query("nepse sectors"), Some(Intent::Page(PageKind::Sectors)));
-        assert_eq!(parse_query("nepse holidays"), Some(Intent::Page(PageKind::Holidays)));
-        assert_eq!(parse_query("nepse depth nabil"), Some(Intent::Extra(ExtraKind::Depth, "NABIL".into())));
-        assert_eq!(parse_query("nepse news adbl"), Some(Intent::Extra(ExtraKind::News, "ADBL".into())));
-        assert_eq!(parse_query("nepse depth"), Some(Intent::Usage("nepse depth nabil")));
-        assert_eq!(parse_query("nepse news"), Some(Intent::Usage("nepse news nabil")));
+        assert_eq!(
+            parse_query("nepse sectors"),
+            Some(Intent::Page(PageKind::Sectors))
+        );
+        assert_eq!(
+            parse_query("nepse holidays"),
+            Some(Intent::Page(PageKind::Holidays))
+        );
+        assert_eq!(
+            parse_query("nepse depth nabil"),
+            Some(Intent::Extra(ExtraKind::Depth, "NABIL".into()))
+        );
+        assert_eq!(
+            parse_query("nepse news adbl"),
+            Some(Intent::Extra(ExtraKind::News, "ADBL".into()))
+        );
+        assert_eq!(
+            parse_query("nepse depth"),
+            Some(Intent::Usage("nepse depth nabil"))
+        );
+        assert_eq!(
+            parse_query("nepse news"),
+            Some(Intent::Usage("nepse news nabil"))
+        );
         assert_eq!(parse_query("nepse depth ../x"), None);
     }
 
@@ -1883,7 +2371,10 @@ mod tests {
         assert_eq!(civil_date(19_723), "2024-01-01");
         assert_eq!(civil_date(20_000), "2024-10-04");
         assert_eq!(civil_date(19_782), "2024-02-29");
-        assert_eq!(date_part("2026-10-14T15:00:00").as_deref(), Some("2026-10-14"));
+        assert_eq!(
+            date_part("2026-10-14T15:00:00").as_deref(),
+            Some("2026-10-14")
+        );
         assert_eq!(date_part("14 Oct 2026"), None);
     }
 
@@ -1899,8 +2390,16 @@ mod tests {
         let page = parse_sectors(&value).unwrap();
 
         assert_eq!(page.subtitle, "3 sub-indices, best first");
-        assert!(page.lines[0].starts_with("Hotels And Tourism|5,000.00"), "{:?}", page.lines);
-        assert!(page.lines[1].starts_with("Banking SubIndex|1,200.00  \u{25b2}"), "{:?}", page.lines);
+        assert!(
+            page.lines[0].starts_with("Hotels And Tourism|5,000.00"),
+            "{:?}",
+            page.lines
+        );
+        assert!(
+            page.lines[1].starts_with("Banking SubIndex|1,200.00  \u{25b2}"),
+            "{:?}",
+            page.lines
+        );
         assert!(page.lines[2].contains('\u{25bc}'), "{:?}", page.lines);
     }
 
@@ -1917,7 +2416,14 @@ mod tests {
         let page = parse_holidays(&value, "2026-10-14").unwrap();
 
         assert_eq!(page.subtitle, "Next: 2026-10-14 \u{b7} Today holiday");
-        assert_eq!(page.lines, ["2026-10-14|Today holiday", "2026-10-20|Dashain", "2026-11-10|Tihar"]);
+        assert_eq!(
+            page.lines,
+            [
+                "2026-10-14|Today holiday",
+                "2026-10-20|Dashain",
+                "2026-11-10|Tihar"
+            ]
+        );
 
         let past = parse_holidays(&value, "2027-01-01").unwrap();
 
@@ -1938,15 +2444,26 @@ mod tests {
         let page = parse_depth(&value, "NABIL").unwrap();
 
         assert_eq!(page.title, "NABIL market depth");
-        assert_eq!(page.subtitle, "Best bid Rs 512.00 \u{b7} best ask Rs 514.00");
+        assert_eq!(
+            page.subtitle,
+            "Best bid Rs 512.00 \u{b7} best ask Rs 514.00"
+        );
         assert_eq!(page.lines[0], "Buy 1|Rs 512.00 \u{d7} 300 (5 orders)");
         assert_eq!(page.lines[2], "Sell 1|Rs 514.00 \u{d7} 1.2K (4 orders)");
-        assert!(page.lines.contains(&"Total buy qty|5.0K".to_owned()), "{:?}", page.lines);
+        assert!(
+            page.lines.contains(&"Total buy qty|5.0K".to_owned()),
+            "{:?}",
+            page.lines
+        );
     }
 
     #[test]
     fn an_empty_order_book_is_not_an_error() {
-        let page = parse_depth(&serde_json::json!({"data": {"buyMarketDepthList": [], "sellMarketDepthList": []}}), "NABIL").unwrap();
+        let page = parse_depth(
+            &serde_json::json!({"data": {"buyMarketDepthList": [], "sellMarketDepthList": []}}),
+            "NABIL",
+        )
+        .unwrap();
 
         assert_eq!(page.title, "No market depth for NABIL");
     }
@@ -1966,14 +2483,24 @@ mod tests {
         // The separator inside a headline must not break the label|value line.
         assert_eq!(page.lines[0], "2026-10-12|Dividend / bonus announced");
 
-        assert_eq!(parse_news(&serde_json::json!({"data": []}), "NABIL").unwrap().title, "No news for NABIL");
+        assert_eq!(
+            parse_news(&serde_json::json!({"data": []}), "NABIL")
+                .unwrap()
+                .title,
+            "No news for NABIL"
+        );
     }
 
     #[test]
     fn new_results_open_the_home_page_only() {
         let provider = NepseProvider::new();
 
-        for id in ["nepse:sectors", "nepse:holidays", "nepse:depth:NABIL", "nepse:news:ADBL"] {
+        for id in [
+            "nepse:sectors",
+            "nepse:holidays",
+            "nepse:depth:NABIL",
+            "nepse:news:ADBL",
+        ] {
             let spec = provider.resolve(id).unwrap().unwrap();
 
             assert_eq!(spec.args, vec!["https://nepalstock.com.np/"], "{id}");
@@ -1985,13 +2512,32 @@ mod tests {
 
     #[test]
     fn recognises_alert_commands() {
-        let alert = |symbol: &str, above: Option<bool>, price: f64| Intent::Alert { symbol: symbol.into(), above, price };
+        let alert = |symbol: &str, above: Option<bool>, price: f64| Intent::Alert {
+            symbol: symbol.into(),
+            above,
+            price,
+        };
 
-        assert_eq!(parse_query("nepse alert nabil above 600"), Some(alert("NABIL", Some(true), 600.0)));
-        assert_eq!(parse_query("nepse alert nabil below 1,250.5"), Some(alert("NABIL", Some(false), 1250.5)));
-        assert_eq!(parse_query("nepse alert nabil > 600"), Some(alert("NABIL", Some(true), 600.0)));
-        assert_eq!(parse_query("nepse alert nabil rs600"), Some(alert("NABIL", None, 600.0)));
-        assert_eq!(parse_query("nepse alert nabil 600"), Some(alert("NABIL", None, 600.0)));
+        assert_eq!(
+            parse_query("nepse alert nabil above 600"),
+            Some(alert("NABIL", Some(true), 600.0))
+        );
+        assert_eq!(
+            parse_query("nepse alert nabil below 1,250.5"),
+            Some(alert("NABIL", Some(false), 1250.5))
+        );
+        assert_eq!(
+            parse_query("nepse alert nabil > 600"),
+            Some(alert("NABIL", Some(true), 600.0))
+        );
+        assert_eq!(
+            parse_query("nepse alert nabil rs600"),
+            Some(alert("NABIL", None, 600.0))
+        );
+        assert_eq!(
+            parse_query("nepse alert nabil 600"),
+            Some(alert("NABIL", None, 600.0))
+        );
         assert_eq!(parse_query("nepse alerts"), Some(Intent::Alerts));
 
         for bad in [
@@ -2005,7 +2551,11 @@ mod tests {
             "nepse alert nabil above 99999999",
             "nepse alert ../x above 5",
         ] {
-            assert_eq!(parse_query(bad), Some(Intent::Usage(ALERT_EXAMPLE)), "{bad}");
+            assert_eq!(
+                parse_query(bad),
+                Some(Intent::Usage(ALERT_EXAMPLE)),
+                "{bad}"
+            );
         }
     }
 
@@ -2021,7 +2571,10 @@ mod tests {
         assert!(set.detail.unwrap().contains("Distance|+66.67%"));
 
         // Direction picked from the price when not given.
-        assert_eq!(alert_result(quote, None, 2.0).id, "nepse:alert:NABIL:below:2.00");
+        assert_eq!(
+            alert_result(quote, None, 2.0).id,
+            "nepse:alert:NABIL:below:2.00"
+        );
 
         // Already past the target: nothing to set.
         let done = alert_result(quote, Some(true), 2.0);
@@ -2035,7 +2588,11 @@ mod tests {
         let provider = NepseProvider::new();
 
         // Malformed ids never touch the alerts file.
-        for id in ["nepse:alert:NABIL:above:-3", "nepse:alert:../x:above:5", "nepse:unalert:junk"] {
+        for id in [
+            "nepse:alert:NABIL:above:-3",
+            "nepse:alert:../x:above:5",
+            "nepse:unalert:junk",
+        ] {
             assert!(provider.resolve(id).unwrap().is_err(), "{id}");
         }
 
@@ -2062,9 +2619,21 @@ mod tests {
 
         assert_eq!(page.subtitle, "4 sub-indices, best first");
         // Best first: Mutual Fund +0.73, Banking +0.72, Microfinance +0.53, Investment -0.08.
-        assert!(page.lines[0].starts_with("Mutual Fund|19.75  \u{25b2}"), "{:?}", page.lines);
-        assert!(page.lines[1].starts_with("Banking SubIndex|1,574.47"), "{:?}", page.lines);
-        assert!(page.lines[3].starts_with("Investment Index|94.82  \u{25bc}"), "{:?}", page.lines);
+        assert!(
+            page.lines[0].starts_with("Mutual Fund|19.75  \u{25b2}"),
+            "{:?}",
+            page.lines
+        );
+        assert!(
+            page.lines[1].starts_with("Banking SubIndex|1,574.47"),
+            "{:?}",
+            page.lines
+        );
+        assert!(
+            page.lines[3].starts_with("Investment Index|94.82  \u{25bc}"),
+            "{:?}",
+            page.lines
+        );
     }
 
     #[test]
@@ -2080,14 +2649,19 @@ mod tests {
 
         // The API lists them newest first: they come out soonest first, past ones dropped.
         assert_eq!(page.subtitle, "Next: 2026-11-15 \u{b7} Chhath Parva");
-        assert_eq!(page.lines, ["2026-11-15|Chhath Parva", "2026-12-30|Tamu Lhosar"]);
+        assert_eq!(
+            page.lines,
+            ["2026-11-15|Chhath Parva", "2026-12-30|Tamu Lhosar"]
+        );
     }
 
     #[test]
     fn the_real_empty_market_depth_answer_is_not_an_error() {
         // Outside trading hours `data` is an empty string.
-        let value: Value =
-            serde_json::from_str(r#"{"status":"success","message":"Operation successful","data":""}"#).unwrap();
+        let value: Value = serde_json::from_str(
+            r#"{"status":"success","message":"Operation successful","data":""}"#,
+        )
+        .unwrap();
         let page = parse_depth(&value, "NABIL").unwrap();
 
         assert_eq!(page.title, "No market depth for NABIL");
@@ -2109,7 +2683,10 @@ mod tests {
         assert_eq!(page.title, "NABIL news");
         // No date field in this sample (the security's listing date must not be used):
         // the kind of news labels the line instead.
-        assert_eq!(page.lines, ["Others|Regarding the AGM, Appointment of Directors and Statutory Auditor [NABIL]"]);
+        assert_eq!(
+            page.lines,
+            ["Others|Regarding the AGM, Appointment of Directors and Statutory Auditor [NABIL]"]
+        );
         assert_eq!(page.subtitle, "1 items");
 
         let dated: Value = serde_json::from_str(
@@ -2147,7 +2724,10 @@ mod tests {
             "52-week high|581.00",
             "52-week low|485.00",
         ] {
-            assert!(lines.contains(&expected.to_owned()), "{expected}: {lines:?}");
+            assert!(
+                lines.contains(&expected.to_owned()),
+                "{expected}: {lines:?}"
+            );
         }
 
         let financial: Value = serde_json::from_str(
@@ -2171,7 +2751,10 @@ mod tests {
             "Latest report|Fourth Quarter",
             "Fiscal year|2025-2026",
         ] {
-            assert!(lines.contains(&expected.to_owned()), "{expected}: {lines:?}");
+            assert!(
+                lines.contains(&expected.to_owned()),
+                "{expected}: {lines:?}"
+            );
         }
     }
 
@@ -2181,12 +2764,22 @@ mod tests {
             r#"[{"symbol":"NABIL","lastTradedPrice":547,"previousClose":546,"openPrice":540}]"#,
         )
         .unwrap();
-        let quote = find_rows(&value).into_iter().filter_map(quote_from).next().unwrap();
+        let quote = find_rows(&value)
+            .into_iter()
+            .filter_map(quote_from)
+            .next()
+            .unwrap();
         let extra = vec!["Open|548.00".to_owned(), "Trades|280".to_owned()];
         let detail = quote_result(&quote, 1850, &extra).detail.unwrap();
 
         // The price list already gave the open price, so the details one is skipped.
-        assert_eq!(detail.lines().filter(|line| line.starts_with("Open|")).count(), 1);
+        assert_eq!(
+            detail
+                .lines()
+                .filter(|line| line.starts_with("Open|"))
+                .count(),
+            1
+        );
         assert!(detail.contains("Trades|280"));
     }
 }

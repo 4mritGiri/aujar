@@ -84,7 +84,8 @@ fn weekday(date: &str) -> Option<&'static str> {
 
     const OFFSETS: [i32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
     let year = if month < 3 { year - 1 } else { year };
-    let index = (year + year / 4 - year / 100 + year / 400 + OFFSETS[month - 1] + day).rem_euclid(7);
+    let index =
+        (year + year / 4 - year / 100 + year / 400 + OFFSETS[month - 1] + day).rem_euclid(7);
 
     Some(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][index as usize])
 }
@@ -95,7 +96,15 @@ fn parse_query(query: &str) -> Option<String> {
 
     let mut place = None;
 
-    for prefix in ["weather in ", "weather for ", "weather at ", "weather ", "forecast for ", "forecast in ", "forecast "] {
+    for prefix in [
+        "weather in ",
+        "weather for ",
+        "weather at ",
+        "weather ",
+        "forecast for ",
+        "forecast in ",
+        "forecast ",
+    ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
             place = Some(rest);
             break;
@@ -178,7 +187,10 @@ fn parse_report(value: &serde_json::Value, place: &str, imperial: bool) -> Optio
         humidity: number(current, "relative_humidity_2m").unwrap_or(f64::NAN),
         wind: number(current, "wind_speed_10m").unwrap_or(f64::NAN),
         code: current.get("weather_code")?.as_i64()?,
-        is_day: current.get("is_day").and_then(|v| v.as_i64()).is_none_or(|v| v != 0),
+        is_day: current
+            .get("is_day")
+            .and_then(|v| v.as_i64())
+            .is_none_or(|v| v != 0),
         days,
         imperial,
     })
@@ -398,10 +410,19 @@ mod tests {
     #[test]
     fn recognises_weather_queries() {
         assert_eq!(parse_query("weather paris").as_deref(), Some("paris"));
-        assert_eq!(parse_query("Weather in New York").as_deref(), Some("new york"));
-        assert_eq!(parse_query("kathmandu weather").as_deref(), Some("kathmandu"));
+        assert_eq!(
+            parse_query("Weather in New York").as_deref(),
+            Some("new york")
+        );
+        assert_eq!(
+            parse_query("kathmandu weather").as_deref(),
+            Some("kathmandu")
+        );
         assert_eq!(parse_query("forecast oslo").as_deref(), Some("oslo"));
-        assert_eq!(parse_query("weather in São Paulo").as_deref(), Some("são paulo"));
+        assert_eq!(
+            parse_query("weather in São Paulo").as_deref(),
+            Some("são paulo")
+        );
     }
 
     #[test]
@@ -442,7 +463,13 @@ mod tests {
         let result = result_for(&report);
 
         assert_eq!(result.title, "18\u{b0}C  Partly cloudy");
-        assert!(result.subtitle.as_deref().unwrap().starts_with("Paris, France"));
+        assert!(
+            result
+                .subtitle
+                .as_deref()
+                .unwrap()
+                .starts_with("Paris, France")
+        );
         assert!(result.subtitle.as_deref().unwrap().contains("H 20\u{b0}C"));
 
         let detail = result.detail.unwrap();
@@ -454,7 +481,8 @@ mod tests {
 
     #[test]
     fn imperial_units_are_labelled() {
-        let report = parse_report(&serde_json::from_str(FORECAST_SAMPLE).unwrap(), "X", true).unwrap();
+        let report =
+            parse_report(&serde_json::from_str(FORECAST_SAMPLE).unwrap(), "X", true).unwrap();
 
         assert!(result_for(&report).title.contains("\u{b0}F"));
         assert!(result_for(&report).detail.unwrap().contains("mph"));
@@ -463,7 +491,11 @@ mod tests {
     #[test]
     fn serves_cache_and_resolves_safely() {
         let provider = WeatherProvider::new(false);
-        let report = parse_report(&serde_json::from_str(FORECAST_SAMPLE).unwrap(), "Paris", false);
+        let report = parse_report(
+            &serde_json::from_str(FORECAST_SAMPLE).unwrap(),
+            "Paris",
+            false,
+        );
 
         provider.cache.insert("paris", report);
 

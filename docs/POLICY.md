@@ -16,6 +16,7 @@ denied_capabilities = ["execute_command"]
 | `global_hotkeys` | Registering native global shortcuts at startup |
 | `control_input` | Mouse Borders: capturing and injecting keyboard and mouse input, switching machines |
 | `network` | Mouse Borders: listening for and connecting to other machines (denying it keeps the module from starting) |
+| `execute_command` | also `NexDesk` open (`aujar nexdesk open`) |
 | `read_clipboard`, `write_clipboard` | Mouse Borders clipboard sharing (denying either turns it off) |
 | others | reserved for upcoming modules |
 

@@ -243,7 +243,9 @@ fn merge_recent(entries: &mut Vec<Entry>) {
             Some(&position) => entries[position].recent = Some(stamp),
             None => {
                 // Outside the indexed roots (or in a hidden directory): still your history.
-                let Some(name) = path.file_name().map(|name| name.to_string_lossy().into_owned())
+                let Some(name) = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
                 else {
                     continue;
                 };
@@ -402,10 +404,8 @@ impl Provider for FilesProvider {
     fn resolve(&self, id: &str) -> Option<Result<LaunchSpec, String>> {
         let (reveal, path) = if let Some(path) = id.strip_prefix("files:open:") {
             (false, path)
-        } else if let Some(path) = id.strip_prefix("files:reveal:") {
-            (true, path)
         } else {
-            return None;
+            (true, id.strip_prefix("files:reveal:")?)
         };
 
         let path = PathBuf::from(path);
@@ -496,10 +496,16 @@ mod tests {
     fn open_and_reveal_resolve_only_indexed_paths() {
         let provider = provider();
 
-        let open = provider.resolve("files:open:/home/u/Music/song.mp3").unwrap().unwrap();
+        let open = provider
+            .resolve("files:open:/home/u/Music/song.mp3")
+            .unwrap()
+            .unwrap();
         assert_eq!(open.args, ["/home/u/Music/song.mp3"]);
 
-        let reveal = provider.resolve("files:reveal:/home/u/Music/song.mp3").unwrap().unwrap();
+        let reveal = provider
+            .resolve("files:reveal:/home/u/Music/song.mp3")
+            .unwrap()
+            .unwrap();
         assert_eq!(reveal.args, ["/home/u/Music"]);
 
         assert!(provider.resolve("files:open:/etc/passwd").is_none());
@@ -523,7 +529,11 @@ mod tests {
 
         assert_eq!(results.len(), MAX_RESULTS);
         assert_eq!(results[0].title, "note");
-        assert!(results.windows(2).all(|pair| pair[0].score >= pair[1].score));
+        assert!(
+            results
+                .windows(2)
+                .all(|pair| pair[0].score >= pair[1].score)
+        );
     }
 
     #[test]

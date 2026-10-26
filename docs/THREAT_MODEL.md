@@ -22,6 +22,7 @@
 | A paired machine misuses access (types, locks, sends files) and nobody notices | Audit log of connections, refusals, control hand-offs, transfers, locks and key changes; contents and keys never logged | ✅ detection, not prevention |
 | Paired machine sends a hostile file | Single-component names, no overwrite, `.part` then SHA-256 check, 100 MB cap, never executable | ✅ |
 | Local malware reads keystrokes through input devices | Requires the `input` group, which Mouse Borders needs. Mitigation: run only the least-privilege system service and keep your user out of the group | ⚠️ inherent to Linux input access |
+| NexDesk integration leaks or mishandles remote-session secrets | NexDesk runs as a separate process; Aujar only starts it and never sees profiles, passwords or the vault; `nexdesk open` is gated by `execute_command`; `AUJAR_NEXDESK_BIN` is read from the daemon's own environment ([NEXDESK](NEXDESK.md)) | ✅ |
 | Supply chain | `cargo-deny`, Dependabot, locked builds, signed releases, SBOM | 🚧 |
 
 Report vulnerabilities per [SECURITY.md](../SECURITY.md).

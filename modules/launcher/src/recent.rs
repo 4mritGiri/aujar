@@ -8,7 +8,9 @@ fn xbel_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))?;
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+        })?;
 
     Some(base.join("recently-used.xbel"))
 }
@@ -64,15 +66,17 @@ fn percent_decode(text: &str) -> String {
     let mut index = 0;
 
     while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let Some(value) = text
-                .get(index + 1..index + 3)
+        let escaped = if bytes[index] == b'%' && index + 2 < bytes.len() {
+            text.get(index + 1..index + 3)
                 .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-            {
-                out.push(value);
-                index += 3;
-                continue;
-            }
+        } else {
+            None
+        };
+
+        if let Some(value) = escaped {
+            out.push(value);
+            index += 3;
+            continue;
         }
 
         out.push(bytes[index]);
@@ -113,7 +117,7 @@ pub fn parse_xbel(content: &str) -> Vec<(PathBuf, u64)> {
         entries.push((path, stamp));
     }
 
-    entries.sort_by(|a, b| b.1.cmp(&a.1));
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     entries.truncate(500);
 
     entries
@@ -161,6 +165,9 @@ mod tests {
 
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].0, PathBuf::from("/home/u/a&b.txt"));
-        assert_eq!(entries[1].0, PathBuf::from("/home/u/Documents/My Report.pdf"));
+        assert_eq!(
+            entries[1].0,
+            PathBuf::from("/home/u/Documents/My Report.pdf")
+        );
     }
 }

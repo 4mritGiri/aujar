@@ -66,11 +66,9 @@ impl Backend {
         match self {
             Self::Gnome => token.parse::<u32>().is_ok(),
             Self::Sway => token.parse::<u64>().is_ok(),
-            Self::Hyprland | Self::X11 => {
-                token
-                    .strip_prefix("0x")
-                    .is_some_and(|hex| !hex.is_empty() && hex.len() <= 16 && hex.chars().all(|c| c.is_ascii_hexdigit()))
-            }
+            Self::Hyprland | Self::X11 => token.strip_prefix("0x").is_some_and(|hex| {
+                !hex.is_empty() && hex.len() <= 16 && hex.chars().all(|c| c.is_ascii_hexdigit())
+            }),
         }
     }
 }
@@ -158,7 +156,10 @@ fn parse_gnome(output: &str) -> Option<Vec<WindowInfo>> {
                     .and_then(|v| v.as_i64())
                     .filter(|workspace| *workspace >= 0)
                     .map(|workspace| (workspace + 1).to_string()),
-                focused: window.get("focused").and_then(|v| v.as_bool()).unwrap_or(false),
+                focused: window
+                    .get("focused")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
             })
         })
         .collect();
@@ -173,9 +174,11 @@ fn collect_sway(node: &serde_json::Value, workspace: Option<&str>, out: &mut Vec
     let workspace = if kind == "workspace" { name } else { workspace };
 
     let is_window = matches!(kind, "con" | "floating_con") && node.get("pid").is_some();
-    let has_children = ["nodes", "floating_nodes"]
-        .iter()
-        .any(|key| node.get(key).and_then(|v| v.as_array()).is_some_and(|c| !c.is_empty()));
+    let has_children = ["nodes", "floating_nodes"].iter().any(|key| {
+        node.get(key)
+            .and_then(|v| v.as_array())
+            .is_some_and(|c| !c.is_empty())
+    });
 
     if is_window && !has_children {
         let app = node
@@ -196,7 +199,10 @@ fn collect_sway(node: &serde_json::Value, workspace: Option<&str>, out: &mut Vec
                 icon_hint: (!app.is_empty()).then(|| app.clone()),
                 app,
                 workspace: workspace.map(str::to_owned),
-                focused: node.get("focused").and_then(|v| v.as_bool()).unwrap_or(false),
+                focused: node
+                    .get("focused")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
             });
         }
     }
@@ -225,13 +231,22 @@ fn parse_hyprland(output: &str) -> Option<Vec<WindowInfo>> {
     let windows = clients
         .as_array()?
         .iter()
-        .filter(|client| client.get("mapped").and_then(|v| v.as_bool()).unwrap_or(true))
+        .filter(|client| {
+            client
+                .get("mapped")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true)
+        })
         .filter_map(|client| {
             let class = client.get("class")?.as_str()?.to_owned();
 
             Some(WindowInfo {
                 id: client.get("address")?.as_str()?.to_owned(),
-                title: client.get("title").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
+                title: client
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_owned(),
                 icon_hint: Some(class.clone()),
                 app: class,
                 workspace: client
@@ -266,7 +281,10 @@ fn parse_wmctrl(output: &str) -> Vec<WindowInfo> {
                 return None;
             }
 
-            let app = class.rsplit_once('.').map_or(class, |(_, name)| name).to_owned();
+            let app = class
+                .rsplit_once('.')
+                .map_or(class, |(_, name)| name)
+                .to_owned();
 
             Some(WindowInfo {
                 id,
@@ -329,7 +347,8 @@ fn candidates() -> Vec<Backend> {
         found.push(Backend::Hyprland);
     }
 
-    let gnome = var("XDG_CURRENT_DESKTOP").is_some_and(|desktop| desktop.to_uppercase().contains("GNOME"));
+    let gnome =
+        var("XDG_CURRENT_DESKTOP").is_some_and(|desktop| desktop.to_uppercase().contains("GNOME"));
 
     if gnome && on_path("busctl") {
         found.push(Backend::Gnome);
@@ -354,12 +373,22 @@ fn activation(backend: Backend, id: &str) -> Option<LaunchSpec> {
     let (program, args): (&str, Vec<String>) = match backend {
         Backend::Gnome => (
             "busctl",
-            gnome_args("Activate", &["u", id]).into_iter().map(str::to_owned).collect(),
+            gnome_args("Activate", &["u", id])
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
         ),
-        Backend::Sway => ("swaymsg", vec![format!("[con_id={id}]"), "focus".to_owned()]),
+        Backend::Sway => (
+            "swaymsg",
+            vec![format!("[con_id={id}]"), "focus".to_owned()],
+        ),
         Backend::Hyprland => (
             "hyprctl",
-            vec!["dispatch".to_owned(), "focuswindow".to_owned(), format!("address:{id}")],
+            vec![
+                "dispatch".to_owned(),
+                "focuswindow".to_owned(),
+                format!("address:{id}"),
+            ],
         ),
         Backend::X11 => ("wmctrl", vec!["-ia".to_owned(), id.to_owned()]),
     };
@@ -413,12 +442,15 @@ impl WindowsProvider {
     }
 
     fn windows(&self) -> Result<(Backend, Vec<WindowInfo>), String> {
-        let mut cache = self.cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        if let Some((at, backend, windows)) = cache.as_ref() {
-            if at.elapsed() < LIST_TTL {
-                return Ok((*backend, windows.clone()));
-            }
+        let fresh = cache.as_ref().filter(|(at, _, _)| at.elapsed() < LIST_TTL);
+
+        if let Some((_, backend, windows)) = fresh {
+            return Ok((*backend, windows.clone()));
         }
 
         let candidates = candidates();
@@ -449,7 +481,10 @@ impl WindowsProvider {
     fn icon_for(&self, window: &WindowInfo) -> Option<String> {
         let hint = window.icon_hint.as_deref()?;
         let name = hint.strip_suffix(".desktop").unwrap_or(hint);
-        let mut icons = self.icons.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut icons = self
+            .icons
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         icons
             .entry(name.to_owned())
@@ -489,8 +524,13 @@ impl Provider for WindowsProvider {
             Ok(listing) => listing,
             Err(message) => {
                 return vec![
-                    SearchResult::new("notice:windows", "Window switching isn\u{2019}t set up", ResultKind::Notice, 1850)
-                        .with_subtitle(message),
+                    SearchResult::new(
+                        "notice:windows",
+                        "Window switching isn\u{2019}t set up",
+                        ResultKind::Notice,
+                        1850,
+                    )
+                    .with_subtitle(message),
                 ];
             }
         };
@@ -531,8 +571,16 @@ impl Provider for WindowsProvider {
                     None => String::new(),
                 };
 
-                let app = if window.app.is_empty() { "Window" } else { window.app.as_str() };
-                let title = if window.title.is_empty() { app } else { window.title.as_str() };
+                let app = if window.app.is_empty() {
+                    "Window"
+                } else {
+                    window.app.as_str()
+                };
+                let title = if window.title.is_empty() {
+                    app
+                } else {
+                    window.title.as_str()
+                };
 
                 SearchResult::new(
                     format!("windows:{}:{}", backend.key(), window.id),
@@ -542,7 +590,11 @@ impl Provider for WindowsProvider {
                 )
                 .with_subtitle(format!(
                     "{app}{place}{}",
-                    if window.focused { " \u{b7} Current" } else { "" }
+                    if window.focused {
+                        " \u{b7} Current"
+                    } else {
+                        ""
+                    }
                 ))
                 .with_icon(self.icon_for(window))
             })
@@ -591,7 +643,10 @@ mod tests {
         assert_eq!(windows[0].workspace.as_deref(), Some("2"));
         assert_eq!(windows[0].icon_hint.as_deref(), Some("thunderbird.desktop"));
         assert!(windows[1].focused);
-        assert_eq!(windows[1].icon_hint.as_deref(), Some("gnome-terminal-server"));
+        assert_eq!(
+            windows[1].icon_hint.as_deref(),
+            Some("gnome-terminal-server")
+        );
         assert!(parse_gnome("garbage").is_none());
     }
 

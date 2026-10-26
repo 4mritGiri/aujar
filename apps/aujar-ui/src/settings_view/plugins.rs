@@ -6,12 +6,59 @@ use gpui::{AnyElement, Context, SharedString, div, prelude::*};
 impl SettingsView {
     pub(super) fn plugins_page(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut online: Vec<AnyElement> = vec![
-            toggle_row_badged!(self, cx, "p-currency", "Currency converter", "Online", "100 usd to eur. Downloads exchange rates (curl) about twice a day", plugins.currency),
-            toggle_row_badged!(self, cx, "p-dict", "Dictionary", "Online", "define word, meaning of word, Ctrl+L. Sends only that word to dictionaryapi.dev", plugins.dictionary),
-            toggle_row_badged!(self, cx, "p-weather", "Weather", "Online", "weather paris. Sends only the place to Open-Meteo", plugins.weather),
-            toggle_row!(self, cx, "p-imperial", "Fahrenheit and mph", "Show weather in imperial units", weather.imperial),
-            toggle_row_badged!(self, cx, "p-stocks", "Stocks", "Online", "stock aapl, $tsla. Sends only the ticker to Yahoo Finance (delayed quotes)", plugins.stocks),
-            toggle_row_badged!(self, cx, "p-nepse", "NEPSE stocks", "Online", "nepse nabil, nepse nic asia, nepse depth nabil, nepse news nabil, nepse sectors, nepse holidays, nepse gainers, nepse alert nabil above 600. Sends the symbol and your API key to warehouse.fintechnepal.com.np", plugins.nepse),
+            toggle_row_badged!(
+                self,
+                cx,
+                "p-currency",
+                "Currency converter",
+                "Online",
+                "100 usd to eur. Downloads exchange rates (curl) about twice a day",
+                plugins.currency
+            ),
+            toggle_row_badged!(
+                self,
+                cx,
+                "p-dict",
+                "Dictionary",
+                "Online",
+                "define word, meaning of word, Ctrl+L. Sends only that word to dictionaryapi.dev",
+                plugins.dictionary
+            ),
+            toggle_row_badged!(
+                self,
+                cx,
+                "p-weather",
+                "Weather",
+                "Online",
+                "weather paris. Sends only the place to Open-Meteo",
+                plugins.weather
+            ),
+            toggle_row!(
+                self,
+                cx,
+                "p-imperial",
+                "Fahrenheit and mph",
+                "Show weather in imperial units",
+                weather.imperial
+            ),
+            toggle_row_badged!(
+                self,
+                cx,
+                "p-stocks",
+                "Stocks",
+                "Online",
+                "stock aapl, $tsla. Sends only the ticker to Yahoo Finance (delayed quotes)",
+                plugins.stocks
+            ),
+            toggle_row_badged!(
+                self,
+                cx,
+                "p-nepse",
+                "NEPSE stocks",
+                "Online",
+                "nepse nabil, nepse nic asia, nepse depth nabil, nepse news nabil, nepse sectors, nepse holidays, nepse gainers, nepse alert nabil above 600. Sends the symbol and your API key to warehouse.fintechnepal.com.np",
+                plugins.nepse
+            ),
         ];
 
         // The key lives in its own owner-only file, not in settings.toml.
@@ -46,7 +93,11 @@ impl SettingsView {
 
         online.push(self.row("NEPSE API key", &key_hint, key_controls));
 
-        if self.editing.as_ref().is_some_and(|edit| edit.target == EditTarget::NepseKey) {
+        if self
+            .editing
+            .as_ref()
+            .is_some_and(|edit| edit.target == EditTarget::NepseKey)
+        {
             online.extend(self.editor_row(
                 "Paste your Fintech Nepal API key. It is saved only on this computer and sent only to warehouse.fintechnepal.com.np.",
                 true,
@@ -54,7 +105,15 @@ impl SettingsView {
             ));
         }
 
-        online.push(toggle_row_badged!(self, cx, "p-sports", "Sports scores", "Online", "nba, premier league, nfl lakers. Sends only the league to ESPN", plugins.sports));
+        online.push(toggle_row_badged!(
+            self,
+            cx,
+            "p-sports",
+            "Sports scores",
+            "Online",
+            "nba, premier league, nfl lakers. Sends only the league to ESPN",
+            plugins.sports
+        ));
 
         vec![
             self.section(

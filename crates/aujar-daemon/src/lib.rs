@@ -34,6 +34,7 @@ use tokio::{
 
 mod modules;
 mod mouse_borders;
+mod nexdesk;
 
 /// Maximum size of a single IPC request line.
 const MAX_REQUEST_BYTES: u64 = 64 * 1024;
@@ -148,6 +149,7 @@ struct Shared {
     registry: Arc<ModuleRegistry>,
     launcher: std::sync::Mutex<LauncherState>,
     mouse_borders: aujar_mouse_borders::service::MouseBordersModule,
+    nexdesk: aujar_nexdesk::NexDeskModule,
     owner_uid: u32,
     denied: HashSet<Capability>,
     events: broadcast::Sender<Event>,
@@ -326,7 +328,8 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
     };
 
     let mouse_borders = mouse_borders::module(&denied);
-    let registry = initialize_runtime(mouse_borders.clone()).await?;
+    let nexdesk = aujar_nexdesk::NexDeskModule::new();
+    let registry = initialize_runtime(mouse_borders.clone(), nexdesk.clone()).await?;
 
     tracing::info!(
         socket = %socket_path.display(),
@@ -339,6 +342,7 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
         registry: Arc::clone(&registry),
         launcher: std::sync::Mutex::new(LauncherState::new()),
         mouse_borders,
+        nexdesk,
         owner_uid,
         denied,
         events: broadcast::channel(EVENT_BUFFER).0,
@@ -403,6 +407,7 @@ async fn remove_socket(socket_path: &Path) -> Result<()> {
 
 async fn initialize_runtime(
     mouse_borders: aujar_mouse_borders::service::MouseBordersModule,
+    nexdesk: aujar_nexdesk::NexDeskModule,
 ) -> Result<Arc<ModuleRegistry>> {
     let mut registry = ModuleRegistry::new();
 
@@ -412,6 +417,9 @@ async fn initialize_runtime(
     registry
         .register(mouse_borders)
         .context("failed to register the Mouse Borders module")?;
+    registry
+        .register(nexdesk)
+        .context("failed to register the NexDesk module")?;
 
     let context = ModuleContext::new(env!("CARGO_PKG_VERSION"));
 
@@ -625,6 +633,8 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
         Request::MouseBorders(request) => {
             mouse_borders::handle(request, &shared.mouse_borders).await
         }
+
+        Request::NexDesk(request) => nexdesk::handle(request, &shared.nexdesk),
 
         Request::Launcher(command) => {
             let subscribers = shared.events.send(Event::Launcher(command)).unwrap_or(0);

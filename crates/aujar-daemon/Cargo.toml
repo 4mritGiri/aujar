@@ -13,6 +13,7 @@ aujar-color = { path = "../../modules/color" }
 aujar-hotkeys = { path = "../aujar-hotkeys" }
 aujar-ipc = { path = "../aujar-ipc" }
 aujar-mouse-borders = { path = "../../modules/mouse-borders" }
+aujar-nexdesk = { path = "../../modules/nexdesk" }
 aujar-launcher = { path = "../../modules/launcher" }
 aujar-platform = { path = "../aujar-platform" }
 aujar-rename = { path = "../../modules/rename" }

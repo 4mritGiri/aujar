@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 
+# NexDesk lives in its own workspace (git submodule, see docs/NEXDESK.md); Aujar never builds it.
+exclude = ["integrations/nexdesk"]
+
 members = [
     "crates/aujar-core",
     "crates/aujar-config",
@@ -27,6 +30,7 @@ members = [
     "modules/ruler",
     "modules/rename",
     "modules/mouse-borders",
+    "modules/nexdesk",
 ]
 
 default-members = [
@@ -48,6 +52,7 @@ default-members = [
     "modules/ruler",
     "modules/rename",
     "modules/mouse-borders",
+    "modules/nexdesk",
 ]
 
 [workspace.package]

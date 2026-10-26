@@ -132,14 +132,20 @@ fn parse_query(query: &str) -> Option<(f64, String, String)> {
 
     // Symbol prefix: "$100".
     if let Some(symbol) = left.chars().next().filter(|c| symbol_code(*c).is_some()) {
-        let number: f64 = left[symbol.len_utf8()..].trim().replace(',', "").parse().ok()?;
+        let number: f64 = left[symbol.len_utf8()..]
+            .trim()
+            .replace(',', "")
+            .parse()
+            .ok()?;
 
         return Some((number, symbol_code(symbol)?.to_owned(), to));
     }
 
     let split = left
         .char_indices()
-        .find(|(index, c)| !(c.is_ascii_digit() || matches!(c, '.' | ',') || (*index == 0 && *c == '-')))
+        .find(|(index, c)| {
+            !(c.is_ascii_digit() || matches!(c, '.' | ',') || (*index == 0 && *c == '-'))
+        })
         .map_or(left.len(), |(index, _)| index);
 
     let number: f64 = left[..split].replace(',', "").parse().ok()?;
@@ -223,10 +229,16 @@ impl CurrencyProvider {
 
     #[cfg(test)]
     fn with_rates(per_usd: &[(&str, f64)]) -> Self {
-        let per_usd = per_usd.iter().map(|(code, rate)| (code.to_string(), *rate)).collect();
+        let per_usd = per_usd
+            .iter()
+            .map(|(code, rate)| (code.to_string(), *rate))
+            .collect();
 
         Self {
-            rates: Arc::new(RwLock::new(Some(Rates { per_usd, fetched: now() }))),
+            rates: Arc::new(RwLock::new(Some(Rates {
+                per_usd,
+                fetched: now(),
+            }))),
         }
     }
 }
@@ -260,7 +272,11 @@ impl Provider for CurrencyProvider {
         };
 
         let hours = now().saturating_sub(rates.fetched) / 3600;
-        let age = if hours == 0 { "rates updated just now".to_owned() } else { format!("rates {hours}h old") };
+        let age = if hours == 0 {
+            "rates updated just now".to_owned()
+        } else {
+            format!("rates {hours}h old")
+        };
 
         vec![SearchResult {
             id: format!("currency:{to}"),
@@ -284,9 +300,18 @@ mod tests {
 
     #[test]
     fn parses_codes_and_symbols() {
-        assert_eq!(parse_query("100 usd to eur"), Some((100.0, "USD".into(), "EUR".into())));
-        assert_eq!(parse_query("$50 in npr"), Some((50.0, "USD".into(), "NPR".into())));
-        assert_eq!(parse_query("1,000 eur to usd"), Some((1000.0, "EUR".into(), "USD".into())));
+        assert_eq!(
+            parse_query("100 usd to eur"),
+            Some((100.0, "USD".into(), "EUR".into()))
+        );
+        assert_eq!(
+            parse_query("$50 in npr"),
+            Some((50.0, "USD".into(), "NPR".into()))
+        );
+        assert_eq!(
+            parse_query("1,000 eur to usd"),
+            Some((1000.0, "EUR".into(), "USD".into()))
+        );
         assert_eq!(parse_query("10 km to mi"), None);
     }
 

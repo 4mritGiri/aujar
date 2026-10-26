@@ -10,6 +10,9 @@ Aujar ships a small CLI + daemon (`aujar`). Every package installs:
 | `config/policy.example.toml` | `/usr/share/doc/aujar/policy.example.toml` |
 | `LICENSE` | `/usr/share/licenses/aujar/` (or `/usr/share/doc/aujar/`) |
 
+NexDesk (optional) is built and packaged separately from `integrations/nexdesk`; install `nexdesk` and
+`nexdesk-rdp` together, beside `aujar`, so `aujar nexdesk open` finds them (see [NEXDESK](NEXDESK.md)).
+
 The GPUI launcher UI (`apps/aujar-ui`) is still a spike and is **not** packaged yet.
 
 ## Installing

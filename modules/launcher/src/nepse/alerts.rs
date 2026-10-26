@@ -44,7 +44,11 @@ impl Alert {
     }
 
     pub fn reached(&self, price: f64) -> bool {
-        if self.above { price >= self.price } else { price <= self.price }
+        if self.above {
+            price >= self.price
+        } else {
+            price <= self.price
+        }
     }
 
     /// `NABIL:above:600.00`, the tail of a result id.
@@ -67,9 +71,16 @@ impl Alert {
             "below" => false,
             _ => return None,
         };
-        let price: f64 = price.parse().ok().filter(|price: &f64| price.is_finite() && *price > 0.0)?;
+        let price: f64 = price
+            .parse()
+            .ok()
+            .filter(|price: &f64| price.is_finite() && *price > 0.0)?;
 
-        Some(Alert { symbol: symbol.to_owned(), above, price })
+        Some(Alert {
+            symbol: symbol.to_owned(),
+            above,
+            price,
+        })
     }
 }
 
@@ -95,7 +106,14 @@ fn load_from(path: &Path) -> Vec<Alert> {
     fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str::<Stored>(&text).ok())
-        .map(|stored| stored.alerts.into_iter().filter(sane).take(MAX_ALERTS).collect())
+        .map(|stored| {
+            stored
+                .alerts
+                .into_iter()
+                .filter(sane)
+                .take(MAX_ALERTS)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -104,8 +122,10 @@ fn save_to(path: &Path, alerts: &[Alert]) -> Result<(), String> {
         fs::create_dir_all(dir).map_err(|error| format!("could not save alerts: {error}"))?;
     }
 
-    let text = serde_json::to_string_pretty(&Stored { alerts: alerts.to_vec() })
-        .map_err(|error| format!("could not save alerts: {error}"))?;
+    let text = serde_json::to_string_pretty(&Stored {
+        alerts: alerts.to_vec(),
+    })
+    .map_err(|error| format!("could not save alerts: {error}"))?;
     let temp = path.with_extension("json.tmp");
 
     fs::write(&temp, text)
@@ -127,7 +147,9 @@ fn add_to(path: &Path, alert: Alert) -> Result<bool, String> {
     let replaced = alerts.len() < before;
 
     if !replaced && alerts.len() >= MAX_ALERTS {
-        return Err(format!("you already have {MAX_ALERTS} alerts: remove one first (nepse alerts)"));
+        return Err(format!(
+            "you already have {MAX_ALERTS} alerts: remove one first (nepse alerts)"
+        ));
     }
 
     alerts.push(alert);
@@ -140,7 +162,9 @@ fn remove_from(path: &Path, alert: &Alert) -> Result<bool, String> {
     let mut alerts = load_from(path);
     let before = alerts.len();
 
-    alerts.retain(|existing| !(existing.same_slot(alert) && (existing.price - alert.price).abs() < 0.005));
+    alerts.retain(|existing| {
+        !(existing.same_slot(alert) && (existing.price - alert.price).abs() < 0.005)
+    });
 
     if alerts.len() == before {
         return Ok(false);
@@ -154,7 +178,9 @@ fn remove_from(path: &Path, alert: &Alert) -> Result<bool, String> {
 pub fn load() -> Vec<Alert> {
     let _guard = lock();
 
-    default_path().map(|path| load_from(&path)).unwrap_or_default()
+    default_path()
+        .map(|path| load_from(&path))
+        .unwrap_or_default()
 }
 
 pub fn add(alert: Alert) -> Result<bool, String> {
@@ -178,14 +204,20 @@ fn triggered(alerts: &[Alert], quotes: &[Quote]) -> Vec<(Alert, Quote)> {
         .filter_map(|alert| {
             let quote = quotes.iter().find(|quote| quote.symbol == alert.symbol)?;
 
-            alert.reached(quote.price).then(|| (alert.clone(), quote.clone()))
+            alert
+                .reached(quote.price)
+                .then(|| (alert.clone(), quote.clone()))
         })
         .collect()
 }
 
 /// `(title, body)` of the notification for a reached alert.
 fn notification(alert: &Alert, quote: &Quote) -> (String, String) {
-    let verb = if alert.above { "rose above" } else { "fell below" };
+    let verb = if alert.above {
+        "rose above"
+    } else {
+        "fell below"
+    };
     let change = change_of(quote)
         .map(|(delta, percent)| format!(" \u{b7} {}", arrow_text(delta, percent)))
         .unwrap_or_default();
@@ -224,7 +256,10 @@ fn run_check(path: &Path, quotes: &[Quote], notify: &dyn Fn(&str, &str) -> bool)
 
             fired += 1;
         } else {
-            eprintln!("aujar: could not show the {} alert (is notify-send installed?)", alert.symbol);
+            eprintln!(
+                "aujar: could not show the {} alert (is notify-send installed?)",
+                alert.symbol
+            );
         }
     }
 
@@ -288,7 +323,11 @@ mod tests {
     }
 
     fn alert(symbol: &str, above: bool, price: f64) -> Alert {
-        Alert { symbol: symbol.to_owned(), above, price }
+        Alert {
+            symbol: symbol.to_owned(),
+            above,
+            price,
+        }
     }
 
     fn quote(symbol: &str, price: f64, previous: f64) -> Quote {
@@ -315,9 +354,21 @@ mod tests {
 
         assert_eq!(original.id_part(), "NABIL:above:612.50");
         assert_eq!(Alert::from_id_part(&original.id_part()), Some(original));
-        assert_eq!(Alert::from_id_part("NABIL:below:500.00"), Some(alert("NABIL", false, 500.0)));
+        assert_eq!(
+            Alert::from_id_part("NABIL:below:500.00"),
+            Some(alert("NABIL", false, 500.0))
+        );
 
-        for bad in ["", "NABIL", "NABIL:sideways:5", "NABIL:above:-1", "NABIL:above:nan", "NABIL:above:5:6", "../x:above:5", "N:above:5"] {
+        for bad in [
+            "",
+            "NABIL",
+            "NABIL:sideways:5",
+            "NABIL:above:-1",
+            "NABIL:above:nan",
+            "NABIL:above:5:6",
+            "../x:above:5",
+            "N:above:5",
+        ] {
             assert_eq!(Alert::from_id_part(bad), None, "{bad}");
         }
     }
@@ -387,7 +438,11 @@ mod tests {
         add_to(&path, alert("NICA", false, 400.0)).unwrap();
         add_to(&path, alert("ADBL", true, 999.0)).unwrap();
 
-        let quotes = [quote("NABIL", 603.2, 595.0), quote("NICA", 410.0, 412.0), quote("ADBL", 330.0, 320.0)];
+        let quotes = [
+            quote("NABIL", 603.2, 595.0),
+            quote("NICA", 410.0, 412.0),
+            quote("ADBL", 330.0, 320.0),
+        ];
         let shown: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
 
         // A failing notifier keeps the alert for next time.
@@ -401,7 +456,13 @@ mod tests {
 
         assert_eq!(fired, 1);
         assert_eq!(shown.borrow()[0].0, "NABIL rose above Rs 600.00");
-        assert!(shown.borrow()[0].1.starts_with("NABIL is now Rs 603.20 \u{b7} \u{25b2} 8.20"), "{:?}", shown.borrow());
+        assert!(
+            shown.borrow()[0]
+                .1
+                .starts_with("NABIL is now Rs 603.20 \u{b7} \u{25b2} 8.20"),
+            "{:?}",
+            shown.borrow()
+        );
 
         // Fired alerts are gone; the others stay.
         assert_eq!(load_from(&path).len(), 2);
@@ -412,7 +473,8 @@ mod tests {
 
     #[test]
     fn a_falling_price_is_described_as_such() {
-        let (title, body) = notification(&alert("NICA", false, 400.0), &quote("NICA", 398.5, 410.0));
+        let (title, body) =
+            notification(&alert("NICA", false, 400.0), &quote("NICA", 398.5, 410.0));
 
         assert_eq!(title, "NICA fell below Rs 400.00");
         assert!(body.contains('\u{25bc}'), "{body}");

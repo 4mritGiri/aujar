@@ -27,7 +27,10 @@ fn base_dirs() -> Vec<PathBuf> {
 
 fn is_supported_image(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|ext| ext.to_str()).map(str::to_ascii_lowercase).as_deref(),
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
         Some("png" | "svg")
     )
 }
@@ -52,7 +55,11 @@ pub fn resolve_icon(name: &str) -> Option<String> {
     for size in PNG_SIZES {
         for base in &bases {
             for theme in THEMES {
-                let candidate = base.join(theme).join(size).join("apps").join(format!("{name}.png"));
+                let candidate = base
+                    .join(theme)
+                    .join(size)
+                    .join("apps")
+                    .join(format!("{name}.png"));
 
                 if candidate.is_file() {
                     return Some(candidate.to_string_lossy().into_owned());
@@ -63,7 +70,10 @@ pub fn resolve_icon(name: &str) -> Option<String> {
 
     for base in &bases {
         for theme in THEMES {
-            let candidate = base.join(theme).join("scalable/apps").join(format!("{name}.svg"));
+            let candidate = base
+                .join(theme)
+                .join("scalable/apps")
+                .join(format!("{name}.svg"));
 
             if candidate.is_file() {
                 return Some(candidate.to_string_lossy().into_owned());

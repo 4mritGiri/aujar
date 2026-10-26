@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 mod gnome_extension;
 mod mouse_borders;
+mod nexdesk;
 mod shortcut;
 
 const DEFAULT_SOCKET_NAME: &str = "aujar.sock";
@@ -145,6 +146,13 @@ enum Command {
     MouseBorders {
         #[command(subcommand)]
         action: mouse_borders::MwbAction,
+    },
+
+    /// Open the NexDesk remote-access manager (RDP, remote control), or check it is installed.
+    #[command(name = "nexdesk")]
+    NexDesk {
+        #[command(subcommand)]
+        action: nexdesk::NexDeskAction,
     },
 
     /// Print daemon events as they happen (debugging and scripting).
@@ -333,6 +341,8 @@ async fn main() -> Result<()> {
         },
 
         Command::MouseBorders { action } => mouse_borders::run(action, resolve_socket()).await?,
+
+        Command::NexDesk { action } => nexdesk::run(action, resolve_socket()).await?,
 
         Command::Daemon { socket } => {
             let socket_path = socket.unwrap_or_else(resolve_socket);

@@ -29,7 +29,10 @@ impl SettingsView {
         let mut shortcuts: Vec<AnyElement> = Vec::new();
 
         for (index, shortcut) in self.settings.web.shortcuts.iter().enumerate() {
-            let line = format!("{} | {} | {}", shortcut.keyword, shortcut.name, shortcut.url);
+            let line = format!(
+                "{} | {} | {}",
+                shortcut.keyword, shortcut.name, shortcut.url
+            );
 
             let controls = div()
                 .flex()
@@ -47,21 +50,29 @@ impl SettingsView {
                         .child(shortcut.keyword.clone()),
                 )
                 .child(
-                    self.pill(SharedString::from(format!("sc-edit-{index}")), "Edit", false)
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            this.start_edit(EditTarget::Shortcut(Some(index)), line.clone(), cx);
-                        })),
+                    self.pill(
+                        SharedString::from(format!("sc-edit-{index}")),
+                        "Edit",
+                        false,
+                    )
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.start_edit(EditTarget::Shortcut(Some(index)), line.clone(), cx);
+                    })),
                 )
                 .child(
-                    self.pill(SharedString::from(format!("sc-del-{index}")), "Remove", false)
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            this.editing = None;
-                            this.mutate(cx, |settings| {
-                                if index < settings.web.shortcuts.len() {
-                                    settings.web.shortcuts.remove(index);
-                                }
-                            });
-                        })),
+                    self.pill(
+                        SharedString::from(format!("sc-del-{index}")),
+                        "Remove",
+                        false,
+                    )
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.editing = None;
+                        this.mutate(cx, |settings| {
+                            if index < settings.web.shortcuts.len() {
+                                settings.web.shortcuts.remove(index);
+                            }
+                        });
+                    })),
                 );
 
             shortcuts.push(self.row(
@@ -109,12 +120,9 @@ impl SettingsView {
                     this.editing = None;
                     this.mutate(cx, |settings| {
                         for suggested in Web::suggested_shortcuts() {
-                            if !settings
-                                .web
-                                .shortcuts
-                                .iter()
-                                .any(|shortcut| shortcut.keyword.eq_ignore_ascii_case(&suggested.keyword))
-                            {
+                            if !settings.web.shortcuts.iter().any(|shortcut| {
+                                shortcut.keyword.eq_ignore_ascii_case(&suggested.keyword)
+                            }) {
                                 settings.web.shortcuts.push(suggested);
                             }
                         }

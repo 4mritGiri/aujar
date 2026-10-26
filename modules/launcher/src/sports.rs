@@ -29,18 +29,90 @@ struct League {
 }
 
 const LEAGUES: &[League] = &[
-    League { key: "nba", label: "NBA", api_path: "basketball/nba", web_path: "nba", aliases: &["nba"] },
-    League { key: "wnba", label: "WNBA", api_path: "basketball/wnba", web_path: "wnba", aliases: &["wnba"] },
-    League { key: "nfl", label: "NFL", api_path: "football/nfl", web_path: "nfl", aliases: &["nfl"] },
-    League { key: "mlb", label: "MLB", api_path: "baseball/mlb", web_path: "mlb", aliases: &["mlb"] },
-    League { key: "nhl", label: "NHL", api_path: "hockey/nhl", web_path: "nhl", aliases: &["nhl"] },
-    League { key: "epl", label: "Premier League", api_path: "soccer/eng.1", web_path: "soccer", aliases: &["premier league", "epl", "english premier league"] },
-    League { key: "laliga", label: "La Liga", api_path: "soccer/esp.1", web_path: "soccer", aliases: &["la liga", "laliga"] },
-    League { key: "bundesliga", label: "Bundesliga", api_path: "soccer/ger.1", web_path: "soccer", aliases: &["bundesliga"] },
-    League { key: "seriea", label: "Serie A", api_path: "soccer/ita.1", web_path: "soccer", aliases: &["serie a", "seriea"] },
-    League { key: "ligue1", label: "Ligue 1", api_path: "soccer/fra.1", web_path: "soccer", aliases: &["ligue 1", "ligue1"] },
-    League { key: "mls", label: "MLS", api_path: "soccer/usa.1", web_path: "soccer", aliases: &["mls"] },
-    League { key: "ucl", label: "Champions League", api_path: "soccer/uefa.champions", web_path: "soccer", aliases: &["champions league", "ucl"] },
+    League {
+        key: "nba",
+        label: "NBA",
+        api_path: "basketball/nba",
+        web_path: "nba",
+        aliases: &["nba"],
+    },
+    League {
+        key: "wnba",
+        label: "WNBA",
+        api_path: "basketball/wnba",
+        web_path: "wnba",
+        aliases: &["wnba"],
+    },
+    League {
+        key: "nfl",
+        label: "NFL",
+        api_path: "football/nfl",
+        web_path: "nfl",
+        aliases: &["nfl"],
+    },
+    League {
+        key: "mlb",
+        label: "MLB",
+        api_path: "baseball/mlb",
+        web_path: "mlb",
+        aliases: &["mlb"],
+    },
+    League {
+        key: "nhl",
+        label: "NHL",
+        api_path: "hockey/nhl",
+        web_path: "nhl",
+        aliases: &["nhl"],
+    },
+    League {
+        key: "epl",
+        label: "Premier League",
+        api_path: "soccer/eng.1",
+        web_path: "soccer",
+        aliases: &["premier league", "epl", "english premier league"],
+    },
+    League {
+        key: "laliga",
+        label: "La Liga",
+        api_path: "soccer/esp.1",
+        web_path: "soccer",
+        aliases: &["la liga", "laliga"],
+    },
+    League {
+        key: "bundesliga",
+        label: "Bundesliga",
+        api_path: "soccer/ger.1",
+        web_path: "soccer",
+        aliases: &["bundesliga"],
+    },
+    League {
+        key: "seriea",
+        label: "Serie A",
+        api_path: "soccer/ita.1",
+        web_path: "soccer",
+        aliases: &["serie a", "seriea"],
+    },
+    League {
+        key: "ligue1",
+        label: "Ligue 1",
+        api_path: "soccer/fra.1",
+        web_path: "soccer",
+        aliases: &["ligue 1", "ligue1"],
+    },
+    League {
+        key: "mls",
+        label: "MLS",
+        api_path: "soccer/usa.1",
+        web_path: "soccer",
+        aliases: &["mls"],
+    },
+    League {
+        key: "ucl",
+        label: "Champions League",
+        api_path: "soccer/uefa.champions",
+        web_path: "soccer",
+        aliases: &["champions league", "ucl"],
+    },
 ];
 
 fn league_by_key(key: &str) -> Option<&'static League> {
@@ -48,7 +120,9 @@ fn league_by_key(key: &str) -> Option<&'static League> {
 }
 
 /// Words that may surround a league name.
-const NOISE: [&str; 9] = ["scores", "score", "results", "live", "games", "game", "today", "matches", "fixtures"];
+const NOISE: [&str; 9] = [
+    "scores", "score", "results", "live", "games", "game", "today", "matches", "fixtures",
+];
 
 /// `nba lakers` -> (NBA, Some("lakers")); `scores premier league` -> (EPL, None).
 fn parse_query(query: &str) -> Option<(&'static League, Option<String>)> {
@@ -69,17 +143,18 @@ fn parse_query(query: &str) -> Option<(&'static League, Option<String>)> {
         .iter()
         .flat_map(|league| league.aliases.iter().map(move |alias| (league, *alias)))
         .filter(|(_, alias)| {
-            rest == *alias || rest.starts_with(&format!("{alias} ")) || rest.ends_with(&format!(" {alias}"))
+            rest == *alias
+                || rest.starts_with(&format!("{alias} "))
+                || rest.ends_with(&format!(" {alias}"))
         })
         .max_by_key(|(_, alias)| alias.len())?;
 
-    let team = rest
-        .replacen(alias, "", 1)
-        .trim()
-        .to_owned();
+    let team = rest.replacen(alias, "", 1).trim().to_owned();
 
     let team_ok = team.chars().count() <= 30
-        && team.chars().all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '\'' | '-'));
+        && team
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '.' | '\'' | '-'));
 
     team_ok.then(|| (league, (!team.is_empty()).then_some(team)))
 }
@@ -154,11 +229,18 @@ fn parse_games(value: &serde_json::Value) -> Option<Vec<Game>> {
                 .unwrap_or("")
                 .to_owned();
 
-            let competitors = event.get("competitions")?.as_array()?.first()?.get("competitors")?.as_array()?;
+            let competitors = event
+                .get("competitions")?
+                .as_array()?
+                .first()?
+                .get("competitors")?
+                .as_array()?;
             let side = |role: &str| {
                 competitors
                     .iter()
-                    .find(|competitor| competitor.get("homeAway").and_then(|v| v.as_str()) == Some(role))
+                    .find(|competitor| {
+                        competitor.get("homeAway").and_then(|v| v.as_str()) == Some(role)
+                    })
                     .and_then(parse_side)
             };
 
@@ -277,7 +359,9 @@ impl Provider for SportsProvider {
 
                 if shown.is_empty() {
                     let message = match &team {
-                        Some(team) => format!("No {} game for \u{201c}{team}\u{201d} today", league.label),
+                        Some(team) => {
+                            format!("No {} game for \u{201c}{team}\u{201d} today", league.label)
+                        }
                         None => format!("No {} games today", league.label),
                     };
 
@@ -310,7 +394,11 @@ impl Provider for SportsProvider {
             return Some(Err("not a game id".to_owned()));
         }
 
-        let page = if league.web_path == "soccer" { "match" } else { "game" };
+        let page = if league.web_path == "soccer" {
+            "match"
+        } else {
+            "game"
+        };
 
         Some(Ok(LaunchSpec {
             title: format!("{} game", league.label),
@@ -327,7 +415,13 @@ impl Provider for SportsProvider {
 mod tests {
     use super::*;
 
-    fn event(id: &str, state: &str, detail: &str, away: (&str, &str), home: (&str, &str)) -> String {
+    fn event(
+        id: &str,
+        state: &str,
+        detail: &str,
+        away: (&str, &str),
+        home: (&str, &str),
+    ) -> String {
         format!(
             r#"{{"id":"{id}","status":{{"type":{{"state":"{state}","shortDetail":"{detail}"}}}},
             "competitions":[{{"competitors":[
@@ -342,7 +436,13 @@ mod tests {
         let events = [
             event("1", "post", "Final", ("Lakers", "99"), ("Celtics", "102")),
             event("2", "in", "Q3 4:12", ("Bulls", "70"), ("Heat", "65")),
-            event("3", "pre", "10/11 - 7:30 PM EDT", ("Nets", "0"), ("Knicks", "0")),
+            event(
+                "3",
+                "pre",
+                "10/11 - 7:30 PM EDT",
+                ("Nets", "0"),
+                ("Knicks", "0"),
+            ),
         ];
 
         serde_json::from_str(&format!(r#"{{"events":[{}]}}"#, events.join(","))).unwrap()
@@ -391,7 +491,12 @@ mod tests {
         let done = result_for(nba, &games[2], 2);
 
         assert_eq!(live.title, "Bulls 70 \u{2013} 65 Heat");
-        assert!(live.subtitle.as_deref().unwrap().starts_with("\u{25cf} Live \u{b7} Q3 4:12"));
+        assert!(
+            live.subtitle
+                .as_deref()
+                .unwrap()
+                .starts_with("\u{25cf} Live \u{b7} Q3 4:12")
+        );
         assert_eq!(upcoming.title, "Nets at Knicks");
         assert_eq!(done.title, "Lakers 99 \u{2013} 102 Celtics");
         assert!(done.detail.unwrap().ends_with("|away"));
@@ -412,7 +517,9 @@ mod tests {
     fn provider_serves_cache_and_reports_empty_days() {
         let provider = SportsProvider::new();
 
-        provider.cache.insert("nba", parse_games(&sample()).unwrap());
+        provider
+            .cache
+            .insert("nba", parse_games(&sample()).unwrap());
 
         assert_eq!(provider.search("nba").len(), 3);
         assert_eq!(provider.search("nba bulls").len(), 1);

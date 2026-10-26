@@ -55,7 +55,9 @@ const fn mix_white(color: u32, percent: u32) -> u32 {
         value + (255 - value) * percent / 100
     }
 
-    (channel(color, 16, percent) << 16) | (channel(color, 8, percent) << 8) | channel(color, 0, percent)
+    (channel(color, 16, percent) << 16)
+        | (channel(color, 8, percent) << 8)
+        | channel(color, 0, percent)
 }
 
 /// Give any styled element the same corner radius, in pixels, on all four corners (GPUI only

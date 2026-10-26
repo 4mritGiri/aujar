@@ -54,7 +54,9 @@ fn valid_word(word: &str) -> bool {
     let count = word.chars().count();
 
     (2..=40).contains(&count)
-        && word.chars().all(|c| c.is_alphabetic() || c == '-' || c == '\'')
+        && word
+            .chars()
+            .all(|c| c.is_alphabetic() || c == '-' || c == '\'')
         && word.chars().next().is_some_and(char::is_alphabetic)
         && word.chars().last().is_some_and(char::is_alphabetic)
 }
@@ -176,17 +178,18 @@ fn results_for(entry: &Entry) -> Vec<SearchResult> {
         .map(|(index, meaning)| {
             let mut subtitle = meaning.part_of_speech.clone();
 
-            if index == 0 {
-                if let Some(phonetic) = &entry.phonetic {
-                    if !subtitle.is_empty() {
-                        subtitle.push_str(" \u{b7} ");
-                    }
-
-                    subtitle.push_str(phonetic);
+            if let Some(phonetic) = entry.phonetic.as_ref().filter(|_| index == 0) {
+                if !subtitle.is_empty() {
+                    subtitle.push_str(" \u{b7} ");
                 }
+
+                subtitle.push_str(phonetic);
             }
 
-            let first = meaning.definitions.first().map_or("", |(text, _)| text.as_str());
+            let first = meaning
+                .definitions
+                .first()
+                .map_or("", |(text, _)| text.as_str());
 
             SearchResult::new(
                 format!("dict:{}:{index}", entry.word),
@@ -263,7 +266,10 @@ impl Provider for DictionaryProvider {
         Some(Ok(LaunchSpec {
             title: word.to_owned(),
             program: "xdg-open".to_owned(),
-            args: vec![format!("https://en.wiktionary.org/wiki/{}", web::url_encode(word))],
+            args: vec![format!(
+                "https://en.wiktionary.org/wiki/{}",
+                web::url_encode(word)
+            )],
         }))
     }
 }
@@ -288,10 +294,19 @@ mod tests {
     #[test]
     fn recognises_trigger_phrases() {
         assert_eq!(parse_query("define cat").as_deref(), Some("cat"));
-        assert_eq!(parse_query("Meaning of Ubiquitous").as_deref(), Some("ubiquitous"));
-        assert_eq!(parse_query("what does ephemeral mean").as_deref(), Some("ephemeral"));
+        assert_eq!(
+            parse_query("Meaning of Ubiquitous").as_deref(),
+            Some("ubiquitous")
+        );
+        assert_eq!(
+            parse_query("what does ephemeral mean").as_deref(),
+            Some("ephemeral")
+        );
         assert_eq!(parse_query("define \"cat\"").as_deref(), Some("cat"));
-        assert_eq!(parse_query("define well-known").as_deref(), Some("well-known"));
+        assert_eq!(
+            parse_query("define well-known").as_deref(),
+            Some("well-known")
+        );
     }
 
     #[test]
@@ -341,7 +356,13 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].kind, ResultKind::Definition);
         assert!(results[0].subtitle.as_deref().unwrap().starts_with("noun"));
-        assert!(results[0].detail.as_deref().unwrap().contains("1. The faculty"));
+        assert!(
+            results[0]
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("1. The faculty")
+        );
         assert!(results[0].score > results[1].score);
     }
 

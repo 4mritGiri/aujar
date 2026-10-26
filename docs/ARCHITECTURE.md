@@ -21,6 +21,11 @@ packaging/  systemd unit, desktop entry, distro packaging
 docs/       architecture, ADRs, feature matrix, threat model
 ```
 
+## Integrated programs
+
+`integrations/` holds sources of programs Aujar integrates but does not compile (NexDesk, as a git
+submodule). A module starts them as separate processes; see [NEXDESK](NEXDESK.md).
+
 ## Request flow
 
 `aujar` CLI → versioned JSON over Unix socket → `aujar-daemon` → module → response. UIs may instead

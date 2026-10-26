@@ -301,7 +301,10 @@ fn on_path(program: &str) -> bool {
 fn in_terminal(program: String, args: Vec<String>) -> Option<(String, Vec<String>)> {
     let preferred = std::env::var("TERMINAL").ok().filter(|name| {
         // Only a bare program name: this value ends up as the command that is executed.
-        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     });
 
     let (terminal, flags): (String, Vec<&str>) = match preferred.filter(|name| on_path(name)) {

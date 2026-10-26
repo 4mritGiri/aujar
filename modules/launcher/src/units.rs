@@ -30,35 +30,108 @@ const fn unit(
     category: Category,
     factor: f64,
 ) -> Unit {
-    Unit { names, symbol, category, factor }
+    Unit {
+        names,
+        symbol,
+        category,
+        factor,
+    }
 }
 
 use Category::*;
 
 static UNITS: &[Unit] = &[
     // Length (base: metre)
-    unit(&["mm", "millimeter", "millimeters", "millimetre", "millimetres"], "mm", Length, 0.001),
-    unit(&["cm", "centimeter", "centimeters", "centimetre", "centimetres"], "cm", Length, 0.01),
-    unit(&["m", "meter", "meters", "metre", "metres"], "m", Length, 1.0),
-    unit(&["km", "kilometer", "kilometers", "kilometre", "kilometres"], "km", Length, 1000.0),
+    unit(
+        &[
+            "mm",
+            "millimeter",
+            "millimeters",
+            "millimetre",
+            "millimetres",
+        ],
+        "mm",
+        Length,
+        0.001,
+    ),
+    unit(
+        &[
+            "cm",
+            "centimeter",
+            "centimeters",
+            "centimetre",
+            "centimetres",
+        ],
+        "cm",
+        Length,
+        0.01,
+    ),
+    unit(
+        &["m", "meter", "meters", "metre", "metres"],
+        "m",
+        Length,
+        1.0,
+    ),
+    unit(
+        &["km", "kilometer", "kilometers", "kilometre", "kilometres"],
+        "km",
+        Length,
+        1000.0,
+    ),
     unit(&["in", "inch", "inches", "\""], "in", Length, 0.0254),
     unit(&["ft", "foot", "feet", "'"], "ft", Length, 0.3048),
     unit(&["yd", "yard", "yards"], "yd", Length, 0.9144),
     unit(&["mi", "mile", "miles"], "mi", Length, 1609.344),
-    unit(&["nmi", "nauticalmile", "nauticalmiles"], "nmi", Length, 1852.0),
+    unit(
+        &["nmi", "nauticalmile", "nauticalmiles"],
+        "nmi",
+        Length,
+        1852.0,
+    ),
     // Mass (base: kilogram)
     unit(&["mg", "milligram", "milligrams"], "mg", Mass, 1e-6),
     unit(&["g", "gram", "grams"], "g", Mass, 0.001),
-    unit(&["kg", "kilogram", "kilograms", "kilo", "kilos"], "kg", Mass, 1.0),
+    unit(
+        &["kg", "kilogram", "kilograms", "kilo", "kilos"],
+        "kg",
+        Mass,
+        1.0,
+    ),
     unit(&["t", "tonne", "tonnes"], "t", Mass, 1000.0),
     unit(&["oz", "ounce", "ounces"], "oz", Mass, 0.028349523125),
     unit(&["lb", "lbs", "pound", "pounds"], "lb", Mass, 0.45359237),
     unit(&["st", "stone", "stones"], "st", Mass, 6.35029318),
     // Volume (base: litre)
-    unit(&["ml", "milliliter", "milliliters", "millilitre", "millilitres"], "ml", Volume, 0.001),
-    unit(&["l", "liter", "liters", "litre", "litres"], "l", Volume, 1.0),
-    unit(&["tsp", "teaspoon", "teaspoons"], "tsp", Volume, 0.00492892159375),
-    unit(&["tbsp", "tablespoon", "tablespoons"], "tbsp", Volume, 0.01478676478125),
+    unit(
+        &[
+            "ml",
+            "milliliter",
+            "milliliters",
+            "millilitre",
+            "millilitres",
+        ],
+        "ml",
+        Volume,
+        0.001,
+    ),
+    unit(
+        &["l", "liter", "liters", "litre", "litres"],
+        "l",
+        Volume,
+        1.0,
+    ),
+    unit(
+        &["tsp", "teaspoon", "teaspoons"],
+        "tsp",
+        Volume,
+        0.00492892159375,
+    ),
+    unit(
+        &["tbsp", "tablespoon", "tablespoons"],
+        "tbsp",
+        Volume,
+        0.01478676478125,
+    ),
     unit(&["floz", "fl oz"], "fl oz", Volume, 0.0295735295625),
     unit(&["cup", "cups"], "cup", Volume, 0.2365882365),
     unit(&["pt", "pint", "pints"], "pt", Volume, 0.473176473),
@@ -80,8 +153,18 @@ static UNITS: &[Unit] = &[
     unit(&["tb", "terabyte", "terabytes"], "TB", Data, 1e12),
     unit(&["kib", "kibibyte", "kibibytes"], "KiB", Data, 1024.0),
     unit(&["mib", "mebibyte", "mebibytes"], "MiB", Data, 1_048_576.0),
-    unit(&["gib", "gibibyte", "gibibytes"], "GiB", Data, 1_073_741_824.0),
-    unit(&["tib", "tebibyte", "tebibytes"], "TiB", Data, 1_099_511_627_776.0),
+    unit(
+        &["gib", "gibibyte", "gibibytes"],
+        "GiB",
+        Data,
+        1_073_741_824.0,
+    ),
+    unit(
+        &["tib", "tebibyte", "tebibytes"],
+        "TiB",
+        Data,
+        1_099_511_627_776.0,
+    ),
     // Speed (base: metre per second)
     unit(&["m/s", "mps"], "m/s", Speed, 1.0),
     unit(&["km/h", "kph", "kmh", "kmph"], "km/h", Speed, 1.0 / 3.6),
@@ -102,7 +185,9 @@ static UNITS: &[Unit] = &[
 fn find_unit(text: &str) -> Option<&'static Unit> {
     let text = text.trim().to_lowercase();
 
-    UNITS.iter().find(|unit| unit.names.contains(&text.as_str()))
+    UNITS
+        .iter()
+        .find(|unit| unit.names.contains(&text.as_str()))
 }
 
 fn to_celsius(value: f64, unit: &Unit) -> f64 {
@@ -154,7 +239,9 @@ fn split_number(text: &str) -> Option<(f64, &str)> {
     let text = text.trim();
     let end = text
         .char_indices()
-        .find(|(index, c)| !(c.is_ascii_digit() || matches!(c, '.' | ',') || (*index == 0 && *c == '-')))
+        .find(|(index, c)| {
+            !(c.is_ascii_digit() || matches!(c, '.' | ',') || (*index == 0 && *c == '-'))
+        })
         .map_or(text.len(), |(index, _)| index);
 
     let number: f64 = text[..end].replace(',', "").parse().ok()?;
