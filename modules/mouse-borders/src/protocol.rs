@@ -3,19 +3,21 @@
 //! This is Aujar's own protocol (postcard-encoded). It does not interoperate with the
 //! Windows Mouse Without Borders wire format.
 //!
-//! Key codes are Linux `KEY_*` / `BTN_*` values. Large payloads (clipboard, files) are split
-//! into chunks so input events never wait long behind them.
+//! Keys are USB HID usages and buttons a neutral enum, so every operating system speaks the
+//! same input. Large payloads (clipboard, files) are split into chunks so input events never
+//! wait long behind them.
 
 use aujar_core::{Position, Size};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{Error, Result},
+    input::Button,
     layout::MachineName,
 };
 
 /// Bumped on incompatible changes. Peers with different versions refuse each other.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// Largest encoded message. Must fit one Noise transport frame (64 KiB minus the tag).
 pub const MAX_MESSAGE_BYTES: usize = 60 * 1024;
@@ -56,9 +58,8 @@ pub enum InputEvent {
         dx: i32,
         dy: i32,
     },
-    /// `BTN_*` code.
     Button {
-        code: u16,
+        button: Button,
         pressed: bool,
     },
     /// 120 units per wheel notch (the kernel's high-resolution unit).
@@ -66,8 +67,9 @@ pub enum InputEvent {
         horizontal: i32,
         vertical: i32,
     },
+    /// USB HID usage of the physical key.
     Key {
-        code: u16,
+        key: u16,
         pressed: bool,
     },
 }
@@ -351,7 +353,7 @@ mod tests {
         assert!(Message::Heartbeat.is_realtime());
         assert!(
             Message::Input(InputEvent::Key {
-                code: 1,
+                key: 0x29,
                 pressed: true
             })
             .is_realtime()

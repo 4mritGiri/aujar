@@ -32,6 +32,7 @@ fn fixture(denied: &[Capability]) -> Fixture {
     let profile = Profile {
         settings_path: dir.path().join("settings.toml"),
         key_store: KeyStore::new(dir.path().join("mouse-borders.key")),
+        audit_log: dir.path().join("audit.log"),
         denied: denied.iter().copied().collect::<HashSet<_>>(),
         clipboard: true,
         backends: Arc::new(|_config| {
@@ -294,4 +295,51 @@ async fn the_module_never_fails_to_start_because_of_configuration() {
     // Starting twice is harmless.
     module.start(ModuleContext::new("test")).await.unwrap();
     module.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn key_changes_are_written_to_the_audit_log_without_the_key() {
+    let fixture = fixture(&[]);
+    write_settings(&fixture, |_| {});
+
+    let supervisor = Supervisor::spawn(fixture.profile.clone());
+    let handle = supervisor.handle();
+
+    let first = handle.generate_key(false).await.unwrap();
+    let second = handle.generate_key(true).await.unwrap();
+    let pasted = aujar_mouse_borders::secure::SecurityKey::generate().unwrap();
+    handle.set_key(&pasted.to_display(), true).await.unwrap();
+
+    let log = std::fs::read_to_string(&fixture.profile.audit_log).unwrap();
+    let hows: Vec<String> = log
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|record| record["event"] == "key_changed")
+        .map(|record| record["how"].as_str().unwrap().to_owned())
+        .collect();
+
+    assert_eq!(hows, ["generated", "replaced", "set from another machine"]);
+    for key in [first, second, pasted] {
+        assert!(
+            !log.contains(&key.to_display()),
+            "a key must never be logged"
+        );
+    }
+
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn auditing_off_in_settings_writes_nothing() {
+    let fixture = fixture(&[]);
+    write_settings(&fixture, |settings| settings.audit_log = false);
+
+    let supervisor = Supervisor::spawn(fixture.profile.clone());
+    let handle = supervisor.handle();
+
+    handle.generate_key(false).await.unwrap();
+
+    assert!(!fixture.profile.audit_log.exists());
+
+    supervisor.shutdown().await;
 }

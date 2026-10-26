@@ -13,7 +13,6 @@ mod x11;
 
 use std::path::Path;
 
-use async_trait::async_trait;
 use aujar_core::{Position, Size};
 
 pub use clipboard_cli::CliClipboard;
@@ -22,11 +21,47 @@ pub use logind::LogindLocker;
 pub use uinput_sink::{UinputSink, VIRTUAL_PREFIX};
 pub use x11::X11Desktop;
 
-use super::{Backends, CapturedInput, Clipboard, Desktop, InputSink, InputSource};
+use super::{
+    Backends, Clipboard, Desktop, InputSink, InputSource,
+    unavailable::{UnavailableSink, UnavailableSource},
+};
+use crate::input::Button;
 use crate::{
     config::EngineConfig,
     error::{Error, Result},
 };
+
+/// Linux `BTN_*` codes for the mouse buttons we forward.
+const BTN_LEFT: u16 = 0x110;
+const BTN_RIGHT: u16 = 0x111;
+const BTN_MIDDLE: u16 = 0x112;
+const BTN_SIDE: u16 = 0x113;
+const BTN_EXTRA: u16 = 0x114;
+const BTN_FORWARD: u16 = 0x115;
+const BTN_BACK: u16 = 0x116;
+
+/// The neutral button for a Linux `BTN_*` code (`None` for buttons we do not forward).
+fn button_from_evdev(code: u16) -> Option<Button> {
+    match code {
+        BTN_LEFT => Some(Button::Left),
+        BTN_RIGHT => Some(Button::Right),
+        BTN_MIDDLE => Some(Button::Middle),
+        // Mice report their thumb buttons as SIDE/EXTRA or as BACK/FORWARD.
+        BTN_SIDE | BTN_BACK => Some(Button::Back),
+        BTN_EXTRA | BTN_FORWARD => Some(Button::Forward),
+        _ => None,
+    }
+}
+
+fn button_to_evdev(button: Button) -> u16 {
+    match button {
+        Button::Left => BTN_LEFT,
+        Button::Right => BTN_RIGHT,
+        Button::Middle => BTN_MIDDLE,
+        Button::Back => BTN_SIDE,
+        Button::Forward => BTN_EXTRA,
+    }
+}
 
 /// Which kind of graphical session this process runs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,49 +84,6 @@ impl Session {
             _ if std::env::var_os("DISPLAY").is_some() => Self::X11,
             _ => Self::Headless,
         }
-    }
-}
-
-/// An input source that explains why there is none.
-struct UnavailableSource(String);
-
-#[async_trait]
-impl InputSource for UnavailableSource {
-    async fn next(&mut self) -> Result<Option<CapturedInput>> {
-        Err(Error::unsupported("input capture", &self.0))
-    }
-
-    fn set_grab(&mut self, _grabbed: bool) -> Result<()> {
-        Err(Error::unsupported("input capture", &self.0))
-    }
-}
-
-/// An input sink that explains why there is none.
-struct UnavailableSink(String);
-
-impl InputSink for UnavailableSink {
-    fn pointer_abs(&mut self, _: Position) -> Result<()> {
-        Err(Error::unsupported("input injection", &self.0))
-    }
-
-    fn pointer_rel(&mut self, _: i32, _: i32) -> Result<()> {
-        Err(Error::unsupported("input injection", &self.0))
-    }
-
-    fn button(&mut self, _: u16, _: bool) -> Result<()> {
-        Err(Error::unsupported("input injection", &self.0))
-    }
-
-    fn wheel(&mut self, _: i32, _: i32) -> Result<()> {
-        Err(Error::unsupported("input injection", &self.0))
-    }
-
-    fn key(&mut self, _: u16, _: bool) -> Result<()> {
-        Err(Error::unsupported("input injection", &self.0))
-    }
-
-    fn nudge(&mut self) -> Result<()> {
-        Err(Error::unsupported("input injection", &self.0))
     }
 }
 
@@ -146,7 +138,7 @@ pub fn backends_for(config: &EngineConfig, session: Session) -> Backends {
         Err(error) => {
             notes.push(error.to_string());
 
-            Box::new(UnavailableSource(error.reason()))
+            Box::new(UnavailableSource::new(error.reason()))
         }
     };
 
@@ -179,7 +171,7 @@ pub fn backends_for(config: &EngineConfig, session: Session) -> Backends {
                 error.reason()
             ));
 
-            Box::new(UnavailableSink(error.reason()))
+            Box::new(UnavailableSink::new(error.reason()))
         }
     };
 
@@ -202,5 +194,23 @@ pub fn backends_for(config: &EngineConfig, session: Session) -> Backends {
         clipboard,
         locker: Box::new(LogindLocker),
         notes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buttons_convert_both_ways() {
+        for button in Button::ALL {
+            assert_eq!(button_from_evdev(button_to_evdev(button)), Some(button));
+        }
+
+        assert_eq!(button_from_evdev(BTN_BACK), Some(Button::Back));
+        assert_eq!(button_from_evdev(BTN_FORWARD), Some(Button::Forward));
+        // Tool and touch codes are not mouse buttons.
+        assert_eq!(button_from_evdev(0x14a), None);
+        assert_eq!(button_from_evdev(0x117), None);
     }
 }

@@ -1,0 +1,25 @@
+[package]
+name = "aujar-mwb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Mouse Borders agent: share one keyboard and mouse between Linux, macOS and Windows machines"
+
+[[bin]]
+name = "aujar-mwb"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+aujar-config = { path = "../../crates/aujar-config" }
+aujar-core = { path = "../../crates/aujar-core" }
+aujar-mouse-borders = { path = "../../modules/mouse-borders" }
+aujar-mwb-cli = { path = "../../crates/aujar-mwb-cli" }
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }

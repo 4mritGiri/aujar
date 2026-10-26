@@ -284,20 +284,44 @@ impl Web {
 
         vec![
             shortcut("g", "Google", "https://www.google.com/search?q="),
-            shortcut("yt", "YouTube", "https://www.youtube.com/results?search_query="),
+            shortcut(
+                "yt",
+                "YouTube",
+                "https://www.youtube.com/results?search_query=",
+            ),
             shortcut("gh", "GitHub", "https://github.com/search?q="),
-            shortcut("w", "Wikipedia", "https://en.wikipedia.org/w/index.php?search="),
-            shortcut("maps", "OpenStreetMap", "https://www.openstreetmap.org/search?query="),
-            shortcut("so", "Stack Overflow", "https://stackoverflow.com/search?q="),
+            shortcut(
+                "w",
+                "Wikipedia",
+                "https://en.wikipedia.org/w/index.php?search=",
+            ),
+            shortcut(
+                "maps",
+                "OpenStreetMap",
+                "https://www.openstreetmap.org/search?query=",
+            ),
+            shortcut(
+                "so",
+                "Stack Overflow",
+                "https://stackoverflow.com/search?q=",
+            ),
             shortcut("r", "Reddit", "https://www.reddit.com/search/?q="),
             shortcut("npm", "npm", "https://www.npmjs.com/search?q="),
             shortcut("crates", "crates.io", "https://crates.io/search?q="),
             shortcut("docs", "docs.rs", "https://docs.rs/releases/search?query="),
             shortcut("pypi", "PyPI", "https://pypi.org/search/?q="),
-            shortcut("mdn", "MDN Web Docs", "https://developer.mozilla.org/en-US/search?q="),
+            shortcut(
+                "mdn",
+                "MDN Web Docs",
+                "https://developer.mozilla.org/en-US/search?q=",
+            ),
             shortcut("imdb", "IMDb", "https://www.imdb.com/find/?q="),
             shortcut("a", "Amazon", "https://www.amazon.com/s?k="),
-            shortcut("tr", "Google Translate", "https://translate.google.com/?sl=auto&tl=en&text="),
+            shortcut(
+                "tr",
+                "Google Translate",
+                "https://translate.google.com/?sl=auto&tl=en&text=",
+            ),
         ]
     }
 }
@@ -416,6 +440,8 @@ pub struct MouseBorders {
     pub allow_remote_lock: bool,
     /// Screen size override, `WIDTHxHEIGHT`, when it cannot be detected (Wayland).
     pub screen: String,
+    /// Keep an audit log of connections, control hand-offs, file transfers and key changes.
+    pub audit_log: bool,
     pub hotkeys: MouseBordersHotkeys,
 }
 
@@ -445,6 +471,7 @@ impl Default for MouseBorders {
             block_screensaver: true,
             allow_remote_lock: true,
             screen: String::new(),
+            audit_log: true,
             hotkeys: MouseBordersHotkeys::default(),
         }
     }
@@ -462,15 +489,11 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// `$XDG_CONFIG_HOME/aujar/settings.toml`, else `~/.config/aujar/settings.toml`.
+    /// The settings file: `$XDG_CONFIG_HOME/aujar/settings.toml` on Linux (else
+    /// `~/.config/aujar/settings.toml`), `~/Library/Application Support/Aujar/settings.toml`
+    /// on macOS, `%APPDATA%\Aujar\settings.toml` on Windows.
     pub fn path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
-
-        base.join("aujar").join("settings.toml")
+        crate::platform::config_dir().join("settings.toml")
     }
 
     /// Parse a settings file. A missing file gives the defaults.

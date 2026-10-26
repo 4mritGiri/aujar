@@ -19,6 +19,7 @@ use tokio::{
 };
 
 use crate::{
+    audit::AuditEvent,
     engine::{Event, PeerUp, Shared},
     error::{Error, Result},
     layout::MachineName,
@@ -72,11 +73,19 @@ pub(crate) async fn run_listener(
 
         if !subnet_allows(&shared, remote.ip()) {
             tracing::warn!(%remote, "refused a connection from outside the local subnets");
+            shared.audit.record(AuditEvent::PeerRefused {
+                address: Some(remote.to_string()),
+                reason: "outside the local subnets".into(),
+            });
             continue;
         }
 
         let Ok(permit) = Arc::clone(&pending).try_acquire_owned() else {
             tracing::warn!(%remote, "too many pending handshakes; dropping connection");
+            shared.audit.record(AuditEvent::PeerRefused {
+                address: Some(remote.to_string()),
+                reason: "too many handshakes in progress".into(),
+            });
             continue;
         };
 
@@ -96,7 +105,13 @@ pub(crate) async fn run_listener(
                         tracing::debug!(%remote, %error, "inbound link ended");
                     }
                 }
-                Err(error) => tracing::warn!(%remote, %error, "inbound handshake failed"),
+                Err(error) => {
+                    tracing::warn!(%remote, %error, "inbound handshake failed");
+                    shared.audit.record(AuditEvent::PeerRefused {
+                        address: Some(remote.to_string()),
+                        reason: error.to_string(),
+                    });
+                }
             }
         });
     }
@@ -269,6 +284,10 @@ where
     };
 
     if let Some(reason) = refusal {
+        shared.audit.record(AuditEvent::PeerRefused {
+            address: remote.map(|address| address.to_string()),
+            reason: format!("{peer}: {reason}"),
+        });
         let _ = writer
             .send(&Message::Bye {
                 reason: reason.clone(),

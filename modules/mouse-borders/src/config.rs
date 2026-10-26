@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use aujar_config::{EasyMouse, MatrixMode, MouseBorders};
+use aujar_config::{EasyMouse, MatrixMode, MouseBorders, platform};
 use aujar_core::Size;
 
 use crate::{
@@ -39,6 +39,8 @@ pub struct EngineConfig {
     pub allow_remote_lock: bool,
     pub hotkeys: HotkeyBindings,
     pub screen_override: Option<Size>,
+    /// Where to write the audit log; `None` switches auditing off.
+    pub audit_log: Option<PathBuf>,
     pub timing: Timing,
 }
 
@@ -142,6 +144,7 @@ impl EngineConfig {
             allow_remote_lock: settings.allow_remote_lock,
             hotkeys: HotkeyBindings::from_settings(&settings.hotkeys)?,
             screen_override: parse_screen(&settings.screen)?,
+            audit_log: settings.audit_log.then(crate::audit::user_log_path),
             timing: Timing::default(),
         })
     }
@@ -154,9 +157,7 @@ impl EngineConfig {
 
 /// This machine's hostname, made into a valid machine name.
 pub fn hostname_as_machine_name() -> MachineName {
-    let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .or_else(|_| std::fs::read_to_string("/etc/hostname"))
-        .unwrap_or_default();
+    let raw = gethostname::gethostname().to_string_lossy().into_owned();
 
     let cleaned: String = raw
         .trim()
@@ -195,26 +196,19 @@ fn parse_screen(text: &str) -> Result<Option<Size>> {
 
 fn receive_dir(configured: &str) -> Result<PathBuf> {
     let configured = configured.trim();
-    let home = std::env::var_os("HOME").map(PathBuf::from);
 
     if configured.is_empty() {
-        return home
-            .map(|home| home.join("Downloads").join("Aujar"))
-            .ok_or_else(|| {
-                Error::Config("HOME is not set; set `mouse_borders.receive_dir`".into())
-            });
+        return platform::downloads_dir().ok_or_else(|| {
+            Error::Config("the home directory is unknown; set `mouse_borders.receive_dir`".into())
+        });
     }
 
-    expand_home(Path::new(configured), home.as_deref())
+    expand_home(Path::new(configured), platform::home_dir().as_deref())
 }
 
 fn expand_home(path: &Path, home: Option<&Path>) -> Result<PathBuf> {
-    match path.strip_prefix("~") {
-        Ok(rest) => home
-            .map(|home| home.join(rest))
-            .ok_or_else(|| Error::Config("`~` used but HOME is not set".into())),
-        Err(_) => Ok(path.to_owned()),
-    }
+    platform::expand_home(path, home)
+        .ok_or_else(|| Error::Config("`~` used but the home directory is unknown".into()))
 }
 
 #[cfg(test)]

@@ -7,8 +7,6 @@
 
 use std::{
     collections::BTreeMap,
-    fs::OpenOptions as StdOpenOptions,
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -22,6 +20,7 @@ use tokio::{
 
 use crate::{
     error::{Error, Result},
+    fsutil,
     layout::MachineName,
     protocol::{CHUNK_BYTES, FileMessage, MAX_FILE_BYTES, Message},
 };
@@ -142,11 +141,13 @@ impl Receiver {
 
         let name = sanitize_file_name(name)?;
 
-        tokio::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&self.dir)
-            .await?;
+        tokio::task::spawn_blocking({
+            let dir = self.dir.clone();
+
+            move || fsutil::create_private_dir_all(&dir)
+        })
+        .await
+        .map_err(|error| Error::Other(error.to_string()))??;
 
         let (final_path, part, file) = self.claim(&name).await?;
 
@@ -188,13 +189,7 @@ impl Receiver {
             let opened = tokio::task::spawn_blocking({
                 let part = part.clone();
 
-                move || {
-                    StdOpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .mode(0o600)
-                        .open(part)
-                }
+                move || fsutil::create_new_private_file(&part)
             })
             .await
             .map_err(|error| Error::Other(error.to_string()))?;
@@ -516,9 +511,14 @@ mod tests {
         assert_eq!(rx.active(), 0);
         assert!(!dir.path().join("in/note.txt.part").exists());
 
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o111, 0, "received files must not be executable");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+
+            assert_eq!(mode & 0o111, 0, "received files must not be executable");
+        }
     }
 
     #[tokio::test]

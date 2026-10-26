@@ -17,7 +17,8 @@ use aujar_mouse_borders::{
     config::EngineConfig,
     engine::{Command, Engine, EngineHandle},
     error::{Error, Result as MbResult},
-    keys::{KEY_LEFTALT, KEY_LEFTCTRL},
+    input::Button,
+    keys::{KEY_LEFTALT, KEY_LEFTCTRL, KEY_LEFTSHIFT, char_code},
     layout::MachineName,
     secure::SecurityKey,
 };
@@ -34,6 +35,7 @@ struct Node {
     desktop: MemoryDesktop,
     clipboard: MemoryClipboard,
     locker: MemoryLocker,
+    audit: std::path::PathBuf,
     dir: tempfile::TempDir,
 }
 
@@ -98,6 +100,8 @@ async fn start_with_source(
     tweak(&mut settings);
 
     let mut config = EngineConfig::from_settings(&settings).unwrap();
+    let audit = dir.path().join("audit.log");
+    config.audit_log = Some(audit.clone());
     config.listen = format!("127.0.0.1:{}", ports[local]).parse().unwrap();
     config.timing.reconnect_min = Duration::from_millis(50);
     config.timing.reconnect_max = Duration::from_millis(200);
@@ -134,6 +138,7 @@ async fn start_with_source(
         desktop,
         clipboard,
         locker,
+        audit,
         dir,
     }
 }
@@ -159,7 +164,10 @@ async fn connected(nodes: &[&Node], count: usize) {
     .await;
 }
 
-fn press_shortcut(node: &Node, code: u16) {
+/// Press `Ctrl+Alt+<letter or digit>` on a node's keyboard.
+fn press_shortcut(node: &Node, character: char) {
+    let code = char_code(character).unwrap();
+
     for (code, pressed) in [
         (KEY_LEFTCTRL, true),
         (KEY_LEFTALT, true),
@@ -168,7 +176,7 @@ fn press_shortcut(node: &Node, code: u16) {
         (KEY_LEFTALT, false),
         (KEY_LEFTCTRL, false),
     ] {
-        node.source.send(CapturedInput::Key { code, pressed });
+        node.source.send(CapturedInput::Key { key: code, pressed });
     }
 }
 
@@ -266,11 +274,11 @@ async fn pushing_past_the_edge_hands_over_input_and_back() {
     // Keys, buttons, wheel and motion now go to beta only.
     alpha.sink.clear();
     alpha.source.send(CapturedInput::Key {
-        code: 30,
+        key: 0x04,
         pressed: true,
     });
     alpha.source.send(CapturedInput::Button {
-        code: 272,
+        button: Button::Left,
         pressed: true,
     });
     alpha.source.send(CapturedInput::Wheel {
@@ -284,8 +292,8 @@ async fn pushing_past_the_edge_hands_over_input_and_back() {
     eventually("input to arrive on beta", || {
         let events = beta.sink.snapshot();
 
-        events.contains(&SinkEvent::Key(30, true))
-            && events.contains(&SinkEvent::Button(272, true))
+        events.contains(&SinkEvent::Key(0x04, true))
+            && events.contains(&SinkEvent::Button(Button::Left, true))
             && events.contains(&SinkEvent::Wheel(0, -120))
             && events.contains(&SinkEvent::PointerAbs(Position { x: 12, y: 545 }))
     })
@@ -313,8 +321,8 @@ async fn pushing_past_the_edge_hands_over_input_and_back() {
     eventually("beta to release held input", || {
         let events = beta.sink.snapshot();
 
-        events.contains(&SinkEvent::Key(30, false))
-            && events.contains(&SinkEvent::Button(272, false))
+        events.contains(&SinkEvent::Key(0x04, false))
+            && events.contains(&SinkEvent::Button(Button::Left, false))
     })
     .await;
     eventually("alpha's pointer to reappear", || {
@@ -344,14 +352,17 @@ async fn keys_held_while_crossing_are_released_locally() {
 
     // Shift is down when the pointer crosses.
     alpha.source.send(CapturedInput::Key {
-        code: 42,
+        key: KEY_LEFTSHIFT,
         pressed: true,
     });
     push_right(&alpha, 100);
 
     eventually("grab", || alpha.source.is_grabbed()).await;
     eventually("alpha's desktop to see shift released", || {
-        alpha.sink.snapshot().contains(&SinkEvent::Key(42, false))
+        alpha
+            .sink
+            .snapshot()
+            .contains(&SinkEvent::Key(KEY_LEFTSHIFT, false))
     })
     .await;
 
@@ -369,8 +380,8 @@ async fn shortcuts_jump_between_machines() {
     let gamma = start("gamma", &row, &ports, &key, true, |_| {}).await;
     connected(&[&alpha, &beta, &gamma], 2).await;
 
-    // Ctrl+Alt+3 (KEY_3 = 4) jumps to the third machine, skipping the middle one.
-    press_shortcut(&alpha, 4);
+    // Ctrl+Alt+3 jumps to the third machine, skipping the middle one.
+    press_shortcut(&alpha, '3');
     eventually("gamma to be controlled", || {
         gamma.handle.status().controlled_by.as_deref() == Some("alpha")
     })
@@ -379,7 +390,7 @@ async fn shortcuts_jump_between_machines() {
     assert_eq!(beta.handle.status().controlled_by, None);
 
     // Ctrl+Alt+1 brings it home.
-    press_shortcut(&alpha, 2);
+    press_shortcut(&alpha, '1');
     eventually("home again", || !alpha.source.is_grabbed()).await;
     eventually("gamma released", || {
         gamma.handle.status().controlled_by.is_none()
@@ -412,7 +423,7 @@ async fn a_controlled_machine_can_take_over_with_its_own_shortcut() {
     .await;
 
     // At beta's keyboard, Ctrl+Alt+3: "I want to drive gamma".
-    press_shortcut(&beta, 4);
+    press_shortcut(&beta, '3');
 
     eventually("gamma driven by beta", || {
         gamma.handle.status().controlled_by.as_deref() == Some("beta")
@@ -513,7 +524,7 @@ async fn easy_mouse_can_be_turned_off_and_modifiers_required() {
 
     // With Ctrl held it does.
     alpha.source.send(CapturedInput::Key {
-        code: KEY_LEFTCTRL,
+        key: KEY_LEFTCTRL,
         pressed: true,
     });
     push_right(&alpha, 500);
@@ -544,7 +555,7 @@ async fn without_pointer_tracking_edges_are_disabled_but_shortcuts_work() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!alpha.source.is_grabbed());
 
-    press_shortcut(&alpha, 3); // Ctrl+Alt+2
+    press_shortcut(&alpha, '2'); // Ctrl+Alt+2
     eventually("shortcut switch", || alpha.source.is_grabbed()).await;
 
     for node in [alpha, beta] {
@@ -707,8 +718,8 @@ async fn multi_machine_input_reaches_every_machine() {
     let gamma = start("gamma", &row, &ports, &key, true, |_| {}).await;
     connected(&[&alpha, &beta, &gamma], 2).await;
 
-    // Ctrl+Alt+M (KEY_M = 50).
-    press_shortcut(&alpha, 50);
+    // Ctrl+Alt+M.
+    press_shortcut(&alpha, 'm');
     eventually("broadcast on", || alpha.handle.status().multi_machine_input).await;
     eventually("peers listening", || {
         beta.handle
@@ -726,7 +737,7 @@ async fn multi_machine_input_reaches_every_machine() {
     .await;
 
     alpha.source.send(CapturedInput::Key {
-        code: 30,
+        key: 0x04,
         pressed: true,
     });
     alpha
@@ -737,7 +748,7 @@ async fn multi_machine_input_reaches_every_machine() {
         eventually("broadcast input", || {
             let events = node.sink.snapshot();
 
-            events.contains(&SinkEvent::Key(30, true))
+            events.contains(&SinkEvent::Key(0x04, true))
                 && events.contains(&SinkEvent::PointerRel(3, 4))
         })
         .await;
@@ -748,13 +759,13 @@ async fn multi_machine_input_reaches_every_machine() {
     );
 
     // Off again: nothing more arrives, and held keys are released.
-    press_shortcut(&alpha, 50);
+    press_shortcut(&alpha, 'm');
     eventually("broadcast off", || {
         !alpha.handle.status().multi_machine_input
     })
     .await;
     eventually("keys released", || {
-        beta.sink.snapshot().contains(&SinkEvent::Key(30, false))
+        beta.sink.snapshot().contains(&SinkEvent::Key(0x04, false))
     })
     .await;
     // (Keep-awake nudges are not input.)
@@ -790,8 +801,8 @@ async fn lock_all_locks_everyone_unless_a_machine_refuses() {
     .await;
     connected(&[&alpha, &beta, &gamma], 2).await;
 
-    // Ctrl+Alt+L (KEY_L = 38).
-    press_shortcut(&alpha, 38);
+    // Ctrl+Alt+L.
+    press_shortcut(&alpha, 'l');
 
     eventually("locks", || {
         alpha.locker.count() == 1 && beta.locker.count() == 1
@@ -815,11 +826,11 @@ async fn working_keeps_the_other_machines_awake() {
 
     // Any local input marks alpha as active; beta is nudged so its screen saver stays off.
     alpha.source.send(CapturedInput::Key {
-        code: 30,
+        key: 0x04,
         pressed: true,
     });
     alpha.source.send(CapturedInput::Key {
-        code: 30,
+        key: 0x04,
         pressed: false,
     });
 
@@ -983,6 +994,222 @@ async fn a_machine_that_cannot_capture_input_says_so_and_can_still_be_controlled
             .any(|event| matches!(event, SinkEvent::PointerAbs(_)))
     })
     .await;
+
+    for node in [alpha, beta] {
+        node.handle.stop().await;
+    }
+}
+
+/// Every audit record of a node, as JSON.
+fn audit_records(node: &Node) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(&node.audit)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("each audit line is JSON"))
+        .collect()
+}
+
+fn audited(node: &Node, event: &str, check: impl Fn(&serde_json::Value) -> bool) -> bool {
+    audit_records(node)
+        .iter()
+        .any(|record| record["event"] == event && check(record))
+}
+
+#[tokio::test]
+async fn the_audit_log_records_connections_control_files_and_locks() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let alpha = start("alpha", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    let beta = start("beta", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    connected(&[&alpha, &beta], 1).await;
+
+    // Control moves to beta.
+    push_right(&alpha, 500);
+    eventually("beta controlled", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+
+    // A file goes across, and alpha locks everything.
+    let file = alpha.dir.path().join("plan.txt");
+    std::fs::write(&file, "twelve bytes").unwrap();
+    alpha
+        .handle
+        .request(Command::SendFiles {
+            machine: name("beta"),
+            paths: vec![file],
+        })
+        .await
+        .unwrap();
+    alpha.handle.request(Command::LockAll).await.unwrap();
+
+    eventually("the file and the lock to be audited on beta", || {
+        audited(&beta, "file_received", |r| {
+            r["name"] == "plan.txt" && r["bytes"] == 12
+        }) && audited(&beta, "lock_requested", |r| {
+            r["peer"] == "alpha" && r["allowed"] == true
+        })
+    })
+    .await;
+
+    // What alpha recorded.
+    assert!(audited(&alpha, "service_started", |_| true));
+    assert!(audited(&alpha, "peer_connected", |r| r["peer"] == "beta"));
+    assert!(audited(&alpha, "control_moved", |r| r["from"] == "alpha"
+        && r["to"] == "beta"));
+    assert!(audited(&alpha, "file_offered", |r| r["name"] == "plan.txt"
+        && r["peer"] == "beta"));
+    assert!(audited(&alpha, "lock_requested", |r| r["peer"].is_null()
+        && r["allowed"] == true));
+
+    // What beta recorded.
+    assert!(audited(&beta, "peer_connected", |r| r["peer"] == "alpha"));
+    assert!(audited(&beta, "controlled_by", |r| r["peer"] == "alpha"));
+
+    // Every record says who and when.
+    for record in audit_records(&alpha) {
+        assert_eq!(record["machine"], "alpha");
+        assert!(record["time"].as_str().unwrap().ends_with('Z'), "{record}");
+    }
+
+    let alpha_log = alpha.audit.clone();
+
+    alpha.handle.stop().await;
+    assert!(
+        std::fs::read_to_string(alpha_log)
+            .unwrap()
+            .contains("\"event\":\"service_stopped\"")
+    );
+    beta.handle.stop().await;
+}
+
+#[tokio::test]
+async fn refused_connections_are_audited_with_a_reason() {
+    let ports = ports(&["alpha", "beta", "mallory"]);
+    let key = SecurityKey::generate().unwrap();
+    let alpha = start("alpha", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    // Wrong key: the handshake fails on alpha's side.
+    let intruder = start(
+        "beta",
+        &["alpha", "beta"],
+        &ports,
+        &SecurityKey::generate().unwrap(),
+        true,
+        |_| {},
+    )
+    .await;
+
+    eventually("the wrong key to be audited", || {
+        audited(&alpha, "peer_refused", |r| {
+            r["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("security key"))
+        })
+    })
+    .await;
+
+    // Right key, but not in alpha's layout.
+    let stranger = start("mallory", &["mallory", "alpha"], &ports, &key, true, |_| {}).await;
+
+    eventually("the stranger to be audited", || {
+        audited(&alpha, "peer_refused", |r| {
+            r["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("mallory"))
+        })
+    })
+    .await;
+
+    for node in [alpha, intruder, stranger] {
+        node.handle.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn the_audit_log_never_contains_clipboard_contents() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let alpha = start("alpha", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    let beta = start("beta", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    connected(&[&alpha, &beta], 1).await;
+
+    alpha
+        .clipboard
+        .set(ClipboardContent::Text("TOP-SECRET-PASSWORD".into()));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    push_right(&alpha, 500);
+
+    eventually("the clipboard to arrive", || {
+        beta.clipboard.get() == Some(ClipboardContent::Text("TOP-SECRET-PASSWORD".into()))
+    })
+    .await;
+    eventually("the transfer to be audited", || {
+        audited(&alpha, "clipboard_sent", |r| {
+            r["kind"] == "text" && r["bytes"] == 19
+        }) && audited(&beta, "clipboard_received", |r| {
+            r["kind"] == "text" && r["bytes"] == 19
+        })
+    })
+    .await;
+
+    for node in [&alpha, &beta] {
+        let log = std::fs::read_to_string(&node.audit).unwrap();
+
+        assert!(
+            !log.contains("SECRET"),
+            "clipboard content leaked into the audit log:\n{log}"
+        );
+        assert!(
+            !log.contains(&key.to_display()),
+            "the key leaked into the audit log"
+        );
+    }
+
+    for node in [alpha, beta] {
+        node.handle.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn auditing_can_be_switched_off() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let alpha = start("alpha", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    let beta = start("beta", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+
+    // The helper always sets a path; switching it off is a config decision.
+    let mut settings = MouseBorders {
+        audit_log: false,
+        machine_name: "alpha".into(),
+        machines: vec![
+            Machine {
+                name: "alpha".into(),
+                slot: 0,
+                address: String::new(),
+            },
+            Machine {
+                name: "beta".into(),
+                slot: 1,
+                address: String::new(),
+            },
+        ],
+        receive_dir: "/tmp/aujar-audit-off".into(),
+        ..MouseBorders::default()
+    };
+    assert!(
+        EngineConfig::from_settings(&settings)
+            .unwrap()
+            .audit_log
+            .is_none()
+    );
+
+    settings.audit_log = true;
+    assert!(
+        EngineConfig::from_settings(&settings)
+            .unwrap()
+            .audit_log
+            .is_some()
+    );
 
     for node in [alpha, beta] {
         node.handle.stop().await;

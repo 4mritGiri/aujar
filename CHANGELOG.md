@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [Unreleased]
 
 ### Added
+- **Mouse Borders on macOS and Windows** (in addition to Linux): a platform-neutral input model (USB HID key codes, one master key table cross-checked against Linux, Windows and macOS codes, protocol v2), Windows backend (low-level hooks, `SendInput`, `LockWorkStation`), macOS backend (Quartz event tap, posted events, permission checks), cross-platform clipboard (`arboard`, with password-manager content never read) and paths. The Windows and macOS backends are type-checked and their logic unit-tested but **not yet run on real machines**.
+- **`aujar-mwb`**, a standalone cross-platform agent and command line (Unix socket / Windows named pipe control channel, `run`, `autostart`, `doctor`, `audit`, plus every `mwb` command), and the shared `aujar-mwb-cli` crate used by it and `aujar mwb`.
+- **Enterprise hardening**: a JSON-lines audit log (never contains clipboard contents or keys; rotated; private), a `doctor` preflight with per-OS fixes, start-at-login for systemd / launchd / Windows, pure-Rust crypto (no C toolchain needed on Windows/macOS), and a CI job building and testing on Linux, macOS and Windows.
 - **Settings window restyled** like a macOS window: its own rounded, translucent frame with traffic-light buttons, sidebar toggle, back/forward, a breadcrumb pill, settings search (Ctrl+F) and a `...` menu; drag the title bar to move, double-click to zoom, drag the edges to resize. New Files and History pages in a collapsible "Data" group.
 - **Appearance**: opacity, corner radius, blur behind windows, window buttons on/off; launcher "Move by dragging" and "Opens at" (top / center / last place; placement works on X11, dragging works everywhere).
 - **Launcher**: drag the search bar or footer to move it; Spotlight-style preview pane with a large preview, kind, information table, folder contents and Open / Show in Folder buttons.

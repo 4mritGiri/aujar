@@ -26,6 +26,7 @@ use tokio::{
 };
 
 use crate::{
+    audit::AuditSink,
     backend::Backends,
     config::EngineConfig,
     engine::{Command, Engine, EngineHandle},
@@ -48,6 +49,8 @@ pub type BackendFactory = Arc<dyn Fn(&EngineConfig) -> Backends + Send + Sync>;
 pub struct Profile {
     pub settings_path: PathBuf,
     pub key_store: KeyStore,
+    /// Where the audit log is written (when the settings switch auditing on).
+    pub audit_log: PathBuf,
     /// Capabilities the system policy forbids.
     pub denied: HashSet<Capability>,
     /// Off in the system service: it has no desktop session to share a clipboard with.
@@ -56,15 +59,15 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// The per-user profile: `~/.config/aujar/settings.toml` and its key file.
-    #[cfg(all(target_os = "linux", feature = "linux-backend"))]
+    /// The per-user profile: the user's settings file and its key file, on any platform.
     pub fn user(denied: HashSet<Capability>) -> Self {
         Self {
             settings_path: Settings::path(),
             key_store: KeyStore::user_default(),
+            audit_log: crate::audit::user_log_path(),
             denied,
             clipboard: true,
-            backends: Arc::new(crate::backend::linux::backends),
+            backends: Arc::new(crate::backend::platform_backends),
         }
     }
 
@@ -74,6 +77,7 @@ impl Profile {
         Self {
             settings_path: PathBuf::from("/etc/aujar/settings.toml"),
             key_store: KeyStore::new("/etc/aujar/mouse-borders.key"),
+            audit_log: crate::audit::user_log_path(),
             denied,
             clipboard: false,
             backends: Arc::new(crate::backend::linux::backends),
@@ -164,6 +168,7 @@ fn evaluate(profile: &Profile) -> Desired {
         Err(error) => return Desired::Off(ServiceState::Error(error.to_string())),
     };
 
+    config.audit_log = settings.audit_log.then(|| profile.audit_log.clone());
     config.share_clipboard &= profile.clipboard
         && !profile.denied.contains(&Capability::ReadClipboard)
         && !profile.denied.contains(&Capability::WriteClipboard);
@@ -182,6 +187,8 @@ pub struct ServiceHandle {
     report: watch::Receiver<ServiceReport>,
     requests: mpsc::Sender<Request>,
     key_store: KeyStore,
+    settings_path: PathBuf,
+    audit_log: PathBuf,
 }
 
 impl ServiceHandle {
@@ -225,8 +232,10 @@ impl ServiceHandle {
     /// Create a new key. Pass `force` to replace an existing one (this disconnects every
     /// machine paired with the old key).
     pub async fn generate_key(&self, force: bool) -> Result<SecurityKey> {
+        let replacing = matches!(self.key_store.load(), Ok(Some(_)));
         let key = self.key_store.generate(force)?;
 
+        self.audit_key_change(if replacing { "replaced" } else { "generated" });
         self.reload().await;
 
         Ok(key)
@@ -237,9 +246,25 @@ impl ServiceHandle {
         let key = SecurityKey::parse(text)?;
 
         self.key_store.save(&key, force)?;
+        self.audit_key_change("set from another machine");
         self.reload().await;
 
         Ok(())
+    }
+
+    fn audit_key_change(&self, how: &str) {
+        // Key changes can happen while the engine is off, so write to the log directly.
+        if let Ok(settings) = Settings::load_from(&self.settings_path)
+            && settings.mouse_borders.audit_log
+        {
+            crate::audit::FileAudit::new(
+                crate::settings_edit::local_name(&settings.mouse_borders).to_string(),
+                &self.audit_log,
+            )
+            .record(crate::audit::AuditEvent::KeyChanged {
+                how: how.to_owned(),
+            });
+        }
     }
 
     pub fn show_key(&self) -> Result<Option<SecurityKey>> {
@@ -263,6 +288,8 @@ impl Supervisor {
             report: report_rx,
             requests: requests_tx,
             key_store: profile.key_store.clone(),
+            settings_path: profile.settings_path.clone(),
+            audit_log: profile.audit_log.clone(),
         };
 
         let task = tokio::spawn(supervise(profile, report_tx, requests_rx, stop_rx));

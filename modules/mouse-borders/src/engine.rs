@@ -25,6 +25,7 @@ use tokio::{
 };
 
 use crate::{
+    audit::{AuditEvent, AuditSink, FileAudit, NullAudit},
     backend::{
         Backends, CapturedInput, Clipboard, ClipboardContent, Desktop, Injector, InputSource,
         ScreenLocker,
@@ -117,6 +118,7 @@ pub(crate) enum Event {
 pub(crate) struct Shared {
     pub config: Arc<EngineConfig>,
     pub key: SecurityKey,
+    pub audit: Arc<dyn AuditSink>,
     pub reconnect: Notify,
     connected: Mutex<std::collections::BTreeSet<MachineName>>,
     hello: Mutex<Hello>,
@@ -255,9 +257,18 @@ impl Engine {
         })?;
         let local_addr = listener.local_addr()?;
 
+        let audit: Arc<dyn AuditSink> = match &config.audit_log {
+            Some(path) => Arc::new(FileAudit::new(config.local.to_string(), path)),
+            None => Arc::new(NullAudit),
+        };
+        audit.record(AuditEvent::ServiceStarted {
+            listen: local_addr.to_string(),
+        });
+
         let shared = Arc::new(Shared {
             config: Arc::clone(&config),
             key,
+            audit,
             reconnect: Notify::new(),
             connected: Mutex::default(),
             hello: Mutex::new(Hello {
@@ -457,6 +468,7 @@ async fn clipboard_watcher(
 ) {
     let poll = shared.config.timing.clipboard_poll;
     let mut last: Option<[u8; 32]> = None;
+    let mut last_token: Option<u64> = None;
     let mut warned = false;
 
     loop {
@@ -468,6 +480,15 @@ async fn clipboard_watcher(
         // Nobody to share with: do not even look at the clipboard.
         if !shared.any_connected() {
             continue;
+        }
+
+        // The OS can tell us nothing changed: skip the (possibly expensive) read.
+        if let Some(token) = clipboard.change_token() {
+            if last_token == Some(token) {
+                continue;
+            }
+
+            last_token = Some(token);
         }
 
         match clipboard.read().await {
@@ -589,8 +610,13 @@ impl Actor {
         }
 
         self.peers.clear();
+        self.audit(AuditEvent::ServiceStopped);
         self.status.running = false;
         self.publish();
+    }
+
+    fn audit(&self, event: AuditEvent) {
+        self.shared.audit.record(event);
     }
 
     async fn handle(&mut self, event: Event) {
@@ -826,6 +852,10 @@ impl Actor {
             self.push_clipboard(&transfer.to);
         }
 
+        self.audit(AuditEvent::ControlMoved {
+            from: transfer.from.to_string(),
+            to: transfer.to.to_string(),
+        });
         self.publish();
 
         Ok(())
@@ -838,11 +868,10 @@ impl Actor {
 
         self.last_local_input = Some(now);
 
-        if let CapturedInput::Key { code, pressed } = input {
-            self.keyboard.update(code, pressed);
+        if let CapturedInput::Key { key, pressed } = input {
+            self.keyboard.update(key, pressed);
 
-            if pressed
-                && let Some(action) = self.cfg.hotkeys.lookup(code, self.keyboard.modifiers())
+            if pressed && let Some(action) = self.cfg.hotkeys.lookup(key, self.keyboard.modifiers())
             {
                 self.on_hotkey(action).await;
 
@@ -984,6 +1013,10 @@ impl Actor {
             }
             Command::LockAll => {
                 self.send_all(&Message::LockScreen);
+                self.audit(AuditEvent::LockRequested {
+                    peer: None,
+                    allowed: true,
+                });
                 self.locker.lock().await?;
 
                 Ok("locked all machines".into())
@@ -1069,6 +1102,7 @@ impl Actor {
 
         self.broadcasting = on;
         self.send_all(&Message::Broadcast { active: on });
+        self.audit(AuditEvent::BroadcastChanged { on });
 
         Ok(if on {
             "multi-machine input on: your input goes to every connected machine".into()
@@ -1116,6 +1150,11 @@ impl Actor {
                             size: file.size,
                         }),
                     );
+                    self.audit(AuditEvent::FileOffered {
+                        peer: machine.to_string(),
+                        name: file.name.clone(),
+                        bytes: file.size,
+                    });
                     self.outgoing.insert((machine.clone(), id), file);
                     offered += 1;
                 }
@@ -1178,6 +1217,14 @@ impl Actor {
             self.send(&name, Message::Broadcast { active: true });
         }
 
+        self.audit(AuditEvent::PeerConnected {
+            peer: name.to_string(),
+            address: self
+                .peers
+                .get(&name)
+                .and_then(|peer| peer.remote)
+                .map(|a| a.to_string()),
+        });
         self.log(format!("connected to {name}"));
     }
 
@@ -1199,6 +1246,7 @@ impl Actor {
         if self.controlled_by.as_ref() == Some(name) {
             self.controlled_by = None;
             self.pending_request = None;
+            self.audit(AuditEvent::ControlledBy { peer: None });
             let _ = self.injector.release_all();
         }
 
@@ -1208,6 +1256,10 @@ impl Actor {
         }
 
         self.last_error.insert(name.clone(), reason.to_owned());
+        self.audit(AuditEvent::PeerDisconnected {
+            peer: name.to_string(),
+            reason: reason.to_owned(),
+        });
         self.log(format!("{name} disconnected ({reason})"));
     }
 
@@ -1250,6 +1302,11 @@ impl Actor {
                 }
             }
             Message::LockScreen => {
+                self.audit(AuditEvent::LockRequested {
+                    peer: Some(from.to_string()),
+                    allowed: self.cfg.allow_remote_lock,
+                });
+
                 if self.cfg.allow_remote_lock {
                     match self.locker.lock().await {
                         Ok(()) => self.log(format!("{from} locked this machine")),
@@ -1296,6 +1353,9 @@ impl Actor {
             let _ = self.injector.warp(bounds.clamp(position));
         }
 
+        self.audit(AuditEvent::ControlledBy {
+            peer: Some(from.to_string()),
+        });
         self.log(format!("{from} is controlling this machine"));
     }
 
@@ -1306,6 +1366,7 @@ impl Actor {
 
         self.controlled_by = None;
         let _ = self.injector.release_all();
+        self.audit(AuditEvent::ControlledBy { peer: None });
         self.log(format!("{from} released this machine"));
 
         if let Some(Some(target)) = self.pending_request.take() {
@@ -1384,6 +1445,14 @@ impl Actor {
                 let lane = peer.link.bulk.clone();
 
                 self.sent_clip.insert(to.clone(), fingerprint);
+
+                let (kind, bytes) = clipboard::describe(&content);
+
+                self.shared.audit.record(AuditEvent::ClipboardSent {
+                    peer: to.to_string(),
+                    kind: kind.to_owned(),
+                    bytes,
+                });
                 tokio::spawn(async move {
                     for packet in packets {
                         if lane.send(Message::Clipboard(packet)).await.is_err() {
@@ -1419,6 +1488,14 @@ impl Actor {
                 self.applied_clip = Some(fingerprint);
                 self.sent_clip.insert(from.clone(), fingerprint);
                 self.local_clip = Some(content.clone());
+
+                let (kind, bytes) = clipboard::describe(&content);
+
+                self.audit(AuditEvent::ClipboardReceived {
+                    peer: from.to_string(),
+                    kind: kind.to_owned(),
+                    bytes,
+                });
 
                 if let Err(error) = clipboard.write(&content).await {
                     self.log(format!("cannot set the clipboard: {error}"));
@@ -1457,6 +1534,11 @@ impl Actor {
                                 reason: reason.clone(),
                             }),
                         );
+                        self.audit(AuditEvent::FileRefused {
+                            peer: from.to_string(),
+                            name: name.clone(),
+                            reason: reason.clone(),
+                        });
                         self.log(format!("refused `{name}` from {from}: {reason}"));
                     }
                 }
@@ -1511,7 +1593,19 @@ impl Actor {
             }
 
             FileMessage::Done { id, sha256 } => match self.files.done(&from, id, sha256).await {
-                Ok(path) => self.log(format!("received {} from {from}", path.display())),
+                Ok(path) => {
+                    let bytes = std::fs::metadata(&path).map_or(0, |meta| meta.len());
+
+                    self.audit(AuditEvent::FileReceived {
+                        peer: from.to_string(),
+                        name: path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                        bytes,
+                    });
+                    self.log(format!("received {} from {from}", path.display()));
+                }
                 Err(error) => {
                     self.send(
                         &from,
@@ -1586,7 +1680,7 @@ impl Actor {
 fn to_event(input: CapturedInput) -> InputEvent {
     match input {
         CapturedInput::PointerMotion { dx, dy } => InputEvent::PointerRel { dx, dy },
-        CapturedInput::Button { code, pressed } => InputEvent::Button { code, pressed },
+        CapturedInput::Button { button, pressed } => InputEvent::Button { button, pressed },
         CapturedInput::Wheel {
             horizontal,
             vertical,
@@ -1594,6 +1688,6 @@ fn to_event(input: CapturedInput) -> InputEvent {
             horizontal,
             vertical,
         },
-        CapturedInput::Key { code, pressed } => InputEvent::Key { code, pressed },
+        CapturedInput::Key { key, pressed } => InputEvent::Key { key, pressed },
     }
 }

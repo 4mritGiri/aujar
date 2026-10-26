@@ -5,14 +5,14 @@
 //! can read is refused rather than trusted.
 
 use std::{
-    fs::{self, OpenOptions},
+    fs,
     io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
 use crate::{
     error::{Error, Result},
+    fsutil,
     secure::SecurityKey,
 };
 
@@ -43,7 +43,7 @@ impl KeyStore {
             Err(error) => return Err(error.into()),
         };
 
-        if metadata.permissions().mode() & 0o077 != 0 {
+        if fsutil::is_shared_with_others(&metadata) {
             return Err(Error::Key(format!(
                 "{} can be read by other users; run `chmod 600 {}` (or create a new key)",
                 self.path.display(),
@@ -80,11 +80,7 @@ impl KeyStore {
         let temp = self.path.with_extension("key.tmp");
         let _ = fs::remove_file(&temp);
 
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)?;
+        let mut file = fsutil::create_new_private_file(&temp)?;
 
         writeln!(file, "{}", key.to_display())?;
         file.sync_all()?;
@@ -126,9 +122,17 @@ mod tests {
         let (_dir, store) = store();
         let key = store.generate(false).unwrap();
 
-        let mode = fs::metadata(store.path()).unwrap().permissions().mode();
+        assert!(!fsutil::is_shared_with_others(
+            &fs::metadata(store.path()).unwrap()
+        ));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
 
-        assert_eq!(mode & 0o777, 0o600);
+            let mode = fs::metadata(store.path()).unwrap().permissions().mode();
+
+            assert_eq!(mode & 0o777, 0o600);
+        }
         assert_eq!(store.load().unwrap().unwrap(), key);
     }
 
@@ -146,8 +150,11 @@ mod tests {
         assert_eq!(store.load().unwrap().unwrap(), second);
     }
 
+    #[cfg(unix)]
     #[test]
     fn world_readable_key_files_are_refused() {
+        use std::os::unix::fs::PermissionsExt;
+
         let (_dir, store) = store();
         store.generate(false).unwrap();
 
@@ -162,7 +169,6 @@ mod tests {
         let (_dir, store) = store();
         store.generate(false).unwrap();
         fs::write(store.path(), "not a key\n").unwrap();
-        fs::set_permissions(store.path(), fs::Permissions::from_mode(0o600)).unwrap();
 
         assert!(
             store

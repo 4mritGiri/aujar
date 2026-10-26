@@ -30,101 +30,10 @@ pub enum Request {
     MouseBorders(MouseBordersRequest),
 }
 
-/// Operations on the Mouse Borders service (`aujar mwb ...`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MouseBordersRequest {
-    Status,
-    /// Create the security key; `force` replaces an existing one.
-    GenerateKey {
-        force: bool,
-    },
-    ShowKey,
-    /// Store a key copied from another machine.
-    SetKey {
-        key: String,
-        force: bool,
-    },
-    /// Re-read settings and the key now.
-    Reload,
-    /// Give the keyboard and mouse to a machine (`None`: this one).
-    Switch {
-        machine: Option<String>,
-    },
-    SetEasyMouse {
-        enabled: bool,
-    },
-    LockAll,
-    Reconnect,
-    MultiMachineInput {
-        enabled: bool,
-    },
-    /// Send files (absolute paths) to a connected machine.
-    SendFiles {
-        machine: String,
-        paths: Vec<String>,
-    },
-}
-
-impl MouseBordersRequest {
-    /// Capability needed on top of the request itself. Reading status (and explaining why
-    /// the service is off) always works.
-    pub fn required_capability(&self) -> Option<Capability> {
-        match self {
-            Self::Status
-            | Self::ShowKey
-            | Self::Reload
-            | Self::GenerateKey { .. }
-            | Self::SetKey { .. } => None,
-            Self::SendFiles { .. } => Some(Capability::FileSystem),
-            Self::Switch { .. }
-            | Self::SetEasyMouse { .. }
-            | Self::LockAll
-            | Self::Reconnect
-            | Self::MultiMachineInput { .. } => Some(Capability::ControlInput),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MouseBordersResponse {
-    Status(Box<MouseBordersStatus>),
-    /// The security key, in its copyable form.
-    Key(String),
-    /// A command ran; this is what to tell the user.
-    Done(String),
-    /// There is no security key yet.
-    NoKey,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MouseBordersPeer {
-    pub name: String,
-    pub connected: bool,
-    pub address: Option<String>,
-    pub screen: Option<(u32, u32)>,
-    pub slot: Option<u8>,
-    pub last_error: Option<String>,
-}
-
-/// Service state in a form independent of the module crate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MouseBordersStatus {
-    /// `disabled`, `blocked`, `waiting_for_key`, `error` or `running`.
-    pub state: String,
-    /// Why, for every state except `running`.
-    pub detail: String,
-    pub local: String,
-    /// Machine holding the keyboard and mouse.
-    pub focus: String,
-    pub controlled_by: Option<String>,
-    pub multi_machine_input: bool,
-    pub easy_mouse: String,
-    pub listening: Option<String>,
-    pub edge_switching_unavailable: Option<String>,
-    pub capture_unavailable: Option<String>,
-    pub peers: Vec<MouseBordersPeer>,
-    pub log: Vec<String>,
-}
+/// Mouse Borders request and response types, shared with the standalone agent.
+pub use aujar_mouse_borders::api::{
+    MouseBordersPeer, MouseBordersRequest, MouseBordersResponse, MouseBordersStatus,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LauncherCommand {

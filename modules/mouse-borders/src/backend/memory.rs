@@ -12,7 +12,10 @@ use tokio::sync::mpsc;
 use super::{
     CapturedInput, Clipboard, ClipboardContent, Desktop, InputSink, InputSource, ScreenLocker,
 };
-use crate::error::{Error, Result};
+use crate::{
+    error::{Error, Result},
+    input::Button,
+};
 
 /// Input fed from a channel; reports whether it is currently grabbed.
 pub struct MemorySource {
@@ -72,7 +75,7 @@ impl InputSource for MemorySource {
 pub enum SinkEvent {
     PointerAbs(Position),
     PointerRel(i32, i32),
-    Button(u16, bool),
+    Button(Button, bool),
     Wheel(i32, i32),
     Key(u16, bool),
     Nudge,
@@ -124,16 +127,16 @@ impl InputSink for MemorySink {
         self.record(SinkEvent::PointerRel(dx, dy))
     }
 
-    fn button(&mut self, code: u16, pressed: bool) -> Result<()> {
-        self.record(SinkEvent::Button(code, pressed))
+    fn button(&mut self, button: Button, pressed: bool) -> Result<()> {
+        self.record(SinkEvent::Button(button, pressed))
     }
 
     fn wheel(&mut self, horizontal: i32, vertical: i32) -> Result<()> {
         self.record(SinkEvent::Wheel(horizontal, vertical))
     }
 
-    fn key(&mut self, code: u16, pressed: bool) -> Result<()> {
-        self.record(SinkEvent::Key(code, pressed))
+    fn key(&mut self, key: u16, pressed: bool) -> Result<()> {
+        self.record(SinkEvent::Key(key, pressed))
     }
 
     fn nudge(&mut self) -> Result<()> {

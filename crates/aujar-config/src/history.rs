@@ -39,17 +39,10 @@ fn now() -> u64 {
 }
 
 impl History {
-    /// `$XDG_STATE_HOME/aujar/history.toml`, else `~/.local/state/aujar/history.toml`.
+    /// `$XDG_STATE_HOME/aujar/history.toml` on Linux (else `~/.local/state/aujar/`), and the
+    /// platform's application-data directory elsewhere.
     pub fn path() -> PathBuf {
-        let base = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-            })
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
-
-        base.join("aujar").join("history.toml")
+        crate::platform::state_dir().join("history.toml")
     }
 
     /// Never fails: a missing or broken file is an empty history.

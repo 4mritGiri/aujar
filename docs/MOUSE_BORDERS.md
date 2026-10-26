@@ -1,11 +1,34 @@
 # Mouse Borders
 
-Share one keyboard and mouse between up to four Linux machines running Aujar: move the pointer
-off the edge of one screen and it appears on the next machine, with the clipboard and files
-following you. It is Aujar's take on Microsoft's *Mouse Without Borders*.
+Share one keyboard and mouse between up to four machines running **Linux, macOS or Windows**:
+move the pointer off the edge of one screen and it appears on the next machine, with the clipboard
+and files following you. It is Aujar's take on Microsoft's *Mouse Without Borders*, and every
+combination of the three systems works together.
 
 > **Aujar to Aujar only.** Mouse Borders speaks its own encrypted protocol. It does not talk to
-> Mouse Without Borders on Windows, and (like all of Aujar) it is not affiliated with Microsoft.
+> Microsoft's Mouse Without Borders, and (like all of Aujar) it is not affiliated with Microsoft.
+> Linux machines can use the Aujar app or the standalone agent; macOS and Windows machines use
+> the standalone **`aujar-mwb`** agent.
+
+## Platforms
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| Capture input | evdev (`input` group) | event tap (Input Monitoring + Accessibility) | low-level hooks |
+| Control this machine | uinput | Quartz events (Accessibility) | `SendInput` |
+| Switch at screen edges | X11 (not Wayland) | yes | yes |
+| Jump with `Ctrl+Alt+1..4` | yes | yes (`Control+Option`) | yes |
+| Clipboard (text, images) | `wl-clipboard` / `xclip` | built in | built in |
+| Lock all machines | `loginctl` | `CGSession` / `pmset` | `LockWorkStation` |
+| Start at login | systemd user unit | LaunchAgent | Run registry key |
+| Login screen / elevated windows | [system service](#service-mode) | not possible | not possible (needs an elevated agent) |
+| **How well verified** | tested, smoke-tested | **compiled and unit-tested only** | **compiled and unit-tested only** |
+
+> **Read this before relying on macOS or Windows.** Those backends are real code that compiles for
+> their platforms and whose decision logic (key tables, event translation, motion handling,
+> scrolling, click counting) is unit-tested. But the development machine was Linux: nobody has run
+> the Windows hooks or the macOS event tap yet. The CI workflow builds and tests on real Windows
+> and macOS runners; run `aujar-mwb doctor` on each machine and expect to report some bugs.
 
 ## Quick start
 
@@ -57,6 +80,30 @@ address = "192.168.1.20"       # optional; otherwise "laptop" is looked up by na
 
 and create the key with `aujar mwb key generate` on one machine and `aujar mwb key set <KEY>` on the
 others.
+
+### The standalone agent (Windows, macOS, or Linux without the Aujar app)
+
+`aujar-mwb` is one small program that does everything: it *is* the agent (`aujar-mwb run`) and the
+command line for it. Download it from the release or build it (`cargo build --release -p aujar-mwb`).
+
+```bash
+aujar-mwb pair                  # first machine: prints a pairing code
+aujar-mwb join 'aujar-pair1;…'  # every other machine
+aujar-mwb doctor                # checks permissions, network, key; says how to fix problems
+aujar-mwb run                   # start sharing (leave it running)
+aujar-mwb autostart enable      # start it at every login
+aujar-mwb status                # who is connected, who has the keyboard
+```
+
+Every other command (`switch`, `send`, `lock-all`, `reconnect`, `easy-mouse`, `multi-input`, `key …`)
+works the same as `aujar mwb …` below. The agent keeps its settings in the same
+`[mouse_borders]` table of the Aujar settings file:
+
+| OS | Settings file |
+|---|---|
+| Linux | `~/.config/aujar/settings.toml` |
+| macOS | `~/Library/Application Support/Aujar/settings.toml` |
+| Windows | `%APPDATA%\Aujar\settings.toml` |
 
 ## What works
 
@@ -135,8 +182,42 @@ sudo usermod -aG input "$USER"      # then log out and back in
 > feature. If that is not acceptable, run only the [system service](#service-mode) under its own
 > `aujar-mwb` user and keep your own account out of the group.
 
-`aujar mwb status` tells you exactly what is missing (no permission, no `uinput`, no
+### macOS
+
+macOS asks for two permissions the first time the agent runs, in **System Settings → Privacy &
+Security**: *Input Monitoring* (to see the keyboard and mouse) and *Accessibility* (to hold events
+back and to let other machines control this one). Allow `aujar-mwb` in both, then restart it. The
+permission belongs to the program's *path*: move or rebuild it and macOS asks again. macOS also
+stops delivering keystrokes to any program while a password field has focus, so passwords typed
+there never cross over.
+
+### Windows
+
+No permission prompts, but Windows only shows input to a program that is at least as privileged as
+the window receiving it: to share elevated windows (Task Manager, installers) run `aujar-mwb` as
+administrator. The lock screen, UAC prompts and Ctrl+Alt+Del are out of reach. The first time the
+agent listens, Windows Defender Firewall asks whether to allow it on private networks: allow it.
+
+`aujar mwb status`/`aujar-mwb status` tells you exactly what is missing (no permission, no `uinput`, no
 `wl-clipboard`…). A machine that cannot capture input can still be *controlled* by others.
+
+## Checking your setup and the audit log
+
+```bash
+aujar-mwb doctor        # (or `aujar mwb doctor`) is this machine ready? what to do if not
+aujar-mwb audit -n 30   # the last 30 audit entries
+```
+
+`doctor` checks the layout, the key, the network, the port, the folders and the platform's
+permissions, and prints a concrete fix for each problem; it exits with an error if anything
+blocks Mouse Borders, so scripts and deployment tools can use it.
+
+The **audit log** (`mouse-borders-audit.log` in the state directory, JSON lines) records who
+connected or was refused and why, when control moved between machines, when another machine took
+control of this one, clipboard transfers (kind and size), files offered, received or refused,
+remote locks (and whether they were allowed), and key changes. It never records clipboard
+contents, keystrokes, file contents or the key. It is private to your user, rotates at 5 MiB
+(three old files are kept), and can be switched off with `audit_log = false`.
 
 ## Security
 
@@ -158,7 +239,12 @@ sudo usermod -aG input "$USER"      # then log out and back in
 * **Clipboard.** Shared only with the machine you are crossing to, never broadcast. Content the
   source application marks as a password-manager secret is never read. `share_clipboard = false`
   turns it off.
+* **Audit trail.** Connections, refusals, hand-offs, transfers, locks and key changes are logged
+  ([above](#checking-your-setup-and-the-audit-log)).
 * **Remote lock** can be refused with `allow_remote_lock = false`.
+* **Local control channel.** The agent's command line talks to it over a socket in your runtime
+  directory (mode `0600`, other users refused) or a per-user Windows named pipe that refuses
+  remote clients.
 * **What a paired machine can do.** The key is the trust boundary: a connected machine can type
   and click on yours while you are crossing to it. Only pair machines you control, and use
   `aujar mwb key generate --force` (then `key set` everywhere) to cut off a lost one.
@@ -216,7 +302,13 @@ to work for that user. Logs: `journalctl -u aujar-mouse-borders`.
 
 ## Limitations
 
-* Aujar to Aujar on Linux; keys are Linux key codes, so other operating systems are out.
+* Aujar to Aujar. Keys travel as physical-key positions (USB HID), so the receiving machine's
+  keyboard layout decides what is typed; keys a platform lacks (Print Screen on a Mac) are not forwarded.
+* macOS and Windows are compiled and unit-tested, **not yet run on real machines** ([Platforms](#platforms)).
+* Scrolling follows each system's own direction setting ("natural scrolling"), so a scroll may feel
+  reversed on one of the machines.
+* The login screen and elevated windows can only be shared on Linux (service mode) or with an
+  elevated Windows agent.
 * Touchpads: motion and physical buttons work while controlling another machine; tap-to-click,
   scrolling and gestures are done in software by the desktop and do not cross over.
 * Multi-monitor: each machine is treated as one rectangle covering its monitors. Gaps in an
@@ -241,7 +333,11 @@ everything that touches the desktop is behind a trait:
 | `engine`, `link` | One actor owning all state; connections with two lanes (input first, files after) |
 | `transfer`, `clipboard` | Safe file receive and clipboard reassembly |
 | `service` | Watches settings and key, runs or restarts the engine, is the runtime `Module` |
-| `backend` | Traits, in-memory backends for tests, and `backend::linux` (evdev, uinput, X11, CLI clipboard) |
+| `backend` | Traits and in-memory backends for tests; `backend::linux` (evdev, uinput, X11), `backend::windows` (hooks, `SendInput`), `backend::macos` (event tap, Quartz) |
+| `keymap`, `input` | One table of physical keys (USB HID, Linux, Windows, macOS codes) and the neutral button type |
+| `backend::winput`, `backend::macinput` | The Windows and macOS decisions, free of OS APIs so they are tested everywhere |
+| `control` | The agent's local control channel (Unix socket / Windows named pipe) |
+| `audit`, `doctor`, `autostart` | Audit log, preflight checks, start-at-login for each OS |
 
 While you control another machine, the controlling side tracks a *virtual* cursor over that
 machine's screen, so switching back never depends on the remote pointer acceleration.

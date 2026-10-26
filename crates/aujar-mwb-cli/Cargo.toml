@@ -1,0 +1,19 @@
+[package]
+name = "aujar-mwb-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The `mwb` command line shared by `aujar mwb` and the standalone `aujar-mwb` agent"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+aujar-config = { path = "../aujar-config" }
+aujar-mouse-borders = { path = "../../modules/mouse-borders", default-features = false }
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

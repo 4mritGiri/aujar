@@ -24,7 +24,7 @@ pub use dictionary::DictionaryProvider;
 pub use files::FilesProvider;
 pub use icons::resolve_icon;
 pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
-pub use nepse::{NepseProvider, spawn_alert_watcher as spawn_nepse_alert_watcher};
+pub use nepse::NepseProvider;
 pub use ranking::{score, score_lowered, score_strict};
 pub use shell::ShellProvider;
 pub use sports::SportsProvider;

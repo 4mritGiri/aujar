@@ -16,6 +16,8 @@ use evdev::{
 use crate::{
     backend::InputSink,
     error::{Error, Result},
+    input::Button,
+    keymap,
     keys::KEY_F15,
 };
 
@@ -48,12 +50,13 @@ impl UinputSink {
     pub fn new(screen: Size) -> Result<Self> {
         let mut keys = AttributeSet::<KeyCode>::new();
 
-        for code in 1..=255u16 {
+        // Only the keys and buttons we can forward need to exist on the virtual device.
+        for code in keymap::KEYS.iter().filter_map(|key| key.evdev) {
             keys.insert(KeyCode::new(code));
         }
 
-        for code in 0x110..=0x117u16 {
-            keys.insert(KeyCode::new(code));
+        for button in Button::ALL {
+            keys.insert(KeyCode::new(super::button_to_evdev(button)));
         }
 
         let mut relative = AttributeSet::<RelativeAxisCode>::new();
@@ -157,8 +160,12 @@ impl InputSink for UinputSink {
         self.emit_main(&events)
     }
 
-    fn button(&mut self, code: u16, pressed: bool) -> Result<()> {
-        self.emit_main(&[event(EventType::KEY, code, i32::from(pressed))])
+    fn button(&mut self, button: Button, pressed: bool) -> Result<()> {
+        self.emit_main(&[event(
+            EventType::KEY,
+            super::button_to_evdev(button),
+            i32::from(pressed),
+        )])
     }
 
     fn wheel(&mut self, horizontal: i32, vertical: i32) -> Result<()> {
@@ -204,7 +211,14 @@ impl InputSink for UinputSink {
         self.emit_main(&events)
     }
 
-    fn key(&mut self, code: u16, pressed: bool) -> Result<()> {
+    fn key(&mut self, key: u16, pressed: bool) -> Result<()> {
+        let code = keymap::to_evdev(key).ok_or_else(|| {
+            Error::unsupported(
+                "input injection",
+                format!("the key {} has no Linux equivalent", keymap::name(key)),
+            )
+        })?;
+
         self.emit_main(&[event(EventType::KEY, code, i32::from(pressed))])
     }
 

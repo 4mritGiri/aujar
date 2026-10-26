@@ -1,9 +1,18 @@
 //! Mouse Without Borders for Aujar.
+pub mod api;
+pub mod audit;
+pub mod autostart;
 pub mod backend;
 pub mod clipboard;
 pub mod config;
+pub mod control;
+pub mod doctor;
 pub mod engine;
 pub mod error;
+pub mod fsutil;
+pub mod image_codec;
+pub mod input;
+pub mod keymap;
 pub mod keys;
 pub mod keystore;
 pub mod layout;

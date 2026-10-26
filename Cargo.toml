@@ -5,12 +5,14 @@ members = [
     "crates/aujar-core",
     "crates/aujar-config",
     "crates/aujar-ipc",
+    "crates/aujar-mwb-cli",
     "crates/aujar-platform",
     "crates/aujar-hotkeys",
     "crates/aujar-daemon",
     "crates/aujar-plugin",
     "crates/aujar-runtime",
     "apps/aujar-launcher",
+    "apps/aujar-mwb",
     # The GPUI launcher UI is a member (so `cargo run -p aujar-ui --release` works) but NOT a
     # default member: plain `cargo build` / `cargo check` skip it and need no GPU or
     # windowing libraries. CI and `just check` pass `--exclude aujar-ui` for `--workspace`.
@@ -31,11 +33,13 @@ default-members = [
     "crates/aujar-core",
     "crates/aujar-config",
     "crates/aujar-ipc",
+    "crates/aujar-mwb-cli",
     "crates/aujar-platform",
     "crates/aujar-hotkeys",
     "crates/aujar-daemon",
     "crates/aujar-plugin",
     "apps/aujar-launcher",
+    "apps/aujar-mwb",
     "modules/launcher",
     "modules/window",
     "modules/zones",

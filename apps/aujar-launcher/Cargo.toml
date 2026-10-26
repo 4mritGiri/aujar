@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 aujar-config = { path = "../../crates/aujar-config" }
@@ -22,6 +23,7 @@ aujar-daemon = { path = "../../crates/aujar-daemon" }
 aujar-ipc = { path = "../../crates/aujar-ipc" }
 aujar-launcher = { path = "../../modules/launcher" }
 aujar-mouse-borders = { path = "../../modules/mouse-borders" }
+aujar-mwb-cli = { path = "../../crates/aujar-mwb-cli" }
 aujar-rename = { path = "../../modules/rename" }
 tokio.workspace = true
 tracing.workspace = true

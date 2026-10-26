@@ -24,6 +24,7 @@ use super::uinput_sink::VIRTUAL_PREFIX;
 use crate::{
     backend::{CapturedInput, InputSource},
     error::{Error, Result},
+    keymap,
 };
 
 const INPUT_DIR: &str = "/dev/input";
@@ -166,10 +167,15 @@ impl Tracked {
                         }
                     }
                     BTN_MOUSE_FIRST..=BTN_MOUSE_LAST => {
-                        out.push_back(CapturedInput::Button { code, pressed });
+                        if let Some(button) = super::button_from_evdev(code) {
+                            out.push_back(CapturedInput::Button { button, pressed });
+                        }
                     }
                     code if code < BTN_MISC => {
-                        out.push_back(CapturedInput::Key { code, pressed });
+                        // Keys with no neutral equivalent are not forwarded.
+                        if let Some(key) = keymap::from_evdev(code) {
+                            out.push_back(CapturedInput::Key { key, pressed });
+                        }
                     }
                     _ => {}
                 }

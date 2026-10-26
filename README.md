@@ -34,7 +34,7 @@ Something not working? Run `aujar doctor` and see [docs/TROUBLESHOOTING.md](docs
 |---|---|
 | [Feature matrix](docs/FEATURE_MATRIX.md) | What is done / planned, per compositor |
 | [Architecture](docs/ARCHITECTURE.md) | Design principles and layout |
-| [Mouse Borders](docs/MOUSE_BORDERS.md) | One keyboard and mouse across up to four machines |
+| [Mouse Borders](docs/MOUSE_BORDERS.md) | One keyboard and mouse across up to four Linux, macOS and Windows machines |
 | [Roadmap](docs/ROADMAP.md) | Milestones |
 | [Threat model](docs/THREAT_MODEL.md) | Security assumptions |
 | [Packaging](docs/PACKAGING.md) | Distro packaging plans |

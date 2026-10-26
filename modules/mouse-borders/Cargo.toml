@@ -17,15 +17,42 @@ aujar-config = { path = "../../crates/aujar-config" }
 aujar-core = { path = "../../crates/aujar-core" }
 aujar-runtime = { path = "../../crates/aujar-runtime" }
 getrandom = "0.3"
+gethostname = "1"
 if-addrs = "0.13"
+png = "0.17"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 serde.workspace = true
+serde_json.workspace = true
 sha2 = "0.10"
-snow = "0.10"
+# Pure-Rust primitives only (no `ring`, so no C toolchain is needed on Windows or macOS).
+snow = { version = "0.10", default-features = false, features = ["default-resolver", "use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tracing.workspace = true
 zeroize = { version = "1", features = ["derive"] }
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+# Clipboard access where there are no command-line tools to lean on.
+arboard = { version = "3", default-features = false, features = ["image-data"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = { version = "0.25", features = ["highsierra"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSString", "NSArray"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Shutdown",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = { version = "0.13", features = ["tokio"], optional = true }

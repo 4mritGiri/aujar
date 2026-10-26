@@ -1,7 +1,8 @@
-//! Linux key codes, modifier tracking and the `Ctrl+Alt+<key>` shortcuts.
+//! Modifier tracking and the `Ctrl+Alt+<key>` shortcuts.
 //!
-//! Codes are the kernel's `KEY_*` values: physical key positions, not characters, so a
-//! shortcut letter means the same key on QWERTY and AZERTY layouts alike.
+//! Keys are USB HID usages (see [`crate::keymap`]): physical key positions, not characters,
+//! so a shortcut letter means the same key on QWERTY and AZERTY layouts alike, and on every
+//! operating system. "Alt" is Option on a Mac and "Meta" is the Windows key or Command.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -9,44 +10,31 @@ use aujar_config::{MouseBordersHotkeys, SwitchKeys};
 
 use crate::error::{Error, Result};
 
-pub const KEY_ESC: u16 = 1;
-pub const KEY_LEFTCTRL: u16 = 29;
-pub const KEY_LEFTSHIFT: u16 = 42;
-pub const KEY_RIGHTSHIFT: u16 = 54;
-pub const KEY_LEFTALT: u16 = 56;
-pub const KEY_RIGHTCTRL: u16 = 97;
-pub const KEY_RIGHTALT: u16 = 100;
-pub const KEY_LEFTMETA: u16 = 125;
-pub const KEY_RIGHTMETA: u16 = 126;
+pub const KEY_ESC: u16 = 0x29;
+pub const KEY_LEFTCTRL: u16 = 0xE0;
+pub const KEY_LEFTSHIFT: u16 = 0xE1;
+pub const KEY_LEFTALT: u16 = 0xE2;
+pub const KEY_LEFTMETA: u16 = 0xE3;
+pub const KEY_RIGHTCTRL: u16 = 0xE4;
+pub const KEY_RIGHTSHIFT: u16 = 0xE5;
+pub const KEY_RIGHTALT: u16 = 0xE6;
+pub const KEY_RIGHTMETA: u16 = 0xE7;
 /// Harmless key used to reset idle timers (see [`crate::backend::InputSink::nudge`]).
-pub const KEY_F15: u16 = 186;
+pub const KEY_F15: u16 = 0x6A;
 
-/// Row-major QWERTY positions for `a`..`z`, indexed by letter.
-const LETTER_CODES: [u16; 26] = [
-    30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45,
-    21, 44,
-];
-
-/// `KEY_1`..`KEY_9`, `KEY_0`.
-const DIGIT_CODES: [u16; 10] = [11, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-const FUNCTION_CODES: [u16; 12] = [59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 87, 88];
-
-/// Key code for an ASCII letter or digit (case-insensitive).
+/// HID usage for an ASCII letter or digit (case-insensitive).
 pub fn char_code(c: char) -> Option<u16> {
     match c.to_ascii_lowercase() {
-        c @ 'a'..='z' => Some(LETTER_CODES[usize::from(c as u8 - b'a')]),
-        c @ '0'..='9' => Some(DIGIT_CODES[usize::from(c as u8 - b'0')]),
+        c @ 'a'..='z' => Some(0x04 + u16::from(c as u8 - b'a')),
+        c @ '1'..='9' => Some(0x1E + u16::from(c as u8 - b'1')),
+        '0' => Some(0x27),
         _ => None,
     }
 }
 
-/// Key code of `F<n>`, `n` in `1..=12`.
+/// HID usage of `F<n>`, `n` in `1..=12`.
 pub fn function_code(n: u8) -> Option<u16> {
-    usize::from(n)
-        .checked_sub(1)
-        .and_then(|i| FUNCTION_CODES.get(i))
-        .copied()
+    (1..=12).contains(&n).then(|| 0x3A + u16::from(n) - 1)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -194,15 +182,16 @@ mod tests {
 
     #[test]
     fn key_code_tables_match_the_kernel() {
-        // KEY_A=30, KEY_Z=44, KEY_Q=16, KEY_M=50, KEY_1=2, KEY_0=11, KEY_F1=59, KEY_F11=87.
-        assert_eq!(char_code('a'), Some(30));
-        assert_eq!(char_code('Z'), Some(44));
-        assert_eq!(char_code('q'), Some(16));
-        assert_eq!(char_code('m'), Some(50));
-        assert_eq!(char_code('1'), Some(2));
-        assert_eq!(char_code('0'), Some(11));
-        assert_eq!(function_code(1), Some(59));
-        assert_eq!(function_code(11), Some(87));
+        // USB HID usages: A=0x04, Z=0x1D, Q=0x14, M=0x10, 1=0x1E, 0=0x27, F1=0x3A, F11=0x44.
+        assert_eq!(char_code('a'), Some(0x04));
+        assert_eq!(char_code('Z'), Some(0x1D));
+        assert_eq!(char_code('q'), Some(0x14));
+        assert_eq!(char_code('m'), Some(0x10));
+        assert_eq!(char_code('1'), Some(0x1E));
+        assert_eq!(char_code('0'), Some(0x27));
+        assert_eq!(function_code(1), Some(0x3A));
+        assert_eq!(function_code(11), Some(0x44));
+        assert_eq!(function_code(13), None);
         assert_eq!(function_code(0), None);
         assert_eq!(char_code('-'), None);
     }
@@ -290,11 +279,11 @@ mod tests {
 
         tracker.update(KEY_RIGHTCTRL, true);
         tracker.update(KEY_LEFTALT, true);
-        tracker.update(30, true);
+        tracker.update(0x04, true);
 
         assert!(tracker.modifiers().ctrl && tracker.modifiers().alt);
         assert!(!tracker.modifiers().shift);
-        assert_eq!(tracker.held(), [30, 56, 97]);
+        assert_eq!(tracker.held(), [0x04, KEY_LEFTALT, KEY_RIGHTCTRL]);
 
         tracker.update(KEY_RIGHTCTRL, false);
         assert!(!tracker.modifiers().ctrl);

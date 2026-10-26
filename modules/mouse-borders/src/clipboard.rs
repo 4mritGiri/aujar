@@ -17,6 +17,14 @@ fn payload(content: &ClipboardContent) -> (ClipboardKind, &[u8]) {
     }
 }
 
+/// What kind of content this is and how big, for logs. Never the content itself.
+pub fn describe(content: &ClipboardContent) -> (&'static str, u64) {
+    match content {
+        ClipboardContent::Text(text) => ("text", text.len() as u64),
+        ClipboardContent::Png(bytes) => ("image", bytes.len() as u64),
+    }
+}
+
 /// Hash that identifies a clipboard value, used to avoid echoing it back and forth.
 pub fn fingerprint(content: &ClipboardContent) -> [u8; 32] {
     let (kind, bytes) = payload(content);
@@ -195,6 +203,12 @@ mod tests {
         ] {
             assert_eq!(transfer(&content).unwrap(), Some(content));
         }
+    }
+
+    #[test]
+    fn descriptions_never_include_the_content() {
+        assert_eq!(describe(&text("secret")), ("text", 6));
+        assert_eq!(describe(&png(10)), ("image", PNG_MAGIC.len() as u64 + 10));
     }
 
     #[test]
