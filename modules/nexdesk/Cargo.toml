@@ -1,0 +1,18 @@
+[package]
+name = "aujar-nexdesk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Launch and supervise the NexDesk remote-access suite from Aujar (separate process, no secrets pass through Aujar)"
+
+[dependencies]
+async-trait.workspace = true
+aujar-runtime = { path = "../../crates/aujar-runtime" }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+serde_json.workspace = true
