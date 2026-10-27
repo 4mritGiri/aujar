@@ -71,6 +71,8 @@ enum UiMessage {
     OpenSettings,
     /// New text on the system clipboard (from the watcher thread).
     Clipboard(String),
+    /// "Clear history" in the clipboard view.
+    ClearClips,
     /// Recently used files (file history) for the empty launcher.
     RecentFiles(Vec<SearchHit>),
     /// A PDF thumbnail finished rendering; redraw the preview.
@@ -355,7 +357,112 @@ fn file_kind(path: &Path, is_dir: bool) -> String {
     }
 }
 
-fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
+/// One clipboard history entry.
+#[derive(Debug, Clone)]
+struct ClipEntry {
+    text: String,
+    /// Unix time in seconds.
+    copied_at: u64,
+}
+
+fn now_secs() -> u64 {
+    now_ms() / 1000
+}
+
+/// A moment on the local wall clock, for "Copied 4:19 PM".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Stamp {
+    year: i32,
+    /// Day of the year, 0 to 365.
+    yday: i32,
+    /// 0 is Sunday.
+    weekday: usize,
+    hour: u32,
+    minute: u32,
+}
+
+/// The local time of a Unix time, or `None` when the C library cannot say.
+fn local_stamp(secs: u64) -> Option<Stamp> {
+    let time = libc::time_t::try_from(secs).ok()?;
+
+    // SAFETY: `localtime_r` only reads `time` and fills in the `tm` we give it; an all-zero
+    // `tm` is a valid value.
+    let tm = unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+
+        if libc::localtime_r(&time, &mut tm).is_null() {
+            return None;
+        }
+
+        tm
+    };
+
+    Some(Stamp {
+        year: tm.tm_year + 1900,
+        yday: tm.tm_yday,
+        weekday: usize::try_from(tm.tm_wday).ok()? % 7,
+        hour: u32::try_from(tm.tm_hour).ok()?,
+        minute: u32::try_from(tm.tm_min).ok()?,
+    })
+}
+
+/// `4:19 PM`.
+fn clock_text(hour: u32, minute: u32) -> String {
+    let hour12 = match hour % 12 {
+        0 => 12,
+        other => other,
+    };
+
+    format!(
+        "{hour12}:{minute:02} {}",
+        if hour < 12 { "AM" } else { "PM" }
+    )
+}
+
+/// When something was copied, as a person says it: `4:19 PM` today, `yesterday 4:19 PM`,
+/// `Mon 4:19 PM` this week, `3 days ago` after that. Falls back to the age when the local
+/// time is unknown.
+fn copied_text(now: Option<Stamp>, then: Option<Stamp>, age: Duration) -> String {
+    const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    if age.as_secs() < 60 {
+        return "just now".to_owned();
+    }
+
+    let (Some(now), Some(then)) = (now, then) else {
+        return age_text(age);
+    };
+
+    let clock = clock_text(then.hour, then.minute);
+    let same_year = now.year == then.year;
+
+    if same_year && now.yday == then.yday {
+        clock
+    } else if (same_year && now.yday == then.yday + 1)
+        || (now.year == then.year + 1 && now.yday == 0 && then.yday >= 364)
+    {
+        format!("yesterday {clock}")
+    } else if age.as_secs() < 6 * 86_400 {
+        format!("{} {clock}", WEEKDAYS[then.weekday % 7])
+    } else {
+        age_text(age)
+    }
+}
+
+/// `en.wikipedia.org` from `https://en.wikipedia.org/wiki/X`.
+fn url_host(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host: String = rest
+        .chars()
+        .take_while(|c| !matches!(c, '/' | '?' | '#'))
+        .collect();
+
+    (!host.is_empty()).then_some(host)
+}
+
+fn build_preview(hit: &SearchHit, clips: &[ClipEntry]) -> Preview {
     let (badge, _) = kind_meta(&hit.kind);
 
     let mut preview = Preview {
@@ -459,17 +566,18 @@ fn build_preview(hit: &SearchHit, clips: &[String]) -> Preview {
             }
         }
         "clip" => {
-            let text = hit
+            let clip = hit
                 .id
                 .strip_prefix("clip:")
                 .and_then(|index| index.parse::<usize>().ok())
                 .and_then(|index| clips.get(index));
 
-            if let Some(text) = text {
-                preview
-                    .rows
-                    .push(("Length", format!("{} characters", text.chars().count())));
-                preview.text = Some(first_chars(text, 700));
+            if let Some(clip) = clip {
+                preview.rows.push((
+                    "Length",
+                    format!("{} characters", clip.text.chars().count()),
+                ));
+                preview.text = Some(first_chars(&clip.text, 700));
             }
         }
         "calculation" => {
@@ -604,6 +712,153 @@ const MENU_ROW_H: f32 = 32.0;
 
 // ---- Launcher view ----------------------------------------------------------------------
 
+/// The round buttons next to the search field (macOS Spotlight's Applications, Files, Actions
+/// and Clipboard). Each one types a query the launcher already understands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Quick {
+    Applications,
+    Files,
+    Actions,
+    Clipboard,
+}
+
+impl Quick {
+    const ALL: [Quick; 4] = [
+        Quick::Applications,
+        Quick::Files,
+        Quick::Actions,
+        Quick::Clipboard,
+    ];
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Applications => "icons/app.svg",
+            Self::Files => "icons/folder.svg",
+            Self::Actions => "icons/layers.svg",
+            Self::Clipboard => "icons/clipboard.svg",
+        }
+    }
+
+    /// What the search field shows while this button's query is active.
+    fn title(self) -> &'static str {
+        match self {
+            Self::Applications => "Applications",
+            Self::Files => "Recent Files",
+            Self::Actions => "Actions",
+            Self::Clipboard => "Clipboard",
+        }
+    }
+
+    /// The query this button types.
+    fn query(self) -> &'static str {
+        match self {
+            Self::Applications => "kind:app",
+            Self::Files => "kind:recent",
+            Self::Actions => "kind:action",
+            Self::Clipboard => "clip",
+        }
+    }
+}
+
+/// Results that the bar's grey " \u{2014} Title" and right-hand icon speak for: not the web-search
+/// row, clipboard entries, or inert rows (hints).
+fn speaks_in_the_bar(hit: &SearchHit) -> bool {
+    !matches!(hit.kind.as_str(), "web" | "clip") && !is_inert(&hit.kind)
+}
+
+/// The grey completion after the typed text, like Spotlight's "weather in carmel \u{2014} Weather":
+/// the title of the result Enter would open. Nothing when it only repeats what was typed.
+fn ghost_text(query: &str, hit: &SearchHit) -> Option<String> {
+    let query = query.trim();
+    let title = hit.title.trim();
+
+    if query.is_empty() || title.is_empty() || !speaks_in_the_bar(hit) {
+        return None;
+    }
+
+    if title.to_lowercase() == query.to_lowercase() {
+        return None;
+    }
+
+    Some(format!(" \u{2014} {}", first_chars(title, 40)))
+}
+
+/// Applications per row in the Applications grid.
+const GRID_COLS: usize = 5;
+
+/// The groups of the Applications grid, in the order their chips appear.
+const APP_GROUPS: [&str; 10] = [
+    "Internet",
+    "Productivity",
+    "Media",
+    "Graphics",
+    "Development",
+    "Games",
+    "Utilities",
+    "System",
+    "Education & Science",
+    "Other",
+];
+
+/// The grid group the daemon put on an application (`kind:app` results only).
+fn app_group(hit: &SearchHit) -> Option<&str> {
+    hit.detail.as_deref()?.strip_prefix("group:")
+}
+
+/// Queries that list everything of one kind. They get a longer list and no web search row.
+fn is_listing_query(lower: &str) -> bool {
+    matches!(lower, "kind:app" | "kind:action" | "kind:recent")
+        || lower.starts_with("kind:app ")
+        || lower.starts_with("kind:action ")
+}
+
+/// The query for the typed `text` inside a quick button's `scope`: `kind:app fire` for
+/// "fire" in Applications, the scope's own listing query while the text is empty, and the text
+/// unchanged when no scope is on.
+fn scoped_query(scope: Option<Quick>, text: &str) -> String {
+    let Some(scope) = scope else {
+        return text.to_owned();
+    };
+
+    let text = text.trim();
+
+    if text.is_empty() {
+        return scope.query().to_owned();
+    }
+
+    match scope {
+        Quick::Applications | Quick::Actions | Quick::Clipboard => {
+            format!("{} {text}", scope.query())
+        }
+        // Plain file search; `scope_keeps` then shows only files and folders.
+        Quick::Files => text.to_owned(),
+    }
+}
+
+/// Which results belong to a quick button's scope. Other providers also answer the same query;
+/// only these kinds are shown while the scope is on.
+fn scope_keeps(scope: Quick, kind: &str) -> bool {
+    match scope {
+        Quick::Applications => kind == "application",
+        Quick::Files => matches!(kind, "file" | "folder"),
+        Quick::Actions => matches!(kind, "system" | "action"),
+        Quick::Clipboard => true,
+    }
+}
+
+/// The chip under the search field for a section, when that section can be filtered to.
+fn chip_label(section: Section) -> Option<&'static str> {
+    match section {
+        Section::Applications => Some("Applications"),
+        Section::Windows => Some("Windows"),
+        Section::Commands => Some("Actions"),
+        Section::Files => Some("Files"),
+        Section::Clipboard => Some("Clipboard"),
+        Section::Web => Some("Web"),
+        _ => None,
+    }
+}
+
 struct LauncherView {
     query: String,
     /// Selection anchor and caret: byte offsets into `query`, always on character boundaries.
@@ -618,6 +873,16 @@ struct LauncherView {
     results: Vec<SearchHit>,
     /// Section of each result, same length as `results`.
     sections: Vec<Section>,
+    /// Everything the last search returned, before the chip filter (same lengths as each other).
+    all_hits: Vec<SearchHit>,
+    all_sections: Vec<Section>,
+    /// The chip under the search field that narrows the results; `None` is "All".
+    chip: Option<Section>,
+    /// The group chip of the Applications grid; `None` is "All".
+    group: Option<String>,
+    /// The round button whose scope is on. It stays on while you type: the text then searches
+    /// inside it (Spotlight's Applications, Files, Actions and Clipboard views).
+    scope: Option<Quick>,
     /// Index of each result among the list's child elements (section headers count).
     row_index: Vec<usize>,
     scroll: ScrollHandle,
@@ -637,7 +902,7 @@ struct LauncherView {
     /// File history from the daemon (`kind:recent`), for the empty launcher.
     recent_files: Vec<SearchHit>,
     /// Snapshot of the clipboard history taken when the launcher opened (newest first).
-    clips: Vec<String>,
+    clips: Vec<ClipEntry>,
     requests: async_channel::Sender<UiRequest>,
     focus_handle: FocusHandle,
     /// Window position when the launcher opened, and the latest one (whole pixels), used to
@@ -678,7 +943,7 @@ impl LauncherView {
     fn new(
         requests: async_channel::Sender<UiRequest>,
         settings: Settings,
-        clips: Vec<String>,
+        clips: Vec<ClipEntry>,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut view = Self {
@@ -690,6 +955,11 @@ impl LauncherView {
             drag_anchor: None,
             results: Vec::new(),
             sections: Vec::new(),
+            all_hits: Vec::new(),
+            all_sections: Vec::new(),
+            chip: None,
+            group: None,
+            scope: None,
             row_index: Vec::new(),
             scroll: ScrollHandle::new(),
             preview_scroll: ScrollHandle::new(),
@@ -902,7 +1172,7 @@ impl LauncherView {
             return None;
         }
 
-        let lower = self.query.trim().to_lowercase();
+        let lower = self.search_text().trim().to_lowercase();
 
         for keyword in ["clip", "cb"] {
             if lower == keyword {
@@ -927,7 +1197,10 @@ impl LauncherView {
         self.confirming = None;
         self.menu = None;
 
-        if self.query.trim().is_empty() {
+        let query = self.search_text();
+
+        if query.trim().is_empty() {
+            self.chip = None;
             self.show_empty_state();
             return;
         }
@@ -937,25 +1210,75 @@ impl LauncherView {
             return;
         }
 
-        let _ = self.requests.try_send(UiRequest::Search {
-            query: self.query.clone(),
-            attempt: 0,
-        });
+        let _ = self.requests.try_send(UiRequest::Search { query, attempt: 0 });
     }
 
     fn install(&mut self, hits: Vec<SearchHit>, sections: Vec<Section>) {
-        // Where each result sits among the list's children (a header precedes each section).
-        let mut headers = 0;
-        let mut previous = None;
+        self.all_hits = hits.clone();
+        self.all_sections = sections.clone();
+
+        // A chip that the new results no longer have falls back to "All".
+        let chip_gone = self.chip.is_some_and(|chip| {
+            !self
+                .all_hits
+                .iter()
+                .any(|hit| section_of(&hit.kind) == chip)
+        });
+
+        if chip_gone {
+            self.chip = None;
+        }
+
+        let (hits, sections): (Vec<SearchHit>, Vec<Section>) = match self.chip {
+            None => (hits, sections),
+            Some(chip) => hits
+                .into_iter()
+                .zip(sections)
+                .filter(|(hit, _)| section_of(&hit.kind) == chip)
+                .unzip(),
+        };
+
+        // The Applications grid has its own group chips.
+        let grid = self.is_grid_list(&self.all_hits);
+        let group_gone = !grid
+            || self.group.as_ref().is_some_and(|group| {
+                !self
+                    .all_hits
+                    .iter()
+                    .any(|hit| app_group(hit) == Some(group.as_str()))
+            });
+
+        if group_gone {
+            self.group = None;
+        }
+
+        let (hits, sections): (Vec<SearchHit>, Vec<Section>) = match &self.group {
+            None => (hits, sections),
+            Some(group) => hits
+                .into_iter()
+                .zip(sections)
+                .filter(|(hit, _)| app_group(hit) == Some(group.as_str()))
+                .unzip(),
+        };
+
+        // Where each result sits among the list's children. In the list, a header precedes
+        // each section; in the grid, one header precedes rows of `GRID_COLS` tiles.
         let mut row_index = Vec::with_capacity(sections.len());
 
-        for (index, section) in sections.iter().enumerate() {
-            if previous != Some(*section) {
-                headers += 1;
-                previous = Some(*section);
-            }
+        if grid {
+            row_index.extend((0..sections.len()).map(|index| 1 + index / GRID_COLS));
+        } else {
+            let mut headers = 0;
+            let mut previous = None;
 
-            row_index.push(index + headers);
+            for (index, section) in sections.iter().enumerate() {
+                if previous != Some(*section) {
+                    headers += 1;
+                    previous = Some(*section);
+                }
+
+                row_index.push(index + headers);
+            }
         }
 
         self.results = hits;
@@ -1066,21 +1389,40 @@ impl LauncherView {
 
     fn show_clips(&mut self, filter: &str) {
         let filter = filter.to_lowercase();
+        let now = now_secs();
+        let now_stamp = local_stamp(now);
 
         let hits: Vec<SearchHit> = self
             .clips
             .iter()
             .enumerate()
-            .filter(|(_, text)| filter.is_empty() || text.to_lowercase().contains(&filter))
-            .take(8)
-            .map(|(index, text)| SearchHit {
-                id: format!("clip:{index}"),
-                title: first_chars(text.lines().next().unwrap_or_default().trim(), 90),
-                subtitle: Some(format!("{} characters", text.chars().count())),
-                kind: "clip".to_owned(),
-                score: 0,
-                icon: None,
-                detail: None,
+            .filter(|(_, clip)| filter.is_empty() || clip.text.to_lowercase().contains(&filter))
+            .take(20)
+            .map(|(index, clip)| {
+                let first = clip.text.lines().next().unwrap_or_default().trim();
+                let is_url = is_web_url(first) && !first.contains(char::is_whitespace);
+                let age = Duration::from_secs(now.saturating_sub(clip.copied_at));
+                let copied = format!(
+                    "Copied {}",
+                    copied_text(now_stamp, local_stamp(clip.copied_at), age)
+                );
+
+                // "URL · en.wikipedia.org · Copied 4:17 PM", "Text · Copied 4:19 PM".
+                let subtitle = match (is_url, url_host(first)) {
+                    (true, Some(host)) => format!("URL \u{b7} {host} \u{b7} {copied}"),
+                    (true, None) => format!("URL \u{b7} {copied}"),
+                    (false, _) => format!("Text \u{b7} {copied}"),
+                };
+
+                SearchHit {
+                    id: format!("clip:{index}"),
+                    title: first_chars(first, 90),
+                    subtitle: Some(subtitle),
+                    kind: "clip".to_owned(),
+                    score: 0,
+                    icon: None,
+                    detail: None,
+                }
             })
             .collect();
 
@@ -1098,9 +1440,16 @@ impl LauncherView {
 
     /// Add the UI-side results (settings, web), group into sections and cap each section.
     fn set_results(&mut self, mut hits: Vec<SearchHit>) {
-        let query = self.query.trim().to_owned();
+        let query = self.search_text().trim().to_owned();
         let lower = query.to_lowercase();
         let is_shell = query.starts_with('>');
+
+        // Inside a scope the list is the whole point: no web row, no top hit, no section caps.
+        let listing = self.scope.is_some() || is_listing_query(&lower);
+
+        if let Some(scope) = self.scope {
+            hits.retain(|hit| scope_keeps(scope, &hit.kind));
+        }
 
         if !is_shell && lower.len() >= 3 && "aujar settings preferences".contains(&lower) {
             hits.push(SearchHit {
@@ -1114,7 +1463,7 @@ impl LauncherView {
             });
         }
 
-        if !is_shell && !query.is_empty() {
+        if !is_shell && !listing && !query.is_empty() {
             let engine = self.settings.web.engine;
             let mut web = Vec::new();
 
@@ -1163,7 +1512,12 @@ impl LauncherView {
         let history = &self.history;
 
         hits.sort_by_key(|hit| {
-            let boost = 150 * history.count_of(&hit.id).min(5);
+            // A listing keeps the daemon's order (A to Z); usage must not reshuffle it.
+            let boost = if listing {
+                0
+            } else {
+                150 * history.count_of(&hit.id).min(5)
+            };
 
             (
                 section_of(&hit.kind) as usize,
@@ -1176,7 +1530,11 @@ impl LauncherView {
 
         hits.retain(|hit| {
             let section = section_of(&hit.kind);
-            let cap = match section {
+            let cap = if listing {
+                // A listing is the whole point of the query: the daemon already limits it.
+                usize::MAX
+            } else {
+                match section {
                 Section::Answer => 2,
                 Section::Lookup => 6,
                 Section::Windows => 8,
@@ -1189,6 +1547,7 @@ impl LauncherView {
                 | Section::Frequent
                 | Section::TopHit
                 | Section::Clipboard => usize::MAX,
+                }
             };
 
             counts[section as usize] += 1;
@@ -1199,7 +1558,7 @@ impl LauncherView {
 
         // Top Hit (like Spotlight): one strong application/command match, shown first.
         // Skipped when there is an Answer: that already is the top result.
-        if !sections.contains(&Section::Answer) {
+        if !listing && !sections.contains(&Section::Answer) {
             let best = hits
                 .iter()
                 .enumerate()
@@ -1250,13 +1609,13 @@ impl LauncherView {
             return url.to_owned();
         }
 
-        if let Some(text) = hit
+        if let Some(clip) = hit
             .id
             .strip_prefix("clip:")
             .and_then(|index| index.parse::<usize>().ok())
             .and_then(|index| self.clips.get(index))
         {
-            return text.clone();
+            return clip.text.clone();
         }
 
         match hit.kind.as_str() {
@@ -1439,6 +1798,34 @@ impl LauncherView {
         if key == "menu" || (key == "f10" && shift) {
             self.open_menu(self.selected, None, cx);
             return;
+        }
+
+        // Backspace on an empty field takes the scope off (Spotlight's behaviour). With text in
+        // the field, typing and deleting edit the text and search inside the scope.
+        if self.scope.is_some()
+            && self.query.is_empty()
+            && !ctrl
+            && !alt
+            && matches!(key, "backspace" | "delete")
+        {
+            self.clear_scope(cx);
+            return;
+        }
+
+        // The Applications grid: arrows move across and down the tiles.
+        if self.grid_active() && !ctrl && !alt && !shift {
+            let step = match key {
+                "left" => Some(-1),
+                "right" => Some(1),
+                "up" => Some(-(GRID_COLS as isize)),
+                "down" => Some(GRID_COLS as isize),
+                _ => None,
+            };
+
+            if let Some(step) = step {
+                self.move_grid_selection(step, cx);
+                return;
+            }
         }
 
         // Alt+1..9 launches that row directly (Spotlight's Cmd+1..9).
@@ -2002,6 +2389,29 @@ impl LauncherView {
             hit.subtitle.clone()
         };
 
+        // Clipboard rows get a visible copy button, like Spotlight's.
+        let copy_button = (hit.kind == "clip").then(|| {
+            rounded_px(div(), 14.)
+                .id(SharedString::from(format!("clip-copy-{index}")))
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(28.))
+                .flex_shrink_0()
+                .bg(rgba(if selected { 0xffffff33 } else { pal.pill }))
+                .hover(|style| style.bg(rgba(pal.hover)))
+                .child(self.glyph(
+                    "icons/clipboard.svg",
+                    14.,
+                    if selected { pal.on_accent } else { pal.text_dim },
+                ))
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    cx.stop_propagation();
+                    this.selected = index;
+                    this.launch_selected(false, window, cx);
+                }))
+        });
+
         base.py_2()
             .child(self.leading(hit, 32.))
             .child(
@@ -2028,6 +2438,7 @@ impl LauncherView {
                     }),
             )
             .child(trailing)
+            .when_some(copy_button, |this, button| this.child(button))
             .into_any_element()
     }
 
@@ -2612,6 +3023,20 @@ impl LauncherView {
                 this.mouse_drag_to(end, event.pressed_button == Some(MouseButton::Left), cx);
             }));
 
+        // "Applications" waits in the empty field, like a placeholder, until you type.
+        if let Some(quick) = self.scope.filter(|_| self.query.is_empty()) {
+            return field
+                .child(caret())
+                .child(
+                    div()
+                        .pl_1()
+                        .text_color(rgb(pal.text_dim))
+                        .child(quick.title()),
+                )
+                .child(filler)
+                .into_any_element();
+        }
+
         if self.query.is_empty() {
             return field
                 .child(caret())
@@ -2655,6 +3080,19 @@ impl LauncherView {
                 )
         };
 
+        let ghost = self
+            .bar_hit()
+            .and_then(|hit| ghost_text(&self.query, hit))
+            .map(|text| {
+                div()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .text_lg()
+                    .text_color(rgb(pal.text_faint))
+                    .child(text)
+                    .into_any_element()
+            });
+
         let mut parts: Vec<AnyElement> = Vec::new();
 
         for (start, c) in self.query.char_indices() {
@@ -2684,7 +3122,446 @@ impl LauncherView {
             parts.push(caret().into_any_element());
         }
 
-        field.children(parts).child(filler).into_any_element()
+        field
+            .children(parts)
+            .children(ghost)
+            .child(filler)
+            .into_any_element()
+    }
+}
+
+// ---- Quick buttons and chips ------------------------------------------------------------
+
+impl LauncherView {
+    /// The quick button whose scope is on, if any.
+    fn active_quick(&self) -> Option<Quick> {
+        self.scope
+    }
+
+    /// What the daemon is asked: the typed text, behind the scope's prefix (`kind:app fire`).
+    fn search_text(&self) -> String {
+        scoped_query(self.scope, &self.query)
+    }
+
+    fn set_scope(&mut self, quick: Quick, cx: &mut Context<Self>) {
+        self.scope = Some(quick);
+        self.chip = None;
+        self.group = None;
+        self.edited(cx);
+    }
+
+    fn clear_scope(&mut self, cx: &mut Context<Self>) {
+        self.scope = None;
+        self.chip = None;
+        self.group = None;
+        self.edited(cx);
+    }
+
+    /// A round button was pressed: type its query, or clear it when it is already showing.
+    fn quick_action(&mut self, quick: Quick, cx: &mut Context<Self>) {
+        if self.scope == Some(quick) {
+            self.clear_scope(cx);
+            return;
+        }
+
+        if quick == Quick::Clipboard && !self.settings.plugins.clipboard {
+            self.notice = Some(
+                "Clipboard history is off. Turn it on in Settings, under Search plugins."
+                    .to_owned(),
+            );
+            cx.notify();
+            return;
+        }
+
+        self.set_scope(quick, cx);
+    }
+
+    fn render_quick_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let pal = self.palette;
+        let active = self.active_quick();
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .flex_shrink_0()
+            .children(Quick::ALL.into_iter().map(|quick| {
+                let on = active == Some(quick);
+
+                rounded_px(div(), 26.)
+                    .id(SharedString::from(format!("quick-{quick:?}")))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(52.))
+                    .flex_shrink_0()
+                    .border_1()
+                    .cursor_pointer()
+                    .when(on, |this| {
+                        this.bg(rgba(pal.accent_soft)).border_color(rgb(pal.accent))
+                    })
+                    .when(!on, |this| {
+                        this.bg(rgba(pal.card))
+                            .border_color(rgba(pal.border))
+                            .hover(|style| style.bg(rgba(pal.accent_soft)))
+                    })
+                    .child(self.glyph(
+                        quick.icon(),
+                        22.,
+                        if on { pal.accent_fg } else { pal.text_dim },
+                    ))
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.quick_action(quick, cx);
+                    }))
+            }))
+    }
+
+    /// The sections present in the last search that can be filtered to, in display order.
+    fn chip_sections(&self) -> Vec<Section> {
+        let mut found: Vec<Section> = Vec::new();
+
+        for hit in &self.all_hits {
+            let section = section_of(&hit.kind);
+
+            if chip_label(section).is_some() && !found.contains(&section) {
+                found.push(section);
+            }
+        }
+
+        found.sort_by_key(|section| *section as usize);
+        found
+    }
+
+    /// Narrow the results to one kind (`None` is "All").
+    fn select_chip(&mut self, chip: Option<Section>, cx: &mut Context<Self>) {
+        self.chip = chip;
+
+        let hits = self.all_hits.clone();
+        let sections = self.all_sections.clone();
+
+        self.install(hits, sections);
+        cx.notify();
+    }
+
+    /// The result Enter would open, when the bar should speak for it (grey title after the
+    /// text, its icon at the right end).
+    fn bar_hit(&self) -> Option<&SearchHit> {
+        if self.query.trim().is_empty() {
+            return None;
+        }
+
+        self.results
+            .get(self.selected)
+            .filter(|hit| speaks_in_the_bar(hit))
+    }
+
+    /// The quick button whose scope is on (the bar shows its icon instead of the magnifier).
+    fn scoped_quick(&self) -> Option<Quick> {
+        self.scope
+    }
+
+    /// Whether `hits` should be drawn as the Applications grid.
+    fn is_grid_list(&self, hits: &[SearchHit]) -> bool {
+        self.scoped_quick() == Some(Quick::Applications)
+            && !hits.is_empty()
+            && hits.iter().all(|hit| hit.kind == "application")
+    }
+
+    fn grid_active(&self) -> bool {
+        self.is_grid_list(&self.results)
+    }
+
+    /// Move the selection across (`+-1`) or down (`+-GRID_COLS`) the tiles, without wrapping.
+    fn move_grid_selection(&mut self, step: isize, cx: &mut Context<Self>) {
+        let last = self.results.len() as isize - 1;
+
+        if last >= 0 {
+            self.selected = (self.selected as isize + step).clamp(0, last) as usize;
+            self.confirming = None;
+            self.refresh_preview();
+            self.scroll_to_selected();
+            cx.notify();
+        }
+    }
+
+    /// One application of the grid: its icon above its name.
+    fn render_tile(&self, index: usize, hit: &SearchHit, cx: &mut Context<Self>) -> AnyElement {
+        let pal = self.palette;
+        let selected = index == self.selected;
+
+        div()
+            .id(SharedString::from(format!("tile-{index}")))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_1()
+            .flex_1()
+            .min_w(px(0.))
+            .px_1()
+            .py_2()
+            .rounded_xl()
+            .cursor_pointer()
+            .when(selected, |this| this.bg(rgb(pal.accent)))
+            .when(!selected, |this| {
+                this.hover(|style| style.bg(rgba(pal.hover)))
+            })
+            .child(self.leading(hit, 48.))
+            .child(
+                div()
+                    .w_full()
+                    .text_xs()
+                    .text_center()
+                    .truncate()
+                    .text_color(if selected {
+                        rgb(pal.on_accent)
+                    } else {
+                        rgb(pal.text)
+                    })
+                    .child(hit.title.clone()),
+            )
+            .on_click(cx.listener(move |this, _event, window, cx| {
+                this.selected = index;
+                this.launch_selected(false, window, cx);
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                    let at = (f32::from(event.position.x), f32::from(event.position.y));
+
+                    this.open_menu(index, Some(at), cx);
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// The Applications grid: a title, then rows of `GRID_COLS` tiles.
+    fn render_grid(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let pal = self.palette;
+        let mut rows: Vec<AnyElement> = vec![
+            div()
+                .px_5()
+                .pt_3()
+                .pb_1()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgb(pal.text_faint))
+                .child("Applications")
+                .into_any_element(),
+        ];
+
+        for (row, chunk) in self.results.chunks(GRID_COLS).enumerate() {
+            let mut line = div().flex().flex_row().gap_1().px_3();
+
+            for (offset, hit) in chunk.iter().enumerate() {
+                line = line.child(self.render_tile(row * GRID_COLS + offset, hit, cx));
+            }
+
+            // Keep the last row's tiles the same width as the others.
+            for _ in chunk.len()..GRID_COLS {
+                line = line.child(div().flex_1().min_w(px(0.)));
+            }
+
+            rows.push(line.into_any_element());
+        }
+
+        rows
+    }
+
+    /// Narrow the Applications grid to one group (`None` is "All").
+    fn select_group(&mut self, group: Option<String>, cx: &mut Context<Self>) {
+        self.group = group;
+
+        let hits = self.all_hits.clone();
+        let sections = self.all_sections.clone();
+
+        self.install(hits, sections);
+        cx.notify();
+    }
+
+    /// "All  Internet  Productivity ...": the group chips of the Applications grid.
+    fn render_group_chips(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let present: Vec<&'static str> = APP_GROUPS
+            .into_iter()
+            .filter(|group| self.all_hits.iter().any(|hit| app_group(hit) == Some(*group)))
+            .collect();
+
+        if present.len() < 2 {
+            return None;
+        }
+
+        let pal = self.palette;
+        let mut entries: Vec<(Option<&'static str>, &'static str)> = vec![(None, "All")];
+
+        entries.extend(present.into_iter().map(|group| (Some(group), group)));
+
+        let chips: Vec<AnyElement> = entries
+            .into_iter()
+            .map(|(group, label)| {
+                let on = self.group.as_deref() == group;
+
+                div()
+                    .id(SharedString::from(format!("group-{label}")))
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(on, |this| {
+                        this.bg(rgba(pal.accent_soft))
+                            .text_color(rgb(pal.accent_fg))
+                    })
+                    .when(!on, |this| {
+                        this.bg(rgba(pal.pill))
+                            .text_color(rgb(pal.text_dim))
+                            .hover(|style| style.bg(rgba(pal.hover)))
+                    })
+                    .child(label)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.select_group(group.map(str::to_owned), cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap_2()
+                .px_4()
+                .pt_3()
+                .pb_2()
+                .border_b_1()
+                .border_color(rgba(pal.divider))
+                .children(chips)
+                .into_any_element(),
+        )
+    }
+
+    /// "Clear history" in the clipboard view: forget every entry, here and in the app.
+    fn clear_clips(&mut self, cx: &mut Context<Self>) {
+        self.clips.clear();
+
+        if let Some(sender) = UI_SENDER.get() {
+            let _ = sender.try_send(UiMessage::ClearClips);
+        }
+
+        self.request_search();
+        cx.notify();
+    }
+
+    /// The title bar of the clipboard view: an icon, "Clipboard", and "Clear history".
+    fn render_clip_header(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.clip_filter()?;
+
+        let pal = self.palette;
+
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_5()
+                .pt_4()
+                .pb_2()
+                .child(self.glyph("icons/clipboard.svg", 18., pal.text_dim))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_base()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(rgb(pal.text))
+                        .child("Clipboard"),
+                )
+                .when(!self.clips.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .id("clip-clear")
+                            .px_3()
+                            .py_1()
+                            .rounded_full()
+                            .text_sm()
+                            .cursor_pointer()
+                            .bg(rgba(pal.pill))
+                            .text_color(rgb(pal.text_dim))
+                            .hover(|style| style.bg(rgba(pal.hover)))
+                            .child("Clear history")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.clear_clips(cx);
+                            })),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    /// "All  Applications  Files ...": only when the results hold more than one kind.
+    fn render_chips(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.is_grid_list(&self.all_hits) {
+            return self.render_group_chips(cx);
+        }
+
+        let sections = self.chip_sections();
+
+        if sections.len() < 2 {
+            return None;
+        }
+
+        let pal = self.palette;
+        let mut entries: Vec<(Option<Section>, &'static str)> = vec![(None, "All")];
+
+        entries.extend(
+            sections
+                .into_iter()
+                .filter_map(|section| chip_label(section).map(|label| (Some(section), label))),
+        );
+
+        let chips: Vec<AnyElement> = entries
+            .into_iter()
+            .map(|(section, label)| {
+                let on = self.chip == section;
+
+                div()
+                    .id(SharedString::from(format!("chip-{label}")))
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(on, |this| {
+                        this.bg(rgba(pal.accent_soft))
+                            .text_color(rgb(pal.accent_fg))
+                    })
+                    .when(!on, |this| {
+                        this.bg(rgba(pal.pill))
+                            .text_color(rgb(pal.text_dim))
+                            .hover(|style| style.bg(rgba(pal.hover)))
+                    })
+                    .child(label)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.select_chip(section, cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap_2()
+                .px_4()
+                .pt_3()
+                .pb_2()
+                .border_b_1()
+                .border_color(rgba(pal.divider))
+                .children(chips)
+                .into_any_element(),
+        )
     }
 }
 
@@ -2700,8 +3577,9 @@ impl Render for LauncherView {
 
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut last_section: Option<Section> = None;
+        let grid = self.grid_active();
 
-        for index in 0..self.results.len() {
+        for index in 0..(if grid { 0 } else { self.results.len() }) {
             let section = self.sections.get(index).copied().unwrap_or(Section::Web);
 
             if last_section != Some(section) {
@@ -2725,9 +3603,67 @@ impl Render for LauncherView {
             rows.push(self.render_row(index, hit, cx));
         }
 
+        if grid {
+            rows = self.render_grid(cx);
+        }
+
         let show_footer = self.settings.appearance.show_footer;
-        let preview = self.render_preview(cx);
+        let preview = if grid {
+            None
+        } else {
+            self.render_preview(cx)
+        };
         let menu = self.render_menu(cx);
+        let chips = self.render_chips(cx);
+        let clip_header = self.render_clip_header(cx);
+        let movable = self.settings.appearance.launcher_movable;
+
+        // Like Spotlight: with nothing to show, only the search field and its buttons remain.
+        let rows_empty = rows.is_empty();
+        let has_card = !rows_empty || self.notice.is_some() || self.status.is_some();
+
+        // The search field: a pill of its own, with the round quick buttons beside it.
+        let search_bar = rounded_px(div(), 26.)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .flex_1()
+            .min_w(px(0.))
+            .h(px(52.))
+            .px_5()
+            .bg(rgba(pal.card))
+            .border_1()
+            .border_color(rgba(pal.border))
+            .text_color(rgb(pal.text))
+            // Drag the bar (outside the text) to move the launcher.
+            .when(movable, |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_this, _event, window, _cx| begin_window_move(window)),
+                )
+            })
+            .child(match self.scoped_quick() {
+                // The active button's icon takes the place of the magnifier.
+                Some(quick) => self.glyph(quick.icon(), 20., pal.accent_fg),
+                None => self.glyph("icons/search.svg", 20., pal.text_faint),
+            })
+            .child(self.render_query(cx))
+            // The icon of the result Enter would open, like Spotlight's at the right of the bar.
+            .when_some(self.bar_hit(), |this, hit| {
+                this.child(self.leading(hit, 30.))
+            });
+
+        let search_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .w_full()
+            .child(search_bar)
+            .child(self.render_quick_buttons(cx));
+
+        // The results, in a card of their own below the search row.
         let card = rounded_px(div(), pal.radius)
             .flex()
             .flex_col()
@@ -2737,53 +3673,35 @@ impl Render for LauncherView {
             .border_color(rgba(pal.border))
             .overflow_hidden()
             .text_color(rgb(pal.text))
-            // The search bar.
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_3()
-                    .px_5()
-                    .py_4()
-                    // Drag the bar (outside the text) to move the launcher.
-                    .when(self.settings.appearance.launcher_movable, |this| {
-                        this.on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|_this, _event, window, _cx| begin_window_move(window)),
+            .when_some(clip_header, |this, header| this.child(header))
+            .when_some(chips, |this, chips| this.child(chips))
+            .when(!rows_empty, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .child(
+                            div()
+                                .id("results")
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .max_h(px(LIST_MAX_H))
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll)
+                                .pt_1()
+                                .pb_2()
+                                .children(rows),
                         )
-                    })
-                    .child(self.glyph("icons/search.svg", 22., pal.text_faint))
-                    .child(self.render_query(cx)),
-            )
-            .when(!rows.is_empty(), |this| {
-                this.child(div().h(px(1.)).w_full().bg(rgba(pal.divider)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .child(
-                                div()
-                                    .id("results")
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .max_h(px(LIST_MAX_H))
-                                    .overflow_y_scroll()
-                                    .track_scroll(&self.scroll)
-                                    .pt_1()
-                                    .pb_2()
-                                    .children(rows),
-                            )
-                            .when_some(preview, |this, preview| this.child(preview)),
-                    )
+                        .when_some(preview, |this, preview| this.child(preview)),
+                )
             })
             .when_some(self.notice.clone(), |this, notice| {
                 this.child(
                     div()
                         .px_5()
-                        .pb_3()
+                        .py_3()
                         .text_sm()
                         .text_color(rgb(pal.text_dim))
                         .child(notice),
@@ -2793,16 +3711,18 @@ impl Render for LauncherView {
                 this.child(
                     div()
                         .px_5()
-                        .pb_3()
+                        .py_3()
                         .text_sm()
                         .text_color(rgb(pal.danger))
                         .child(status),
                 )
             })
-            .when(show_footer, |this| this.child(self.render_footer(cx)));
+            .when(show_footer && !rows_empty, |this| {
+                this.child(self.render_footer(cx))
+            });
 
-        // The window is transparent: only the card is painted, so with no results it collapses
-        // to the search bar. The menu floats above it.
+        // The window is transparent: only the search row and the card are painted. The menu
+        // floats above them.
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
@@ -2813,8 +3733,10 @@ impl Render for LauncherView {
             .relative()
             .flex()
             .flex_col()
+            .gap_2()
             .w_full()
-            .child(card)
+            .child(search_row)
+            .when(has_card, |this| this.child(card))
             .when_some(menu, |this, menu| this.child(menu))
     }
 }
@@ -2863,7 +3785,7 @@ fn background_for(settings: &Settings) -> WindowBackgroundAppearance {
 fn open_launcher(
     cx: &mut App,
     requests: async_channel::Sender<UiRequest>,
-    clips: &mut Vec<String>,
+    clips: &mut Vec<ClipEntry>,
 ) -> Option<WindowHandle<LauncherView>> {
     // Re-read the settings every time, so changes apply on the next open.
     let settings = Settings::load_or_default();
@@ -2999,15 +3921,22 @@ fn open_settings(cx: &mut App) -> Option<WindowHandle<SettingsView>> {
 }
 
 /// Newest first, de-duplicated, bounded. Memory only: never written to disk.
-fn push_clip(clips: &mut Vec<String>, text: String) {
+fn push_clip(clips: &mut Vec<ClipEntry>, text: String) {
     let text = text.trim().to_owned();
 
     if text.is_empty() || text.chars().count() > 4000 {
         return;
     }
 
-    clips.retain(|existing| *existing != text);
-    clips.insert(0, text);
+    // Copying the same text again moves it to the top with the new time.
+    clips.retain(|existing| existing.text != text);
+    clips.insert(
+        0,
+        ClipEntry {
+            text,
+            copied_at: now_secs(),
+        },
+    );
     clips.truncate(50);
 }
 
@@ -3018,7 +3947,7 @@ struct UiState {
     launcher: Option<WindowHandle<LauncherView>>,
     settings: Option<WindowHandle<SettingsView>>,
     /// Clipboard history, newest first (memory only).
-    clips: Vec<String>,
+    clips: Vec<ClipEntry>,
 }
 
 fn handle_message(
@@ -3090,7 +4019,7 @@ fn handle_message(
             if let Some(handle) = state.launcher.as_ref() {
                 let _ = handle.update(cx, |view, _, cx| {
                     // Ignore answers for a query the user has already edited.
-                    if view.query == query {
+                    if view.search_text() == query {
                         view.set_results(results);
 
                         // A lookup (definition, weather, ...) is still being fetched: ask
@@ -3108,6 +4037,7 @@ fn handle_message(
             }
         }
         UiMessage::Clipboard(text) => push_clip(&mut state.clips, text),
+        UiMessage::ClearClips => state.clips.clear(),
         UiMessage::RecentFiles(files) => {
             if let Some(handle) = state.launcher.as_ref() {
                 let _ = handle.update(cx, |view, _, cx| {
@@ -3156,8 +4086,13 @@ fn socket_path() -> PathBuf {
 async fn search(socket: &Path, query: &str) -> Result<Vec<SearchHit>> {
     let request = Request::Search(SearchRequest {
         query: query.to_owned(),
-        // The UI caps each section itself; ask for enough to fill all of them.
-        limit: Some(40),
+        // The UI caps each section itself; ask for enough to fill all of them. The Applications
+        // grid lists everything installed.
+        limit: Some(if query.trim().eq_ignore_ascii_case("kind:app") {
+            150
+        } else {
+            40
+        }),
     });
 
     match send(socket, request).await? {
@@ -3437,7 +4372,7 @@ fn main() {
                 let mut state = UiState::default();
 
                 while let Ok(message) = message_rx.recv().await {
-                    cx.update(|cx| handle_message(cx, &mut state, &request_tx, message));
+                    let _ = cx.update(|cx| handle_message(cx, &mut state, &request_tx, message));
                 }
             })
             .detach();
@@ -3447,6 +4382,242 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stamp(year: i32, yday: i32, weekday: usize, hour: u32, minute: u32) -> Option<Stamp> {
+        Some(Stamp {
+            year,
+            yday,
+            weekday,
+            hour,
+            minute,
+        })
+    }
+
+    #[test]
+    fn clock_text_is_twelve_hour() {
+        assert_eq!(clock_text(0, 5), "12:05 AM");
+        assert_eq!(clock_text(9, 30), "9:30 AM");
+        assert_eq!(clock_text(12, 0), "12:00 PM");
+        assert_eq!(clock_text(16, 19), "4:19 PM");
+        assert_eq!(clock_text(23, 59), "11:59 PM");
+    }
+
+    #[test]
+    fn copied_text_reads_like_a_person() {
+        let now = stamp(2026, 300, 2, 17, 0);
+        let age = |minutes: u64| Duration::from_secs(minutes * 60);
+
+        assert_eq!(copied_text(now, now, Duration::from_secs(5)), "just now");
+        assert_eq!(
+            copied_text(now, stamp(2026, 300, 2, 16, 19), age(41)),
+            "4:19 PM"
+        );
+        assert_eq!(
+            copied_text(now, stamp(2026, 299, 1, 21, 5), age(1200)),
+            "yesterday 9:05 PM"
+        );
+        assert_eq!(
+            copied_text(now, stamp(2026, 297, 6, 8, 0), age(60 * 24 * 3)),
+            "Sat 8:00 AM"
+        );
+        assert_eq!(
+            copied_text(now, stamp(2026, 280, 4, 8, 0), age(60 * 24 * 20)),
+            "20 days ago"
+        );
+        // New Year's Eve seen from New Year's Day.
+        assert_eq!(
+            copied_text(
+                stamp(2027, 0, 5, 10, 0),
+                stamp(2026, 364, 4, 23, 30),
+                age(600)
+            ),
+            "yesterday 11:30 PM"
+        );
+        // Without a local clock, the age is the honest answer.
+        assert_eq!(copied_text(None, None, age(5)), "5 min ago");
+    }
+
+    #[test]
+    fn local_stamp_works_for_the_present() {
+        let stamp = local_stamp(now_secs()).expect("the C library knows the local time");
+
+        assert!(stamp.hour < 24 && stamp.minute < 60 && stamp.weekday < 7);
+        assert!((0..366).contains(&stamp.yday));
+    }
+
+    #[test]
+    fn url_hosts_are_extracted() {
+        assert_eq!(
+            url_host("https://en.wikipedia.org/wiki/Mac_OS_X_Tiger").as_deref(),
+            Some("en.wikipedia.org")
+        );
+        assert_eq!(
+            url_host("http://example.com?q=1").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(url_host("https://"), None);
+        assert_eq!(url_host("ftp://example.com"), None);
+    }
+
+    #[test]
+    fn pushing_a_copy_again_moves_it_to_the_top_with_a_new_time() {
+        let mut clips = vec![
+            ClipEntry {
+                text: "two".into(),
+                copied_at: 200,
+            },
+            ClipEntry {
+                text: "one".into(),
+                copied_at: 100,
+            },
+        ];
+
+        push_clip(&mut clips, "  one \n".into());
+
+        let texts: Vec<&str> = clips.iter().map(|clip| clip.text.as_str()).collect();
+
+        assert_eq!(texts, ["one", "two"]);
+        assert!(clips[0].copied_at >= 200);
+
+        push_clip(&mut clips, "   ".into());
+        assert_eq!(clips.len(), 2);
+    }
+
+    #[test]
+    fn the_bar_completes_with_the_title_of_the_result() {
+        let hit = |kind: &str, title: &str| SearchHit {
+            id: "x".into(),
+            title: title.into(),
+            subtitle: None,
+            kind: kind.into(),
+            score: 0,
+            icon: None,
+            detail: None,
+        };
+
+        assert_eq!(
+            ghost_text("fire", &hit("application", "Firefox")).as_deref(),
+            Some(" \u{2014} Firefox")
+        );
+        // Typing the whole title adds nothing; case does not matter.
+        assert_eq!(ghost_text("FIREFOX", &hit("application", "Firefox")), None);
+        assert_eq!(ghost_text("  ", &hit("application", "Firefox")), None);
+
+        // The web-search row and clipboard entries do not complete the text.
+        assert_eq!(ghost_text("fire", &hit("web", "Search the web for fire")), None);
+        assert_eq!(ghost_text("fire", &hit("clip", "fire alarm")), None);
+
+        // A long title is cut.
+        let long = ghost_text("a", &hit("file", &"x".repeat(100))).unwrap();
+        assert!(long.chars().count() < 50, "{long}");
+    }
+
+    #[test]
+    fn app_groups_come_from_the_daemon_detail() {
+        let hit = |detail: Option<&str>| SearchHit {
+            id: "apps:x.desktop".into(),
+            title: "X".into(),
+            subtitle: None,
+            kind: "application".into(),
+            score: 0,
+            icon: None,
+            detail: detail.map(str::to_owned),
+        };
+
+        assert_eq!(app_group(&hit(Some("group:Internet"))), Some("Internet"));
+        assert_eq!(app_group(&hit(Some("something else"))), None);
+        assert_eq!(app_group(&hit(None)), None);
+        assert!(APP_GROUPS.contains(&"Other"));
+    }
+
+    #[test]
+    fn quick_buttons_have_titles() {
+        for quick in Quick::ALL {
+            assert!(!quick.title().is_empty());
+        }
+
+        assert_eq!(Quick::Applications.title(), "Applications");
+    }
+
+    #[test]
+    fn typed_text_searches_inside_the_scope() {
+        // No scope: the text is the query, untouched.
+        assert_eq!(scoped_query(None, "  fire "), "  fire ");
+
+        // An empty field lists everything in the scope.
+        assert_eq!(scoped_query(Some(Quick::Applications), ""), "kind:app");
+        assert_eq!(scoped_query(Some(Quick::Applications), "   "), "kind:app");
+        assert_eq!(scoped_query(Some(Quick::Actions), ""), "kind:action");
+        assert_eq!(scoped_query(Some(Quick::Files), ""), "kind:recent");
+        assert_eq!(scoped_query(Some(Quick::Clipboard), ""), "clip");
+
+        // Text narrows it.
+        assert_eq!(
+            scoped_query(Some(Quick::Applications), " fire "),
+            "kind:app fire"
+        );
+        assert_eq!(
+            scoped_query(Some(Quick::Actions), "lock"),
+            "kind:action lock"
+        );
+        assert_eq!(scoped_query(Some(Quick::Clipboard), "url"), "clip url");
+        assert_eq!(scoped_query(Some(Quick::Files), "invoice"), "invoice");
+
+        // Every scoped query with text is still a listing (no web row, no top hit), except
+        // Files and Clipboard, which have their own handling.
+        assert!(is_listing_query("kind:app fire"));
+        assert!(is_listing_query("kind:action lock"));
+        assert!(!is_listing_query("kind:apple"));
+    }
+
+    #[test]
+    fn a_scope_shows_only_its_own_kinds() {
+        assert!(scope_keeps(Quick::Applications, "application"));
+        assert!(!scope_keeps(Quick::Applications, "file"));
+        assert!(!scope_keeps(Quick::Applications, "web"));
+        assert!(scope_keeps(Quick::Files, "file"));
+        assert!(scope_keeps(Quick::Files, "folder"));
+        assert!(!scope_keeps(Quick::Files, "application"));
+        assert!(scope_keeps(Quick::Actions, "system"));
+        assert!(!scope_keeps(Quick::Actions, "application"));
+        assert!(scope_keeps(Quick::Clipboard, "clip"));
+    }
+
+    #[test]
+    fn listing_queries_are_the_quick_button_queries() {
+        assert!(is_listing_query("kind:app"));
+        assert!(is_listing_query("kind:action"));
+        assert!(is_listing_query("kind:recent"));
+        assert!(!is_listing_query("kind:pdf"));
+        assert!(!is_listing_query("kind:app firefox"));
+        assert!(!is_listing_query("firefox"));
+
+        // Every button except Clipboard (which has its own `clip` view) lists something.
+        for quick in Quick::ALL {
+            if quick != Quick::Clipboard {
+                assert!(is_listing_query(quick.query()), "{quick:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_real_result_kinds_get_a_chip() {
+        assert_eq!(chip_label(Section::Applications), Some("Applications"));
+        assert_eq!(chip_label(Section::Commands), Some("Actions"));
+        assert_eq!(chip_label(Section::Files), Some("Files"));
+        assert_eq!(chip_label(Section::Clipboard), Some("Clipboard"));
+
+        for section in [
+            Section::Recent,
+            Section::RecentFiles,
+            Section::Frequent,
+            Section::Answer,
+            Section::Lookup,
+            Section::TopHit,
+        ] {
+            assert_eq!(chip_label(section), None, "{section:?}");
+        }
+    }
 
     #[test]
     fn detects_urls() {

@@ -25,6 +25,7 @@ each time it opens, and the daemon reloads its plugins when the file changes (no
 | `? anything` | Search with your default engine |
 | `100 usd to eur`, `$50 in npr` | Currency conversion (opt-in: downloads rates with `curl`; rates by [Exchange Rate API](https://www.exchangerate-api.com)) |
 | `wifi off`, `bluetooth on`, `mute`, `dark mode` | More system commands (shown only when `nmcli`, `bluetoothctl`, `wpctl`/`pactl`, `gsettings` exist) |
+| `kind:app`, `kind:action`, `kind:recent` | List every application (A to Z, shown as an icon grid with group chips), every action, or your recent files. The round buttons next to the search field turn these on as a scope: the field shows the button's title, and text you type searches inside it (`kind:app fire`, `kind:action lock`); Backspace on an empty field removes the scope |
 | `rdp`, `rdp office`, `nexdesk office` | Your saved NexDesk connections; Enter opens NexDesk's password prompt for it (see [NEXDESK](NEXDESK.md)) |
 | `clip`, `cb foo` | Clipboard history (opt-in, kept in memory only) |
 | *(empty box)* | Recent and frequently used items |

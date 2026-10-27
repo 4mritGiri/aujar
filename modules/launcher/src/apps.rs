@@ -20,6 +20,48 @@ pub struct DesktopEntry {
     pub terminal: bool,
     /// The raw `Icon=` value: a theme icon name or an absolute path.
     pub icon: Option<String>,
+    /// The `Categories=` list, in file order.
+    pub categories: Vec<String>,
+}
+
+impl DesktopEntry {
+    /// The group the Applications grid files this application under: the first recognised
+    /// freedesktop category wins, so `Settings;System;` is "System" and `Utility;Science;` is
+    /// "Utilities".
+    pub fn group(&self) -> &'static str {
+        for category in &self.categories {
+            let group = match category.as_str() {
+                "Network" | "WebBrowser" | "Email" | "Chat" | "InstantMessaging"
+                | "FileTransfer" | "P2P" | "RemoteAccess" | "Telephony" | "VideoConference" => {
+                    "Internet"
+                }
+                "Office" | "Finance" | "Calendar" | "ContactManagement" | "Spreadsheet"
+                | "WordProcessor" | "Presentation" | "ProjectManagement" => "Productivity",
+                "AudioVideo" | "Audio" | "Video" | "Player" | "Music" | "Recorder" | "Midi"
+                | "Mixer" | "Sequencer" | "TV" => "Media",
+                "Graphics" | "Photography" | "2DGraphics" | "3DGraphics" | "RasterGraphics"
+                | "VectorGraphics" | "Scanning" | "Viewer" => "Graphics",
+                "Development" | "IDE" | "Debugger" | "RevisionControl" | "GUIDesigner"
+                | "WebDevelopment" | "Building" | "Profiling" | "Translation" => "Development",
+                "Game" | "ArcadeGame" | "BoardGame" | "CardGame" | "LogicGame" | "RolePlaying"
+                | "Simulation" | "SportsGame" | "StrategyGame" | "ActionGame"
+                | "AdventureGame" | "BlocksGame" => "Games",
+                "Education" | "Science" | "Math" | "Astronomy" | "Chemistry" | "Geography"
+                | "History" | "Languages" | "Biology" | "Physics" | "Literature" | "Art"
+                | "Electronics" => "Education & Science",
+                "Settings" | "System" | "Monitor" | "PackageManager" | "Security"
+                | "HardwareSettings" | "DesktopSettings" => "System",
+                "Utility" | "Accessories" | "Calculator" | "TextEditor" | "Archiving"
+                | "Compression" | "FileManager" | "TerminalEmulator" | "Clock"
+                | "Documentation" | "Accessibility" | "TextTools" => "Utilities",
+                _ => continue,
+            };
+
+            return group;
+        }
+
+        "Other"
+    }
 }
 
 /// Parse a freedesktop `.desktop` file. Returns `None` for entries that
@@ -34,6 +76,7 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
     let mut hidden = false;
     let mut terminal = false;
     let mut icon = None;
+    let mut categories = Vec::new();
 
     for raw in content.lines() {
         let line = raw.trim();
@@ -64,6 +107,14 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
             "Icon" => icon = Some(value.to_owned()).filter(|value| !value.is_empty()),
             "Type" => kind = Some(value.to_owned()),
             "Terminal" => terminal = value.eq_ignore_ascii_case("true"),
+            "Categories" => {
+                categories = value
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|category| !category.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+            }
             "NoDisplay" | "Hidden" if value.eq_ignore_ascii_case("true") => hidden = true,
             _ => {}
         }
@@ -80,6 +131,7 @@ pub fn parse_desktop_entry(id: &str, content: &str) -> Option<DesktopEntry> {
         exec: exec?,
         terminal,
         icon,
+        categories,
     })
 }
 
@@ -228,6 +280,11 @@ fn collect(
 /// Applications shown per search at most (the launcher shows far fewer; this bounds how many
 /// icons are looked up on disk).
 const MAX_RESULTS: usize = 16;
+
+/// `kind:app` lists the installed applications A to Z (the launcher's Applications button).
+/// The daemon never returns more than 200 results to one search.
+const LIST_TRIGGER: &str = "kind:app";
+const LIST_MAX: usize = 150;
 /// How often the application directories are checked for changes.
 const RECHECK: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -425,6 +482,40 @@ impl Provider for AppsProvider {
 
         let snapshot = self.read();
 
+        // `kind:app` lists everything; `kind:app fire` searches only applications (what the
+        // Applications button does once you type). `kind:apple` is an ordinary query.
+        let (scoped, query) = match query.strip_prefix(LIST_TRIGGER) {
+            Some("") => (true, String::new()),
+            Some(rest) if rest.starts_with(' ') => (true, rest.trim().to_owned()),
+            _ => (false, query.clone()),
+        };
+
+        if scoped && query.is_empty() {
+            let mut all: Vec<&DesktopEntry> = snapshot.entries.iter().collect();
+
+            all.sort_by_key(|entry| entry.name.to_lowercase());
+            all.truncate(LIST_MAX);
+
+            // Scores count down so the merged, score-sorted result list stays A to Z, and all
+            // stay below the "top hit" threshold. The group tells the UI which chip to file the
+            // application under.
+            return all
+                .into_iter()
+                .enumerate()
+                .map(|(position, entry)| {
+                    SearchResult::new(
+                        format!("apps:{}", entry.id),
+                        &entry.name,
+                        ResultKind::Application,
+                        500 - u32::try_from(position).unwrap_or(0).min(400),
+                    )
+                    .with_icon(self.icon_for(entry))
+                    .with_optional_subtitle(entry.comment.clone())
+                    .with_detail(format!("group:{}", entry.group()))
+                })
+                .collect();
+        }
+
         // Rank everything first; only the winners get an icon lookup (a disk probe per icon).
         let mut ranked: Vec<(u32, usize)> = snapshot
             .lowered
@@ -447,7 +538,7 @@ impl Provider for AppsProvider {
             .collect();
 
         ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        ranked.truncate(MAX_RESULTS);
+        ranked.truncate(if scoped { LIST_MAX } else { MAX_RESULTS });
 
         ranked
             .into_iter()
@@ -462,6 +553,7 @@ impl Provider for AppsProvider {
                 )
                 .with_icon(self.icon_for(entry))
                 .with_optional_subtitle(entry.comment.clone())
+                .with_detail(format!("group:{}", entry.group()))
             })
             .collect()
     }
@@ -561,6 +653,80 @@ Exec=firefox --new-window
         let results = provider.search("fire");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "apps:firefox.desktop");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn categories_are_parsed_and_grouped_by_the_first_known_one() {
+        let entry = |categories: &str| {
+            parse_desktop_entry(
+                "x.desktop",
+                &format!(
+                    "[Desktop Entry]\nType=Application\nName=X\nExec=x\nCategories={categories}\n"
+                ),
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            entry("Network;WebBrowser;").categories,
+            ["Network", "WebBrowser"]
+        );
+        assert_eq!(entry("Network;WebBrowser;").group(), "Internet");
+        assert_eq!(entry("GTK;Settings;X-GNOME-NetworkSettings;").group(), "System");
+        assert_eq!(entry("Utility;Calculator;Science;").group(), "Utilities");
+        assert_eq!(entry("Development;IDE;").group(), "Development");
+        assert_eq!(entry("AudioVideo;Player;").group(), "Media");
+        assert_eq!(entry("Game;ArcadeGame;").group(), "Games");
+        assert_eq!(entry("X-Unknown;").group(), "Other");
+        assert_eq!(entry("").group(), "Other");
+    }
+
+    #[test]
+    fn kind_app_lists_every_application_a_to_z() {
+        let dir = std::env::temp_dir().join(format!(
+            "aujar-apps-list-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("firefox.desktop"), FIREFOX).unwrap();
+        fs::write(
+            dir.join("files.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Files\nExec=files\n",
+        )
+        .unwrap();
+
+        let provider = AppsProvider::from_dirs(std::slice::from_ref(&dir));
+        let titles: Vec<String> = provider
+            .search("  KIND:APP ")
+            .into_iter()
+            .map(|result| result.title)
+            .collect();
+
+        assert_eq!(titles.len(), 2);
+        assert!(titles[0].to_lowercase() <= titles[1].to_lowercase());
+
+        let listed = provider.search("kind:app");
+
+        // With text, only applications that match it, still carrying their group.
+        let matching = provider.search("kind:app fire");
+
+        assert_eq!(matching.len(), 1);
+        assert!(matching[0].title.to_lowercase().contains("fire"));
+        assert!(matching[0].detail.as_deref().is_some_and(|d| d.starts_with("group:")));
+        assert!(provider.search("kind:apple").is_empty());
+
+        assert!(listed[0].score > listed[1].score);
+        assert!(listed.iter().all(|result| result.score < 600));
+        assert!(
+            listed
+                .iter()
+                .all(|result| result.detail.as_deref().is_some_and(|d| d.starts_with("group:")))
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }

@@ -772,6 +772,7 @@ dependencies = [
  "aujar-mouse-borders",
  "gpui-pre",
  "gpui-pre-platform",
+ "libc",
  "tokio",
 ]
 

@@ -695,7 +695,7 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
         },
 
         Request::Search(request) => {
-            let limit = request.limit.unwrap_or(10).clamp(1, 50);
+            let limit = request.limit.unwrap_or(10).clamp(1, 200);
 
             // Providers read the disk and spawn helpers: keep that off the async workers.
             let launcher = current_launcher(shared);

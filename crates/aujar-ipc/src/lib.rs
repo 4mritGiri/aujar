@@ -109,7 +109,7 @@ pub struct ExecuteResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRequest {
     pub query: String,
-    /// Maximum results (daemon clamps to 1..=50, default 10).
+    /// Maximum results (daemon clamps to 1..=200, default 10).
     #[serde(default)]
     pub limit: Option<usize>,
 }

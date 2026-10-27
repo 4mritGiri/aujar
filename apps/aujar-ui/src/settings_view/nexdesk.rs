@@ -202,36 +202,35 @@ impl SettingsView {
             );
         }
 
-        let mut rows: Vec<AnyElement> =
-            vec![
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_3()
-                    .px_4()
-                    .py_3()
-                    .child(
-                        div()
-                            .size(px(10.))
-                            .rounded_full()
-                            .flex_shrink_0()
-                            .bg(rgb(color)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .gap_1()
-                            .child(div().text_sm().text_color(rgb(pal.text)).child(headline))
-                            .children((!detail.is_empty()).then(|| {
-                                div().text_xs().text_color(rgb(pal.text_dim)).child(detail)
-                            })),
-                    )
-                    .child(buttons)
-                    .into_any_element(),
-            ];
+        let mut rows: Vec<AnyElement> = vec![
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py_3()
+                .child(
+                    div()
+                        .size(px(10.))
+                        .rounded_full()
+                        .flex_shrink_0()
+                        .bg(rgb(color)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .gap_1()
+                        .child(div().text_sm().text_color(rgb(pal.text)).child(headline))
+                        .children((!detail.is_empty()).then(|| {
+                            div().text_xs().text_color(rgb(pal.text_dim)).child(detail)
+                        })),
+                )
+                .child(buttons)
+                .into_any_element(),
+        ];
 
         if let Some((text, error)) = &self.nexdesk.note {
             rows.push(

@@ -217,6 +217,7 @@ enum Page {
     Search,
     Web,
     MouseBorders,
+    NexDesk,
     Files,
     History,
     General,
@@ -224,20 +225,22 @@ enum Page {
 
 impl Page {
     /// The top group of the sidebar.
-    const MAIN: [Page; 4] = [
+    const MAIN: [Page; 5] = [
         Page::Appearance,
         Page::Search,
         Page::Web,
         Page::MouseBorders,
+        Page::NexDesk,
     ];
     /// The collapsible "Data" group.
     const DATA: [Page; 2] = [Page::Files, Page::History];
     /// Every page, in sidebar order (used by search).
-    const ALL: [Page; 7] = [
+    const ALL: [Page; 8] = [
         Page::Appearance,
         Page::Search,
         Page::Web,
         Page::MouseBorders,
+        Page::NexDesk,
         Page::Files,
         Page::History,
         Page::General,
@@ -249,6 +252,7 @@ impl Page {
             Self::Search => "Search plugins",
             Self::Web => "Web search",
             Self::MouseBorders => "Mouse Borders",
+            Self::NexDesk => "NexDesk",
             Self::Files => "Files",
             Self::History => "History",
             Self::General => "General",
@@ -261,6 +265,7 @@ impl Page {
             Self::Search => "Choose what the launcher can find and answer",
             Self::Web => "Where the \"search the web\" row and keyword shortcuts go",
             Self::MouseBorders => "Use one keyboard and mouse across your computers",
+            Self::NexDesk => "Open your saved remote desktop connections",
             Self::Files => "Which folders the launcher looks through",
             Self::History => "Recent items and the clipboard",
             Self::General => "Shortcuts, config file and about",
@@ -273,6 +278,7 @@ impl Page {
             Self::Search => "icons/search.svg",
             Self::Web => "icons/globe.svg",
             Self::MouseBorders => "icons/mouse.svg",
+            Self::NexDesk => "icons/window.svg",
             Self::Files => "icons/folder.svg",
             Self::History => "icons/history.svg",
             Self::General => "icons/app.svg",
@@ -297,6 +303,7 @@ impl Page {
                 "web search engine duckduckgo google brave bing startpage shortcuts keyword"
             }
             Self::MouseBorders => "mouse keyboard share machines network clipboard files cursor",
+            Self::NexDesk => "nexdesk rdp remote desktop connection connections open install installed",
             Self::Files => "files index indexed roots depth folders directories",
             Self::History => "history recent frequent clear clipboard clip launch",
             Self::General => "general shortcut keyboard keys config file about version",
@@ -346,6 +353,7 @@ pub struct SettingsView {
     status: Option<String>,
     page: Page,
     mouse_borders: mouse_borders::State,
+    nexdesk: nexdesk::State,
     pub focus_handle: FocusHandle,
     sidebar_open: bool,
     data_open: bool,
@@ -367,6 +375,7 @@ impl SettingsView {
         let settings = Settings::load_or_default();
 
         Self::keep_mouse_borders_status_fresh(cx);
+        Self::keep_nexdesk_status_fresh(cx);
 
         Self {
             palette: Palette::from_settings(&settings),
@@ -375,6 +384,7 @@ impl SettingsView {
             status: None,
             page: Page::Appearance,
             mouse_borders: mouse_borders::State::default(),
+            nexdesk: nexdesk::State::default(),
             focus_handle: cx.focus_handle(),
             sidebar_open: true,
             data_open: true,
@@ -409,6 +419,10 @@ impl SettingsView {
 
         if page == Page::MouseBorders {
             self.refresh_mouse_borders(cx);
+        }
+
+        if page == Page::NexDesk {
+            self.refresh_nexdesk(cx);
         }
 
         cx.notify();
@@ -1418,13 +1432,15 @@ impl SettingsView {
                             cx.notify();
                         })),
                 )
-                .children(if data_shown {
-                    data.iter()
-                        .map(|page| self.nav_item(*page, true, cx).into_any_element())
-                        .collect::<Vec<_>>()
-                } else {
-                    Vec::new()
-                })
+                .children(
+                    data_shown
+                        .then(|| {
+                            data.iter()
+                                .map(|page| self.nav_item(*page, true, cx).into_any_element())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                )
         });
 
         let general = self
@@ -1609,6 +1625,7 @@ mod files;
 mod general;
 mod history;
 mod mouse_borders;
+mod nexdesk;
 mod plugins;
 mod web;
 
@@ -1642,6 +1659,7 @@ impl Render for SettingsView {
             Page::Search => self.plugins_page(cx),
             Page::Web => self.web_page(cx),
             Page::MouseBorders => self.mouse_borders_page(cx),
+            Page::NexDesk => self.nexdesk_page(cx),
             Page::Files => self.files_page(cx),
             Page::History => self.history_page(cx),
             Page::General => self.general_page(cx),

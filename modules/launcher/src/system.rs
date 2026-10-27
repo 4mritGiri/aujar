@@ -221,6 +221,41 @@ impl Provider for SystemProvider {
             return Vec::new();
         }
 
+        // `kind:action` lists every action and `kind:action lock` only the matching ones (the
+        // launcher's Actions button, with and without text typed).
+        let lowered = query.trim().to_lowercase();
+
+        if let Some(text) = lowered
+            .strip_prefix("kind:action")
+            .filter(|rest| rest.is_empty() || rest.starts_with(' '))
+            .map(str::trim)
+        {
+            return self
+                .actions
+                .iter()
+                .filter_map(|action| {
+                    let points = if text.is_empty() {
+                        Some(500)
+                    } else {
+                        std::iter::once(action.title)
+                            .chain(action.keywords.iter().copied())
+                            .filter_map(|candidate| score(text, candidate))
+                            .max()
+                    };
+
+                    points.map(|points| SearchResult {
+                        id: action.id.to_owned(),
+                        title: action.title.to_owned(),
+                        subtitle: Some(action.subtitle.to_owned()),
+                        kind: ResultKind::System,
+                        score: points,
+                        icon: None,
+                        detail: None,
+                    })
+                })
+                .collect();
+        }
+
         self.actions
             .iter()
             .filter_map(|action| {
@@ -263,6 +298,22 @@ mod tests {
         let results = SystemProvider::new().search("reboot");
 
         assert!(results.iter().any(|result| result.id == "system:restart"));
+    }
+
+    #[test]
+    fn kind_action_lists_every_action() {
+        let provider = SystemProvider::new();
+        let listed = provider.search("kind:action");
+
+        assert!(listed.len() >= 5);
+        assert!(listed.iter().any(|result| result.id == "system:lock"));
+        assert!(listed.iter().all(|result| provider.resolve(&result.id).is_some()));
+
+        let locks = provider.search("kind:action lock");
+
+        assert!(locks.iter().any(|result| result.id == "system:lock"));
+        assert!(locks.len() < listed.len());
+        assert!(provider.search("kind:action zzzzqq").is_empty());
     }
 
     #[test]
