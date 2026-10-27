@@ -22,6 +22,30 @@ aujar nexdesk status     # installed? where? running?
 aujar nexdesk open       # open the manager (nothing new if Aujar already opened one)
 ```
 
+## Settings page
+
+Settings -> *NexDesk* shows whether NexDesk is installed (and where from), whether the manager Aujar
+started is open, an **Open NexDesk** button, and the switch for `rdp <name>` in the launcher. The
+status comes from the daemon and refreshes every two seconds while the page is open.
+
+## Starting a saved connection from the launcher
+
+Type `rdp` (or `nexdesk`) in the launcher to list your saved NexDesk connections, or `rdp office`
+to filter them. Enter runs `nexdesk --connect "<name>"`: NexDesk selects that connection and shows
+**its own** password prompt (or connects straight away when its vault is unlocked and holds the
+password). If the NexDesk manager is already open, it is asked to do this over its local socket
+instead of starting a second copy.
+
+- Aujar reads only the file names in `~/.config/nexdesk/connections/` (`$XDG_CONFIG_HOME` is
+  honoured) and the address and user inside each `.rdp` file, for the result's subtitle. It never
+  opens NexDesk's vault, and no password passes through Aujar or its IPC socket.
+- Only a name that exists as a saved connection can be started; the launcher refuses anything
+  else, including names that look like paths or options.
+- Switch it off on the *NexDesk* settings page, under Settings -> Search plugins -> *NexDesk
+  connections*, or with `nexdesk = false` in `[plugins]`.
+- Needs a NexDesk that understands `--connect` (it was added together with this feature). An older
+  `nexdesk` ignores the argument and just opens the manager.
+
 ## Why a separate process
 
 - NexDesk's security model depends on its own boundary: the RDP engine runs in `nexdesk-rdp`,
@@ -75,10 +99,8 @@ not itself open sockets; `network` is declared because the program it starts doe
 
 ## Not done yet
 
-- Listing NexDesk's saved connections in the launcher (`rdp <name>`) and connecting to one
-  directly. This needs a stable "connect to this profile" command line in NexDesk, and a decision
-  about reading its profile format.
-- A NexDesk page in the settings window.
+- Saved connections are read from the Linux location (`~/.config/nexdesk/connections`); the
+  macOS and Windows locations NexDesk uses are not looked at.
 - The Aujar daemon runs as a user service: the NexDesk manager inherits its environment, so
   `DISPLAY` / `WAYLAND_DISPLAY` must be available to it (as for any application launched from the
   launcher).

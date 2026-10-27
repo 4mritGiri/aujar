@@ -210,6 +210,9 @@ pub struct Plugins {
     /// `< name` switches to an open window. Needs a backend for your session (GNOME
     /// extension, Sway, Hyprland or X11 with wmctrl).
     pub windows: bool,
+    /// `rdp office` starts a saved NexDesk connection. Reads only the names of NexDesk's
+    /// `.rdp` files; NexDesk itself asks for the password.
+    pub nexdesk: bool,
 }
 
 impl Default for Plugins {
@@ -229,6 +232,7 @@ impl Default for Plugins {
             nepse: true,
             sports: true,
             windows: true,
+            nexdesk: true,
         }
     }
 }

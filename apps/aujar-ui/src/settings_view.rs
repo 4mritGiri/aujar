@@ -290,7 +290,8 @@ impl Page {
             }
             Self::Search => {
                 "plugins applications apps files folders windows system clipboard calculator \
-                 units currency dictionary weather stocks nepse nepal sports shell online"
+                 units currency dictionary weather stocks nepse nepal sports shell online \
+                 nexdesk rdp remote desktop connections"
             }
             Self::Web => {
                 "web search engine duckduckgo google brave bing startpage shortcuts keyword"
@@ -1417,15 +1418,13 @@ impl SettingsView {
                             cx.notify();
                         })),
                 )
-                .children(
-                    data_shown
-                        .then(|| {
-                            data.iter()
-                                .map(|page| self.nav_item(*page, true, cx).into_any_element())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default(),
-                )
+                .children(if data_shown {
+                    data.iter()
+                        .map(|page| self.nav_item(*page, true, cx).into_any_element())
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                })
         });
 
         let general = self

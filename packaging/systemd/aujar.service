@@ -3,6 +3,9 @@ Description=Aujar Desktop Productivity Platform
 Documentation=https://github.com/4mritGiri/aujar
 PartOf=graphical-session.target
 After=graphical-session.target
+# A crash loop must end instead of flickering the desktop forever.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -10,6 +13,9 @@ Type=simple
 ExecStart=/usr/bin/aujar daemon
 Restart=on-failure
 RestartSec=2
+# 75: another daemon is already running. That is not a failure to retry.
+SuccessExitStatus=75
+RestartPreventExitStatus=75
 Environment=RUST_LOG=info
 # Light hardening that works in unprivileged user units (mount-namespace options such as
 # ProtectSystem= need user namespaces, which some distros restrict).

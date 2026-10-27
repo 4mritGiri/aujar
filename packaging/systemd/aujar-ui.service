@@ -4,6 +4,9 @@ Documentation=https://github.com/4mritGiri/aujar
 PartOf=graphical-session.target
 After=graphical-session.target aujar.service
 Wants=aujar.service
+# A crash loop must end instead of flickering the desktop forever.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,6 +15,9 @@ ExecStart=/usr/bin/aujar-ui
 # `always`, not `on-failure`: if the UI ever exits cleanly it must come back for the next shortcut.
 Restart=always
 RestartSec=2
+# 75: another aujar-ui is already running. Restarting would only loop.
+SuccessExitStatus=75
+RestartPreventExitStatus=75
 
 [Install]
 WantedBy=graphical-session.target

@@ -347,7 +347,17 @@ async fn main() -> Result<()> {
         Command::Daemon { socket } => {
             let socket_path = socket.unwrap_or_else(resolve_socket);
 
-            aujar_daemon::run(&socket_path).await?;
+            if let Err(error) = aujar_daemon::run(&socket_path).await {
+                if error
+                    .downcast_ref::<aujar_daemon::AlreadyRunning>()
+                    .is_some()
+                {
+                    eprintln!("aujar: {error}");
+                    std::process::exit(aujar_daemon::EXIT_ALREADY_RUNNING);
+                }
+
+                return Err(error);
+            }
         }
 
         Command::Rename {

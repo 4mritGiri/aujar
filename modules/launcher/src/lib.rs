@@ -6,6 +6,7 @@ mod files;
 mod icons;
 mod model;
 mod nepse;
+mod nexdesk;
 mod ranking;
 mod recent;
 mod shell;
@@ -25,6 +26,7 @@ pub use files::FilesProvider;
 pub use icons::resolve_icon;
 pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
 pub use nepse::{NepseProvider, spawn_alert_watcher as spawn_nepse_alert_watcher};
+pub use nexdesk::NexDeskProvider;
 pub use ranking::{score, score_lowered, score_strict};
 pub use shell::ShellProvider;
 pub use sports::SportsProvider;
@@ -61,6 +63,9 @@ pub struct LauncherOptions {
     pub sports: bool,
     /// `< firefox`: switch to an open window (needs a backend for the session).
     pub windows: bool,
+    /// `rdp office`: start a saved NexDesk connection. Reads only the names (and address and
+    /// user) of NexDesk's `.rdp` files, never its password vault.
+    pub nexdesk: bool,
     pub file_roots: Vec<String>,
     pub file_depth: usize,
 }
@@ -82,6 +87,7 @@ impl Default for LauncherOptions {
             nepse: true,
             sports: true,
             windows: true,
+            nexdesk: true,
             file_roots: vec!["~".to_owned()],
             file_depth: 4,
         }
@@ -178,6 +184,10 @@ impl Launcher {
 
         if options.windows {
             launcher.register(Box::new(WindowsProvider::new()));
+        }
+
+        if options.nexdesk {
+            launcher.register(Box::new(NexDeskProvider::new()));
         }
 
         launcher

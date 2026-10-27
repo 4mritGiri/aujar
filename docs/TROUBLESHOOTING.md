@@ -110,3 +110,30 @@ Check that the CLI and daemon agree on the socket (`AUJAR_SOCKET`, otherwise
 ## Changed the code but nothing changed
 
 The installed daemon is a copy. Rebuild and restart it: `scripts/install-local.sh`.
+
+## The screen flickers, or the dash icons keep appearing and disappearing
+
+Find out which of two things is happening first.
+
+```bash
+echo $XDG_SESSION_TYPE                                   # x11 or wayland
+systemctl --user show aujar.service aujar-ui.service -p NRestarts -p Result
+journalctl --user -u aujar -u aujar-ui --since "10 min ago" | tail -40
+pgrep -a -x aujar-ui; pgrep -a -f 'aujar daemon'
+```
+
+- **`NRestarts` keeps going up while you are not touching anything.** A service is in a restart
+  loop. The journal line before each restart says why. A process started by hand (`cargo run`,
+  a terminal) next to the service is the usual cause: a second `aujar-ui` or daemon refuses to
+  start and exits with status 75, which the units do not retry, so on a current install this
+  loop ends by itself. If the numbers still climb, send the journal lines.
+- **It only happens when you press the shortcut.** That is the launcher window itself: GNOME shows
+  every normal window in the dash, so the launcher's icon appears and disappears each time it
+  opens and closes. Turning off *Close when focus is lost* in Settings shows whether the
+  click-away logic is fighting the compositor over focus.
+- **Right after running `scripts/install-local.sh`.** GNOME Shell rescans applications when a
+  `.desktop` file changes. The script now leaves an unchanged file alone, so only the first
+  install triggers it.
+
+Two Aujar daemons running at once is never intended. To check, `ls -l $XDG_RUNTIME_DIR/aujar.sock`
+should be the only socket and `pgrep -a -f 'aujar daemon'` should show one process.

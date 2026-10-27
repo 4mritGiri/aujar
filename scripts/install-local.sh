@@ -15,7 +15,9 @@ cargo build --release -p aujar-ui
 
 install -Dm755 target/release/aujar "$HOME/.local/bin/aujar"
 install -Dm755 target/release/aujar-ui "$HOME/.local/bin/aujar-ui"
-install -Dm644 packaging/desktop/dev.aujar.Aujar.desktop \
+# -C: leave the file (and its timestamp) alone when unchanged, so re-running this script does
+# not make GNOME Shell rescan its applications and redraw the dash.
+install -C -Dm644 packaging/desktop/dev.aujar.Aujar.desktop \
     "$HOME/.local/share/applications/dev.aujar.Aujar.desktop"
 
 mkdir -p "$HOME/.config/systemd/user"
@@ -32,8 +34,22 @@ sed 's#^ExecStart=.*#ExecStart=%h/.local/bin/aujar-ui#' packaging/systemd/aujar-
 
 systemctl --user daemon-reload
 systemctl --user enable aujar.service aujar-ui.service
+
+# Stop the UI first, restart the daemon, then start the UI: it never sees a half-restarted daemon.
+systemctl --user stop aujar-ui.service
 # `restart` (not `enable --now`): a daemon that is already running keeps its old code otherwise.
-systemctl --user restart aujar.service aujar-ui.service
+systemctl --user restart aujar.service
+
+# A UI started by hand (cargo run, a terminal) is invisible to systemctl, and a second UI
+# refuses to start next to it. Say so instead of failing quietly.
+strays=$(pgrep -u "$(id -u)" -a -x 'aujar-ui' || true)
+if [ -n "$strays" ]; then
+    echo "warning: aujar-ui is already running outside systemd, so the service cannot start:" >&2
+    echo "$strays" >&2
+    echo "         stop it (pkill -x aujar-ui) and run: systemctl --user restart aujar-ui" >&2
+fi
+
+systemctl --user start aujar-ui.service
 
 echo "Installed to ~/.local/bin/aujar (make sure ~/.local/bin is on your PATH)."
 echo "Daemon status: systemctl --user status aujar aujar-ui"

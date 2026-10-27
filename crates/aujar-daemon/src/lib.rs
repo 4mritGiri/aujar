@@ -88,6 +88,7 @@ fn launcher_options(settings: &aujar_config::Settings) -> aujar_launcher::Launch
         nepse: settings.plugins.nepse,
         sports: settings.plugins.sports,
         windows: settings.plugins.windows,
+        nexdesk: settings.plugins.nexdesk,
         file_roots: settings.files.roots.clone(),
         file_depth: settings.files.max_depth as usize,
     }
@@ -379,8 +380,42 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
     Ok(())
 }
 
+/// Another daemon already answers on the socket. Not a crash: a supervisor must not restart us.
+#[derive(Debug)]
+pub struct AlreadyRunning {
+    pub socket: std::path::PathBuf,
+}
+
+impl std::fmt::Display for AlreadyRunning {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "an Aujar daemon is already running on {} \
+             (stop it first: systemctl --user stop aujar)",
+            self.socket.display()
+        )
+    }
+}
+
+impl std::error::Error for AlreadyRunning {}
+
+/// Exit status for "another instance is already running" (`EX_TEMPFAIL`). The systemd units
+/// list it in `SuccessExitStatus=` and `RestartPreventExitStatus=`, so it never causes a
+/// restart loop.
+pub const EXIT_ALREADY_RUNNING: i32 = 75;
+
 async fn prepare_socket(socket_path: &Path) -> Result<()> {
     if socket_path.exists() {
+        // Only a stale file left by a crash may be replaced. Removing the socket of a live
+        // daemon would leave it running but unreachable, and two daemons would then both
+        // bind the global shortcut.
+        if UnixStream::connect(socket_path).await.is_ok() {
+            return Err(AlreadyRunning {
+                socket: socket_path.to_path_buf(),
+            }
+            .into());
+        }
+
         tokio::fs::remove_file(socket_path)
             .await
             .context("failed to remove stale Aujar socket")?;

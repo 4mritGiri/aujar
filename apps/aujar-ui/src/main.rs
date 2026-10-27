@@ -3414,7 +3414,11 @@ fn ensure_single_instance() -> Option<std::os::unix::net::UnixListener> {
 fn main() {
     let Some(_instance) = ensure_single_instance() else {
         eprintln!("aujar-ui: already running (stop it first: systemctl --user stop aujar-ui)");
-        return;
+
+        // EX_TEMPFAIL, not 0: with `Restart=always` a clean exit would respawn this process
+        // every two seconds for as long as the other instance lives. The unit lists 75 in
+        // `RestartPreventExitStatus=`.
+        std::process::exit(75);
     };
 
     let (message_tx, message_rx) = async_channel::unbounded::<UiMessage>();
@@ -3433,7 +3437,7 @@ fn main() {
                 let mut state = UiState::default();
 
                 while let Ok(message) = message_rx.recv().await {
-                    let _ = cx.update(|cx| handle_message(cx, &mut state, &request_tx, message));
+                    cx.update(|cx| handle_message(cx, &mut state, &request_tx, message));
                 }
             })
             .detach();

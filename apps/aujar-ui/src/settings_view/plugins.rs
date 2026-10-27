@@ -121,6 +121,7 @@ impl SettingsView {
                 vec![
                     toggle_row!(self, cx, "p-apps", "Applications", "Installed desktop applications", plugins.applications),
                     toggle_row!(self, cx, "p-files", "Files & folders", "Search file names under your home folder", plugins.files),
+                    toggle_row!(self, cx, "p-nexdesk", "NexDesk connections", "rdp office starts a saved NexDesk connection. NexDesk asks for the password; Aujar never sees it", plugins.nexdesk),
                     toggle_row!(self, cx, "p-windows", "Window switching", "< name lists open windows. GNOME needs the extension: aujar gnome-extension install", plugins.windows),
                     toggle_row!(self, cx, "p-system", "System commands", "Lock, sleep, restart, shut down, log out, settings", plugins.system),
                     toggle_row!(self, cx, "p-clip", "Clipboard history", "Type clip or cb. Records what you copy (in memory only)", plugins.clipboard),
