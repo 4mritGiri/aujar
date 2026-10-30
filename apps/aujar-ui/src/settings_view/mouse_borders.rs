@@ -9,7 +9,12 @@ use std::time::Duration;
 use aujar_config::{EasyMouse, MatrixMode, SwitchKeys};
 use aujar_ipc::{MouseBordersRequest, MouseBordersResponse, MouseBordersStatus, Request, Response};
 use aujar_mouse_borders::{
-    keystore::KeyStore, net, pairing::PairingCode, secure::SecurityKey, settings_edit,
+    discovery::{DiscoveredDevice, start_discovery},
+    keystore::KeyStore,
+    net,
+    pairing::PairingCode,
+    secure::SecurityKey,
+    settings_edit,
 };
 use gpui::{AnyElement, ClipboardItem, Context, SharedString, div, prelude::*, px, rgb, rgba};
 
@@ -36,6 +41,7 @@ pub(super) struct State {
     note: Option<Note>,
     confirm: Option<Confirm>,
     refreshing: bool,
+    discovered_devices: Vec<DiscoveredDevice>,
 }
 
 /// Ask the daemon for the status. Blocking: run it off the UI thread.
@@ -120,6 +126,94 @@ impl SettingsView {
         .detach();
     }
 
+    /// Scan for Mouse Borders devices on the local network
+    pub(super) fn scan_for_devices(&mut self, cx: &mut Context<Self>) {
+        let _mb = &self.settings.mouse_borders;
+        let local_host = net::pick_host(&net::local_networks());
+
+        if local_host.is_none() {
+            self.set_note(
+                "No local network address found. Connect to a network first.",
+                true,
+                cx,
+            );
+            return;
+        }
+
+        self.set_note(
+            "Scanning local network for Mouse Borders devices...",
+            false,
+            cx,
+        );
+
+        cx.spawn(async move |this, cx| {
+            let result = this.update(cx, |this, _cx| {
+                let settings = this.settings.clone();
+                let local = settings_edit::local_name(&settings.mouse_borders).to_string();
+                let local_host = net::pick_host(&net::local_networks());
+                (settings, local, local_host)
+            });
+
+            let (settings, local, local_host) = match result {
+                Ok((settings, local, Some(host))) => (settings, local, host),
+                Ok((_, _, None)) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.set_note("No network connection", true, cx);
+                    });
+                    return;
+                }
+                Err(_) => {
+                    return;
+                }
+            };
+
+            match start_discovery(settings.mouse_borders, local, local_host) {
+                Ok(mut rx) => {
+                    let mut devices = Vec::new();
+
+                    // Wait for some results
+                    for _ in 0..5 {
+                        match rx.try_recv() {
+                            Ok(device) => {
+                                devices.push(device);
+                            }
+                            Err(_) => {}
+                        }
+                        cx.background_executor()
+                            .timer(Duration::from_millis(500))
+                            .await;
+                    }
+
+                    let is_empty = devices.is_empty();
+                    let count = devices.len();
+                    let _ = this.update(cx, |this, cx| {
+                        this.mouse_borders.discovered_devices = devices;
+                        if is_empty {
+                            this.set_note(
+                                "No other Mouse Borders devices found on this network.",
+                                false,
+                                cx,
+                            );
+                        } else {
+                            this.set_note(
+                                format!("Found {} device(s) on your local network!", count),
+                                false,
+                                cx,
+                            );
+                        }
+                        cx.notify();
+                    });
+                }
+                Err(e) => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.set_note(format!("Discovery error: {}", e), true, cx);
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     fn set_note(&mut self, text: impl Into<String>, error: bool, cx: &mut Context<Self>) {
         self.mouse_borders.note = Some(Note {
             text: text.into(),
@@ -153,11 +247,7 @@ impl SettingsView {
                 next.mouse_borders.enabled = true;
                 self.mouse_borders.confirm = None;
                 self.mutate(cx, move |settings| *settings = next);
-                self.set_note(
-                    format!("Pairing code copied to clipboard!"),
-                    false,
-                    cx,
-                );
+                self.set_note(format!("Pairing code copied to clipboard!"), false, cx);
             }
             Err(error) => self.set_note(error, true, cx),
         }
@@ -177,11 +267,7 @@ impl SettingsView {
         let code = match PairingCode::parse(&text) {
             Ok(code) => code,
             Err(error) => {
-                self.set_note(
-                    format!("Invalid pairing code: {}", error),
-                    true,
-                    cx,
-                );
+                self.set_note(format!("Invalid pairing code: {}", error), true, cx);
 
                 return;
             }
@@ -530,6 +616,9 @@ impl SettingsView {
         let pal = self.palette;
         let confirm = self.mouse_borders.confirm;
 
+        let scan = self
+            .pill("mb-scan".into(), "Scan local network", false)
+            .on_click(cx.listener(|this, _event, _window, cx| this.scan_for_devices(cx)));
         let copy = self
             .pill("mb-copy-code".into(), "Copy pairing code", true)
             .on_click(cx.listener(|this, _event, _window, cx| this.copy_pairing_code(cx)));
@@ -566,16 +655,19 @@ impl SettingsView {
         let has_key = KeyStore::user_default().load().is_ok_and(|k| k.is_some());
         let mb = &self.settings.mouse_borders;
         let local = settings_edit::local_name(mb);
-        
+
         // Generate pairing code for display
         let pairing_code = if has_key {
             let key = KeyStore::user_default().load().ok().flatten();
-            let host = aujar_mouse_borders::net::pick_host(&aujar_mouse_borders::net::local_networks());
-            
+            let host =
+                aujar_mouse_borders::net::pick_host(&aujar_mouse_borders::net::local_networks());
+
             if let (Some(key), Some(host)) = (key, host) {
                 let mut temp_settings = mb.clone();
                 if let Ok(_) = settings_edit::add_machine(&mut temp_settings, &local, None) {
-                    if let Ok(code) = PairingCode::from_settings(&temp_settings, key, &local, Some(host)) {
+                    if let Ok(code) =
+                        PairingCode::from_settings(&temp_settings, key, &local, Some(host))
+                    {
                         Some(code.encode())
                     } else {
                         None
@@ -591,7 +683,7 @@ impl SettingsView {
         };
 
         let mut rows = Vec::new();
-        
+
         // Pairing instructions section
         if let Some(code) = pairing_code {
             // Show the pairing code prominently
@@ -622,16 +714,21 @@ impl SettingsView {
                         .text_color(rgb(pal.text_faint))
                         .child("Contains your security key - treat it like a password"),
                 );
-            
+
             let buttons = div().flex().flex_row().gap_2().child(copy);
-            
-            rows.push(self.row(
-                "Pairing code",
-                "Copy this on your first machine, then paste on others to connect.",
-                div().flex().flex_col().gap_2()
-                    .child(code_display)
-                    .child(buttons),
-            ));
+
+            rows.push(
+                self.row(
+                    "Pairing code",
+                    "Copy this on your first machine, then paste on others to connect.",
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(code_display)
+                        .child(buttons),
+                ),
+            );
         } else {
             rows.push(self.row(
                 "Pairing code",
@@ -639,7 +736,94 @@ impl SettingsView {
                 div().flex().flex_row().gap_2().child(copy).child(join),
             ));
         }
-        
+
+        // Display discovered devices
+        if !self.mouse_borders.discovered_devices.is_empty() {
+            let discovered = self.mouse_borders.discovered_devices.clone();
+            let devices_list: Vec<AnyElement> = discovered
+                .iter()
+                .map(|device| {
+                    let device_clone = device.clone();
+                    let add_button = self
+                        .pill(
+                            SharedString::from(format!("mb-add-{}", device.address)),
+                            "Add",
+                            false,
+                        )
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            let device = device_clone.clone();
+                            this.mutate(cx, move |settings| {
+                                let local = settings_edit::local_name(&settings.mouse_borders);
+                                let mut next = settings.clone();
+
+                                // Add the discovered device to the layout
+                                let used_slots: Vec<u8> =
+                                    next.mouse_borders.machines.iter().map(|m| m.slot).collect();
+
+                                let free_slot =
+                                    (0..4).find(|s| !used_slots.contains(s)).unwrap_or(0);
+
+                                next.mouse_borders.machines.push(aujar_config::Machine {
+                                    name: device.name.clone(),
+                                    slot: free_slot,
+                                    address: format!("{}:{}", device.address, device.port),
+                                });
+
+                                // Add local machine if not present
+                                settings_edit::add_machine(&mut next.mouse_borders, &local, None)
+                                    .ok();
+
+                                next.mouse_borders.enabled = true;
+                                *settings = next;
+                            });
+                        }));
+
+                    div()
+                        .flex()
+                        .flex_row()
+                        .justify_between()
+                        .items_center()
+                        .px_4()
+                        .py_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(pal.text))
+                                .child(format!("{}", device.name)),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(pal.text_dim))
+                                .child(format!("{}:{}", device.address, device.port)),
+                        )
+                        .child(add_button)
+                        .into_any_element()
+                })
+                .collect();
+
+            rows.push(
+                div()
+                    .px_4()
+                    .py_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(pal.text_dim))
+                            .child("Discovered devices on your local network:"),
+                    )
+                    .child(div().flex().flex_col().gap_1().children(devices_list))
+                    .into_any_element(),
+            );
+        }
+
+        // Add scan button
+        rows.push(self.row(
+            "Auto-discover",
+            "Scan your local network for other Mouse Borders devices. They must be running and on the same subnet.",
+            scan,
+        ));
+
         rows.push(self.row("Security key", &key_hint, new_key));
 
         if let Some(note) = &self.mouse_borders.note {

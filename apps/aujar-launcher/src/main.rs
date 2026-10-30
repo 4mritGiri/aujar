@@ -453,7 +453,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
 async fn run_daemon(socket: PathBuf) -> Result<()> {
     if let Err(error) = aujar_daemon::run(&socket).await {
         if error
@@ -468,11 +467,6 @@ async fn run_daemon(socket: PathBuf) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(windows)]
-async fn run_daemon(socket: PathBuf) -> Result<()> {
-    aujar_daemon::run(socket).await
 }
 
 async fn doctor() -> anyhow::Result<()> {
