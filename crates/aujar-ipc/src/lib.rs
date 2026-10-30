@@ -234,14 +234,14 @@ pub fn decode_line<T: DeserializeOwned>(line: &str) -> Result<T> {
 async fn connect(socket: impl AsRef<Path>) -> Result<LocalStream> {
     UnixStream::connect(socket)
         .await
-        .context("failed to connect to Aujar daemon")
+        .context("failed to connect to Aujar daemon. Start it with: systemctl --user start aujar")
 }
 
 #[cfg(windows)]
 async fn connect(socket: impl AsRef<Path>) -> Result<LocalStream> {
     ClientOptions::new()
         .open(socket.as_ref())
-        .context("failed to connect to Aujar daemon named pipe")
+        .context("failed to connect to Aujar daemon. Start it with: aujar daemon")
 }
 
 async fn open(socket: impl AsRef<Path>, request: Request) -> Result<LocalStream> {
