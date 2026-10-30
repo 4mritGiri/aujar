@@ -15,7 +15,8 @@ Microsoft PowerToys. It is an independent project and is not affiliated with Mic
 | — | Not applicable |
 
 Status reflects the repository at **v0.1.1**. Linux has no single API for windows, hotkeys
-or screen capture, so each feature lists its backend per session type.
+or screen capture, so each feature lists its backend per session type. Run `aujar platform` for
+the current target's machine-readable feature support report.
 
 ## 1. Platform
 
@@ -52,7 +53,7 @@ or screen capture, so each feature lists its backend per session type.
 | Screen ruler | Screen Ruler | `modules/ruler` | 🚧 stub | 📅 | 📅 (portal screencast) | 📅 | 📅 | Requires screen-capture permission |
 | Global hotkeys | (all modules) | `aujar-hotkeys` | 🚧 native portal route fails on GNOME 50 (app id required); `aujar shortcut install` (GNOME) and manual binding work ([HOTKEYS](HOTKEYS.md)) | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
 | Quick preview | Peek | — | 📅 | 📅 | 📅 | 📅 | 📅 | |
-| Image utilities | Image Resizer | — | 📅 | 📅 | 📅 | 📅 | 📅 | Pure Rust, no session dependency |
+| Image utilities | Image Resizer | `modules/image-resizer` | ✅ CLI resize engine | ✅ | ✅ | ✅ | ✅ | Pure Rust; also build-checked on macOS and Windows |
 | Keyboard remapping | Keyboard Manager | — | ⚠️ | ⚠️ (evdev/uinput, needs privileges) | ⚠️ | ⚠️ | ⚠️ | Privileged helper; design under review |
 | Mouse Without Borders (Linux, macOS, Windows) | Mouse Without Borders | `modules/mouse-borders` | ✅ engine, encrypted protocol, CLI, system service, 120+ tests; evdev/uinput/X11 backends compile-checked and smoke-tested with two real daemons, not yet on physical hardware. Layout editor in the settings window (drag-and-drop 📅) ([MOUSE_BORDERS](MOUSE_BORDERS.md)) | ✅ edges + shortcuts | ⚠️ shortcuts only: no pointer position on Wayland | ⚠️ shortcuts only | ⚠️ shortcuts only | evdev capture, uinput injection, X11 pointer; InputCapture portal 📅 |
 | NexDesk (open the remote-access manager) | — | `modules/nexdesk` | ✅ `aujar nexdesk open` / `status`; saved-connection search and a settings page 📅 ([NEXDESK](NEXDESK.md)) | ✅ | ✅ | ✅ | ✅ | process launch only, no desktop backend |

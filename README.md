@@ -1,16 +1,21 @@
 # Aujar
 
-**Native Linux Productivity Platform** — an open-source, modular toolkit for Linux desktops,
-inspired by the utilities Windows users get from PowerToys. Independent project; not
-affiliated with Microsoft.
+**Cross-platform productivity toolkit** — an open-source, modular toolkit inspired by the
+utilities Windows users get from PowerToys. Aujar is independent and not affiliated with
+Microsoft. Linux is the first active desktop target; portable modules are built for Windows,
+macOS, and Linux.
 
 [![CI](https://github.com/4mritGiri/aujar/actions/workflows/ci.yml/badge.svg)](https://github.com/4mritGiri/aujar/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![MSRV](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
 
-> **Status: early development (v0.1.x).** Only the platform foundation and the batch-rename
-> engine are functional. See the [feature matrix](docs/FEATURE_MATRIX.md) for exactly what
-> works on X11, Sway/Hyprland, KDE and GNOME.
+> **Status: early development (v0.1.x).** The platform foundation, batch rename, and portable
+> image resize engine are functional. See the [feature matrix](docs/FEATURE_MATRIX.md) for
+> desktop-specific status.
+
+Run `aujar platform` to see the support level for every planned PowerToys-style utility on the
+current platform. `available` is ready to use; `partial` has a backend with documented limits;
+`planned` is not advertised as working.
 
 ## About the name
 
@@ -123,6 +128,12 @@ cargo run -p aujar-launcher-app -- rename \
   --replacement new \
   old_report.txt old_data.txt \
   --apply
+```
+
+Resize an image on Windows, macOS, or Linux (the output extension selects its format):
+
+```bash
+cargo run -p aujar-launcher-app -- image resize photo.jpg photo-small.png --width 1280 --height 720 --shrink-only
 ```
 
 Regex:
