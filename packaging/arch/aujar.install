@@ -1,0 +1,12 @@
+post_install() {
+  # pacman's own hooks create the user and reload udev; this makes uinput usable right away.
+  modprobe uinput 2>/dev/null || true
+  udevadm trigger --subsystem-match=misc --sysname-match=uinput 2>/dev/null || true
+
+  echo "==> Mouse Borders: turn on \"Share keyboard and mouse\" in Aujar's settings, or run"
+  echo "    'aujar mwb setup' once, to allow keyboard and mouse access for your account."
+}
+
+post_upgrade() {
+  post_install
+}

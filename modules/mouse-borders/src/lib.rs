@@ -21,6 +21,7 @@ pub mod layout;
 pub mod link;
 pub mod net;
 pub mod pairing;
+pub mod permissions;
 pub mod protocol;
 pub mod router;
 pub mod secure;

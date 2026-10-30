@@ -4,7 +4,11 @@
 //! Shared by `aujar mwb ...` (talking to the Aujar daemon) and the standalone `aujar-mwb`
 //! agent (talking to its own control channel), through the [`Transport`] trait.
 
-use std::{fmt::Write as _, path::PathBuf};
+use std::{
+    fmt::Write as _,
+    io::{BufRead, IsTerminal, Write as _},
+    path::PathBuf,
+};
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -18,6 +22,7 @@ use aujar_mouse_borders::{
     layout::MachineName,
     net,
     pairing::PairingCode,
+    permissions::{self, Interaction, Outcome},
     settings_edit,
 };
 use clap::{Subcommand, ValueEnum};
@@ -140,6 +145,14 @@ pub enum MwbCommand {
     /// Check that this machine is ready, and say how to fix what is not.
     Doctor,
 
+    /// Give your account the keyboard and mouse access Mouse Borders needs (Linux). Asks for
+    /// your password once; nothing to do on macOS and Windows.
+    Setup {
+        /// Ask first, and say nothing when access already works. For installers and scripts.
+        #[arg(long)]
+        ask: bool,
+    },
+
     /// Show the latest entries of the audit log (connections, control, files, key changes).
     Audit {
         /// How many entries to show.
@@ -159,11 +172,23 @@ pub async fn run(command: MwbCommand, cli: &Cli<'_>) -> Result<()> {
     match command {
         MwbCommand::Doctor => doctor_report(),
 
+        MwbCommand::Setup { ask: true } => offer_setup(cli).await,
+
+        MwbCommand::Setup { ask: false } => setup(cli).await,
+
         MwbCommand::Audit { lines } => audit_tail(lines),
 
-        MwbCommand::Pair => pair(cli.program),
+        MwbCommand::Pair => {
+            pair(cli.program)?;
 
-        MwbCommand::Join { code, force } => join(&code, force, cli.program),
+            offer_setup(cli).await
+        }
+
+        MwbCommand::Join { code, force } => {
+            join(&code, force, cli.program)?;
+
+            offer_setup(cli).await
+        }
 
         MwbCommand::Status => match ask(cli, MouseBordersRequest::Status).await? {
             MouseBordersResponse::Status(status) => {
@@ -361,6 +386,78 @@ fn join(code: &str, force: bool, program: &str) -> Result<()> {
     );
     println!("{message}");
     println!("Mouse Borders is on. Check with `{program} status`.");
+
+    Ok(())
+}
+
+/// Make this machine's input devices usable, then tell the running service to look again.
+async fn setup(cli: &Cli<'_>) -> Result<()> {
+    if !permissions::needs_setup() {
+        println!("Nothing to set up: this machine's input devices are ready.");
+
+        return Ok(());
+    }
+
+    println!("Mouse Borders needs access to this machine's keyboard and mouse devices.");
+    println!("This loads the `uinput` module, adds you to the `input` group and allows the");
+    println!("devices for this session. It asks for your password once.\n");
+
+    match permissions::setup(Interaction::Terminal)? {
+        Outcome::Ready => println!("\nDone: Mouse Borders can use your input devices now."),
+        Outcome::NeedsRelogin => println!(
+            "\nDone. Log out and back in once so the new group takes effect, then check \
+             with `{} status`.",
+            cli.program
+        ),
+    }
+
+    // A running service tried the devices when it started: have it try again. Best effort,
+    // since it may simply not be running.
+    let _ = ask(cli, MouseBordersRequest::Reload).await;
+
+    Ok(())
+}
+
+/// After turning Mouse Borders on from the command line: if the devices are not usable, offer
+/// to fix that now. Without a terminal to ask on, only say how.
+async fn offer_setup(cli: &Cli<'_>) -> Result<()> {
+    if !permissions::needs_setup() {
+        return Ok(());
+    }
+
+    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+
+    if !interactive {
+        println!(
+            "\nThis machine's input devices are not accessible yet. \
+             Run `{} setup` once to fix that.",
+            cli.program
+        );
+
+        return Ok(());
+    }
+
+    print!(
+        "\nMouse Borders cannot use this machine's keyboard and mouse yet. \
+         Set that up now? [Y/n] "
+    );
+    std::io::stdout().flush().ok();
+
+    let mut answer = String::new();
+
+    std::io::stdin().lock().read_line(&mut answer).ok();
+
+    if matches!(answer.trim().to_lowercase().as_str(), "" | "y" | "yes") {
+        println!();
+
+        // A cancelled password prompt is not a failure of pairing: say so and go on.
+        if let Err(error) = setup(cli).await {
+            println!("Could not set up input access: {error:#}");
+            println!("Try again later with `{} setup`.", cli.program);
+        }
+    } else {
+        println!("Skipped. Run `{} setup` when you are ready.", cli.program);
+    }
 
     Ok(())
 }

@@ -36,8 +36,7 @@ pub struct UinputSink {
 fn io_error(what: &str, error: std::io::Error) -> Error {
     let hint = match error.kind() {
         std::io::ErrorKind::PermissionDenied => {
-            " (no permission for /dev/uinput; install packaging/udev/70-aujar-mouse-borders.rules \
-             and add your user to the `input` group)"
+            " (no permission for /dev/uinput; run `aujar mwb setup` once to fix that)"
         }
         std::io::ErrorKind::NotFound => " (is the `uinput` kernel module loaded?)",
         _ => "",

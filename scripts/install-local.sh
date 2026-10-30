@@ -47,6 +47,13 @@ fi
 
 systemctl --user start aujar-ui.service
 
+# Mouse Borders (one keyboard and mouse across machines) needs one-time access to the input
+# devices. Offer it here so it is not a manual step later: this asks first, says nothing when
+# access already works, and does nothing where there is no terminal to ask on.
+if [ -t 0 ] && [ -t 1 ]; then
+    "$HOME/.local/bin/aujar" mwb setup --ask || true
+fi
+
 echo "Installed to ~/.local/bin/aujar (make sure ~/.local/bin is on your PATH)."
 echo "Daemon status: systemctl --user status aujar aujar-ui"
 echo "zsh completion: add  fpath=(~/.local/share/zsh/site-functions \$fpath)  before compinit / oh-my-zsh in ~/.zshrc"

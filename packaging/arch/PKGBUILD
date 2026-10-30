@@ -1,7 +1,7 @@
 # Maintainer: Aujar Contributors <https://github.com/4mritGiri/aujar>
 pkgname=aujar
 pkgver=0.1.1
-pkgrel=2
+pkgrel=3
 pkgdesc="Modular productivity toolkit for Linux desktops (CLI, daemon and UI)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/4mritGiri/aujar"
@@ -9,6 +9,7 @@ license=('Apache-2.0')
 depends=('gcc-libs' 'glibc')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+install=aujar.install
 sha256sums=('SKIP') # Replace before publishing.
 
 prepare() {
@@ -54,6 +55,16 @@ package() {
     "$pkgdir/usr/lib/systemd/user/aujar.service"
   install -Dm644 packaging/systemd/aujar-ui.service \
     "$pkgdir/usr/lib/systemd/user/aujar-ui.service"
+
+  # Mouse Borders, system side: service, udev rule, `aujar-mwb` user and the uinput module.
+  install -Dm644 packaging/systemd/aujar-mouse-borders.service \
+    "$pkgdir/usr/lib/systemd/system/aujar-mouse-borders.service"
+  install -Dm644 packaging/udev/70-aujar-mouse-borders.rules \
+    "$pkgdir/usr/lib/udev/rules.d/70-aujar-mouse-borders.rules"
+  install -Dm644 packaging/sysusers/aujar-mouse-borders.conf \
+    "$pkgdir/usr/lib/sysusers.d/aujar-mouse-borders.conf"
+  install -Dm644 packaging/modules-load/aujar-mouse-borders.conf \
+    "$pkgdir/usr/lib/modules-load.d/aujar-mouse-borders.conf"
 
   # Desktop entries
   install -Dm644 packaging/desktop/dev.aujar.Aujar.desktop \

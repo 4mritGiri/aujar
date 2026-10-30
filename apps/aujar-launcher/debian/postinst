@@ -8,10 +8,25 @@ case "$1" in
             # Enable services as the user who installed the package
             su - "$SUDO_USER" -c 'systemctl --user enable aujar.service aujar-ui.service' 2>/dev/null || true
         fi
-        
+
         # Enable system service for mouse-borders
         if [ -f /usr/lib/systemd/system/aujar-mouse-borders.service ]; then
             systemctl enable aujar-mouse-borders.service 2>/dev/null || true
+        fi
+
+        # Mouse Borders, system side: the `aujar-mwb` user, the uinput module and the udev rule
+        # that lets the `input` group use it. Nothing here touches any person's account: adding
+        # someone to the `input` group (which lets their programs read every keystroke) is
+        # asked for when they turn Mouse Borders on, or with `aujar mwb setup`.
+        if command -v systemd-sysusers >/dev/null 2>&1; then
+            systemd-sysusers aujar-mouse-borders.conf 2>/dev/null || true
+        fi
+
+        modprobe uinput 2>/dev/null || true
+
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm control --reload-rules 2>/dev/null || true
+            udevadm trigger --subsystem-match=misc --sysname-match=uinput 2>/dev/null || true
         fi
         ;;
     abort-upgrade|abort-remove|abort-deconfigure)
@@ -20,4 +35,4 @@ case "$1" in
         ;;
 esac
 
-.exit 0
+exit 0

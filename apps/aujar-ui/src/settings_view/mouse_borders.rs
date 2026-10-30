@@ -17,6 +17,7 @@ use aujar_mouse_borders::{
     layout::{MachineName, PLANE_COLS, PLANE_ROWS},
     net,
     pairing::PairingCode,
+    permissions::{self, Interaction, Outcome},
     secure::SecurityKey,
     settings_edit,
 };
@@ -65,6 +66,8 @@ pub(super) struct State {
     refreshing: bool,
     discovered_devices: Vec<DiscoveredDevice>,
     scanning: bool,
+    /// The one-time device access setup is waiting for a password or running.
+    setting_up: bool,
     /// A pairing window this machine opened.
     host: Option<lan_pair::Handle>,
     /// A pairing this machine started with another one.
@@ -99,6 +102,27 @@ fn fetch_status() -> Result<MouseBordersStatus, String> {
             Ok(Ok(_)) => Err("The daemon sent an unexpected answer.".to_owned()),
         }
     })
+}
+
+/// Tell the daemon to read its settings and try the input devices again. Blocking: run it off
+/// the UI thread. Best effort: the daemon may not be running.
+fn reload_daemon() {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        return;
+    };
+
+    runtime.block_on(async {
+        let request = Request::MouseBorders(MouseBordersRequest::Reload);
+
+        let _ = tokio::time::timeout(
+            Duration::from_secs(2),
+            aujar_ipc::send(crate::socket_path(), request),
+        )
+        .await;
+    });
 }
 
 /// The security key, created if there is none yet.
@@ -157,6 +181,67 @@ impl SettingsView {
                 tick = tick.wrapping_add(1);
                 cx.background_executor().timer(TICK).await;
             }
+        })
+        .detach();
+    }
+
+    /// Make sure this machine's keyboard and mouse can be used: when they cannot, ask for the
+    /// password once (the desktop's own dialog) and set it up. Runs when sharing is turned on.
+    ///
+    /// The password dialog waits for a person, so this runs on the background executor.
+    pub(super) fn ensure_device_access(&mut self, cx: &mut Context<Self>) {
+        if self.mouse_borders.setting_up {
+            return;
+        }
+
+        self.mouse_borders.setting_up = true;
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async {
+                    if !permissions::needs_setup() {
+                        return Ok(None);
+                    }
+
+                    let outcome = permissions::setup(Interaction::Background);
+
+                    if outcome.is_ok() {
+                        reload_daemon();
+                    }
+
+                    outcome.map(Some)
+                })
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                this.mouse_borders.setting_up = false;
+
+                match result {
+                    Ok(None) => {}
+                    Ok(Some(Outcome::Ready)) => this.set_note(
+                        "Mouse Borders can use this machine's keyboard and mouse now.",
+                        false,
+                        cx,
+                    ),
+                    Ok(Some(Outcome::NeedsRelogin)) => this.set_note(
+                        "Access granted. Log out and back in once to finish; \
+                         the keyboard and mouse work from then on.",
+                        false,
+                        cx,
+                    ),
+                    Err(error) => this.set_note(
+                        format!(
+                            "Could not set up keyboard and mouse access: {error}. \
+                             Run `aujar mwb setup` in a terminal to try again."
+                        ),
+                        true,
+                        cx,
+                    ),
+                }
+
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -376,6 +461,7 @@ impl SettingsView {
                 self.mouse_borders.confirm = None;
                 self.mutate(cx, move |settings| *settings = next);
                 self.set_note("Pairing code copied to the clipboard.", false, cx);
+                self.ensure_device_access(cx);
             }
             Err(error) => self.set_note(error, true, cx),
         }
@@ -465,6 +551,7 @@ impl SettingsView {
             false,
             cx,
         );
+        self.ensure_device_access(cx);
     }
 
     fn new_key(&mut self, cx: &mut Context<Self>) {
@@ -504,14 +591,28 @@ impl SettingsView {
 
         // Enable and identity.
         let enable = vec![
-            toggle_row!(
-                self,
-                cx,
-                "mb-enabled",
-                "Share keyboard and mouse",
-                "Lets other machines you pair with use this one, and the other way around. Opens a network listener while on.",
-                mouse_borders.enabled
-            ),
+            {
+                // Like `toggle_row!`, and turning it on also sets up device access.
+                let control = self
+                    .switch("mb-enabled", mb.enabled)
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        let turning_on = !this.settings.mouse_borders.enabled;
+
+                        this.mutate(cx, |settings| {
+                            settings.mouse_borders.enabled = !settings.mouse_borders.enabled
+                        });
+
+                        if turning_on {
+                            this.ensure_device_access(cx);
+                        }
+                    }));
+
+                self.row(
+                    "Share keyboard and mouse",
+                    "Lets other machines you pair with use this one, and the other way around. Opens a network listener while on. The first time, you are asked for your password to allow access to the keyboard and mouse.",
+                    control,
+                )
+            },
             self.row(
                 "This machine",
                 "The name your other machines see. Change it with machine_name in the config file.",
