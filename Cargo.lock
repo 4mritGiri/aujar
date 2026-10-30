@@ -602,6 +602,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aujar-image-resizer"
+version = "0.1.1"
+dependencies = [
+ "image",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "aujar-ipc"
 version = "0.1.1"
 dependencies = [
@@ -634,10 +642,12 @@ dependencies = [
  "aujar-config",
  "aujar-core",
  "aujar-daemon",
+ "aujar-image-resizer",
  "aujar-ipc",
  "aujar-launcher",
  "aujar-mouse-borders",
  "aujar-mwb-cli",
+ "aujar-platform",
  "aujar-rename",
  "clap",
  "clap_complete",
@@ -3284,6 +3294,7 @@ dependencies = [
  "qoi",
  "ravif",
  "rayon",
+ "rgb",
  "tiff",
  "zune-core",
  "zune-jpeg",

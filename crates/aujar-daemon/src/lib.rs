@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use aujar_core::{Capability, Health, WindowId};
+use aujar_core::{Capability, Health, Platform, WindowId};
 use aujar_hotkeys::{HotkeyEvent, ShortcutSpec};
 use aujar_ipc::{
     ColorResponse, Envelope, Event, ExecuteResponse, LauncherCommand, ModuleInfo, ModulesResponse,
@@ -326,6 +326,7 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
         name: "Aujar".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         session,
+        platform: Platform::current(),
     };
 
     let mouse_borders = mouse_borders::module(&denied);

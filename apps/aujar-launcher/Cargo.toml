@@ -20,11 +20,13 @@ aujar-config = { workspace = true }
 aujar-core = { workspace = true }
 aujar-color = { workspace = true }
 aujar-daemon = { workspace = true }
+aujar-image-resizer = { workspace = true }
 aujar-ipc = { workspace = true }
 aujar-launcher = { workspace = true }
 aujar-mouse-borders = { workspace = true }
 aujar-mwb-cli = { workspace = true }
 aujar-rename = { workspace = true }
+aujar-platform = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
