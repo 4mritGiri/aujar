@@ -1,5 +1,8 @@
-# Mouse Borders: one keyboard and mouse for up to four Linux machines.
-# Add this section to ~/.config/aujar/settings.toml (the same text can go on every machine),
+# Mouse Borders: one keyboard and mouse for up to four Linux, macOS, or Windows machines.
+# Add this section to Aujar's settings.toml (the same text can go on every machine):
+# Linux: ~/.config/aujar/settings.toml (or $XDG_CONFIG_HOME/aujar/settings.toml)
+# macOS: ~/Library/Application Support/Aujar/settings.toml
+# Windows: %APPDATA%\Aujar\settings.toml
 # then:   aujar mwb key generate     on one machine
 #         aujar mwb key set <KEY>    on the others
 # Full guide: docs/MOUSE_BORDERS.md

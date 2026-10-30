@@ -1,6 +1,11 @@
 # Packaging and Installation
 
-Aujar ships a small CLI + daemon (`aujar`). Every package installs:
+Aujar ships two deliverables:
+
+- `aujar`, the Linux desktop CLI + daemon.
+- `aujar-mwb`, the Mouse Borders agent for Linux, macOS, and Windows.
+
+The Linux desktop package installs:
 
 | File | Destination |
 |---|---|
@@ -32,8 +37,16 @@ systemctl --user enable --now aujar
 | Any distro (tarball) | extract, then run `./install-local.sh` for a per-user install |
 | From source | `scripts/install-local.sh` (builds and installs under `~/.local`); undo with `scripts/uninstall-local.sh` |
 
-Release assets (built for `x86_64` and `aarch64`) and `SHA256SUMS` are attached to each GitHub
-release: `.deb`, `.rpm` and a `.tar.gz`.
+Release assets and `SHA256SUMS` are attached to each GitHub release:
+
+| Deliverable | Linux | macOS | Windows |
+|---|---|---|---|
+| Aujar desktop (`aujar`) | `.deb`, `.rpm`, `.tar.gz` (`x86_64`, `aarch64`) | — | — |
+| Mouse Borders (`aujar-mwb`) | `.tar.gz` (`x86_64`, `aarch64`) | `.tar.gz` (Intel, Apple Silicon) | `.zip` (`x86_64`) |
+
+The desktop launcher/daemon is intentionally Linux-only; macOS and Windows releases contain
+the native Mouse Borders agent. See [`packaging/mwb/README.md`](../packaging/mwb/README.md)
+inside each Mouse Borders archive for installation, autostart, and permissions.
 
 ## Building packages yourself
 
@@ -50,8 +63,9 @@ Metadata lives in `apps/aujar-launcher/Cargo.toml` (`[package.metadata.deb]` and
 
 - Every PR builds the `.deb` and `.rpm`, lists their contents, and installs the `.deb` on Ubuntu
   (`.github/workflows/ci.yml`, job `package`).
-- Pushing a tag `vX.Y.Z` (it must match the crate version) builds both architectures and
-  publishes a GitHub release (`.github/workflows/release.yml`).
+- Pushing a tag `vX.Y.Z` (it must match the crate version) builds native Linux, macOS, and
+  Windows Mouse Borders archives, Linux desktop packages, checksums, and publishes a GitHub
+  release (`.github/workflows/release.yml`).
 
 ## Status
 
@@ -60,6 +74,8 @@ Metadata lives in `apps/aujar-launcher/Cargo.toml` (`[package.metadata.deb]` and
 | `.deb` (x86_64, aarch64) | ✅ configured | `cargo-deb`; not yet verified on a published release |
 | `.rpm` (x86_64, aarch64) | ✅ configured | `cargo-generate-rpm`; asset-path handling to be confirmed on the first CI run |
 | Tarball + `SHA256SUMS` | ✅ configured | |
+| Mouse Borders macOS archive (x86_64, aarch64) | ✅ configured | native GitHub macOS runners |
+| Mouse Borders Windows archive (x86_64) | ✅ configured | native GitHub Windows runner |
 | Arch `PKGBUILD` | ✅ provided | replace `sha256sums`; AUR submission 📅 |
 | Flatpak | 📅 | needs the UI; daemon-to-host permissions to be designed |
 | AppImage | 📅 | needs the UI |

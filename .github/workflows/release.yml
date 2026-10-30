@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  linux:
     name: build (${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -51,15 +51,71 @@ jobs:
           name: dist-${{ matrix.arch }}
           path: dist/*
 
+  # The desktop launcher/daemon is Linux-only.  Mouse Borders has native input
+  # backends for all three desktop platforms, so ship it as a self-contained
+  # archive on macOS and Windows.  This deliberately builds on each native
+  # runner instead of cross-compiling system APIs.
+  mouse-borders:
+    name: mouse-borders (${{ matrix.platform }}-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, platform: linux, arch: aarch64 }
+          - { runner: macos-13, platform: macos, arch: x86_64 }
+          - { runner: macos-14, platform: macos, arch: aarch64 }
+          - { runner: windows-latest, platform: windows, arch: x86_64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the tag matches the crate version
+        shell: bash
+        run: |
+          version=$(cargo pkgid -p aujar-mwb | sed 's/.*#//')
+          [ "v${version}" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} does not match version v${version}"; exit 1; }
+
+      - name: Build Mouse Borders
+        run: cargo build --release --locked -p aujar-mwb
+
+      - name: Create Unix archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="aujar-mwb-${GITHUB_REF_NAME}-${{ matrix.platform }}-${{ matrix.arch }}"
+          mkdir -p "dist/${name}"
+          cp target/release/aujar-mwb LICENSE config/mouse-borders.example.toml \
+            packaging/mwb/README.md "dist/${name}/"
+          (cd dist && tar -czf "${name}.tar.gz" "$name")
+
+      - name: Create Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "aujar-mwb-$env:GITHUB_REF_NAME-windows-x86_64"
+          $stage = Join-Path "dist" $name
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target/release/aujar-mwb.exe, LICENSE, config/mouse-borders.example.toml, packaging/mwb/README.md -Destination $stage
+          Compress-Archive -Path $stage -DestinationPath "dist/$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mwb-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
+
   release:
-    needs: build
+    needs: [linux, mouse-borders]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: dist-*
+          pattern: "*"
           merge-multiple: true
           path: dist
       - name: Checksums
