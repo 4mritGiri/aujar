@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Try to enable user services for the installing user
+        if [ -n "$SUDO_USER" ] && command -v systemctl >/dev/null 2>&1; then
+            # Enable services as the user who installed the package
+            su - "$SUDO_USER" -c 'systemctl --user enable aujar.service aujar-ui.service' 2>/dev/null || true
+        fi
+        
+        # Enable system service for mouse-borders
+        if [ -f /usr/lib/systemd/system/aujar-mouse-borders.service ]; then
+            systemctl enable aujar-mouse-borders.service 2>/dev/null || true
+        fi
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        ;;
+esac
+
+.exit 0
