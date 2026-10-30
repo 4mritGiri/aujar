@@ -1,0 +1,23 @@
+Aujar for Debian/Ubuntu
+=======================
+
+After installing this package, you need to enable and start the services:
+
+    systemctl --user enable --now aujar.service aujar-ui.service
+
+This will:
+- Start the Aujar daemon (background service)
+- Start the Aujar launcher UI
+- Allow you to use Ctrl+Alt+Space to show the launcher
+
+If you don't enable the services, running `aujar launcher toggle` or
+clicking the Aujar desktop icon will result in "No launcher UI is subscribed".
+
+---
+
+Alternatively, you can use the install-local.sh script for a fully automatic
+setup (recommended for most users):
+
+    ./scripts/install-local.sh
+
+This script handles building, installing, and enabling everything.
