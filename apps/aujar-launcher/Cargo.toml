@@ -51,6 +51,7 @@ assets = [
     ["../../packaging/systemd/aujar.service", "usr/lib/systemd/user/", "644"],
     ["../../packaging/systemd/aujar-ui.service", "usr/lib/systemd/user/", "644"],
     ["../../packaging/desktop/aujar.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/aujar/README.Debian", "usr/share/doc/aujar/README.Debian", "644"],
     ["../../packaging/desktop/dev.aujar.Aujar.desktop", "usr/share/applications/", "644"],
     ["../../config/policy.example.toml", "usr/share/doc/aujar/", "644"],
     ["../../config/mouse-borders.example.toml", "usr/share/doc/aujar/", "644"],
