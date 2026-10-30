@@ -154,7 +154,7 @@ impl SettingsView {
                 self.mouse_borders.confirm = None;
                 self.mutate(cx, move |settings| *settings = next);
                 self.set_note(
-                    format!("Pairing code copied to clipboard!\n\n{}", code),
+                    format!("Pairing code copied to clipboard!"),
                     false,
                     cx,
                 );
@@ -235,8 +235,7 @@ impl SettingsView {
         self.mutate(cx, move |settings| *settings = next);
         self.set_note(
             format!(
-                "\u{2705} Successfully joined! {} machines in the layout. \
-                 Mouse and keyboard sharing is now active.",
+                "\u{2705} Successfully joined! {} machines in the layout. Mouse and keyboard sharing is now active.",
                 joined.machines,
             ),
             false,
@@ -310,12 +309,19 @@ impl SettingsView {
                 )
                 .child(
                     div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
                         .text_xs()
                         .text_color(rgb(self.palette.text_dim))
                         .child(
-                            "1. On your first machine: Click 'Copy pairing code' below \u{2014} it's automatically copied. \
-                             2. On each other machine: Click 'Join from clipboard' \u{2014} the code is automatically detected. \
-                             3. Move your mouse to the screen edge to switch between machines.",
+                            div().child("1. On your first machine: Click 'Copy pairing code' below – it's automatically copied."),
+                        )
+                        .child(
+                            div().child("2. On each other machine: Click 'Join from clipboard' – the code is automatically detected."),
+                        )
+                        .child(
+                            div().child("3. Move your mouse to the screen edge to switch between machines."),
                         ),
                 )
                 .into_any_element()
@@ -617,12 +623,14 @@ impl SettingsView {
                         .child("Contains your security key - treat it like a password"),
                 );
             
+            let buttons = div().flex().flex_row().gap_2().child(copy);
+            
             rows.push(self.row(
                 "Pairing code",
                 "Copy this on your first machine, then paste on others to connect.",
                 div().flex().flex_col().gap_2()
                     .child(code_display)
-                    .child(div().flex().flex_row().gap_2().child(copy)),
+                    .child(buttons),
             ));
         } else {
             rows.push(self.row(
