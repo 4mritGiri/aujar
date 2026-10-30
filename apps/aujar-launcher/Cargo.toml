@@ -43,6 +43,8 @@ Aujar is a modular productivity toolkit for Linux desktops: a launcher, batch re
 and more, served by a small per-user daemon that talks to desktop UIs over a local socket. \
 \nAfter installing this package, enable both services with:\n  systemctl --user enable --now aujar.service aujar-ui.service\n\nThis will start the daemon and the launcher UI, allowing you to use the\nkeyboard shortcut (Ctrl+Alt+Space) to show the launcher."""
 section = "utils"
+# `postinst` and `prerm` in this folder.
+maintainer-scripts = "debian"
 priority = "optional"
 depends = "$auto"
 assets = [
@@ -87,6 +89,15 @@ assets = [
     { source = "README.md", dest = "/usr/share/doc/aujar/README.md", mode = "0644", doc = true },
     { source = "LICENSE", dest = "/usr/share/licenses/aujar/LICENSE", mode = "0644", license = true },
 ]
+
+# Mouse Borders, system side: the `aujar-mwb` user, the uinput module and its udev rule. Adding a
+# person to the `input` group is asked for when they turn Mouse Borders on (`aujar mwb setup`).
+post_install_script = """
+systemd-sysusers aujar-mouse-borders.conf >/dev/null 2>&1 || :
+modprobe uinput >/dev/null 2>&1 || :
+udevadm control --reload-rules >/dev/null 2>&1 || :
+udevadm trigger --subsystem-match=misc --sysname-match=uinput >/dev/null 2>&1 || :
+"""
 
 [dev-dependencies]
 tempfile = "3"

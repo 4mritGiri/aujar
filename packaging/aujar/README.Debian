@@ -10,6 +10,13 @@ This will:
 - Start the Aujar launcher UI
 - Allow you to use Ctrl+Alt+Space to show the launcher
 
+To share one keyboard and mouse between computers (Mouse Borders), turn on "Share keyboard
+and mouse" in the settings window, or run once:
+
+    aujar mwb setup
+
+It asks for your password and gives your account access to the keyboard and mouse devices.
+
 If you don't enable the services, running `aujar launcher toggle` or
 clicking the Aujar desktop icon will result in "No launcher UI is subscribed".
 

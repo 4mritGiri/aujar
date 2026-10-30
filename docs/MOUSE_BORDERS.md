@@ -189,9 +189,20 @@ the kernel's input layer directly (this works on X11 *and* Wayland):
 * **Injection** writes `/dev/uinput`. Install `packaging/udev/70-aujar-mouse-borders.rules`
   (the package does) and make sure the `uinput` module loads (`packaging/modules-load`).
 
+You do not have to do this by hand. Turning on *Share keyboard and mouse* in Settings, pairing a
+machine, or running
+
 ```bash
-sudo usermod -aG input "$USER"      # then log out and back in
+aujar mwb setup          # or: aujar-mwb setup
 ```
+
+sets it all up after one password prompt: it loads `uinput` (now and at boot), installs the udev
+rule, adds you to `input`, and, where `setfacl` is available, also allows the devices for the
+current session so you do not need to log out. Without `setfacl` it asks you to log out and back
+in once. It is safe to run again, and `aujar mwb doctor` shows whether it is still needed. The
+manual equivalent is the script in `modules/mouse-borders/data/linux-setup.sh`. To undo it, delete
+`/etc/udev/rules.d/70-aujar-mouse-borders.rules` and
+`/etc/modules-load.d/aujar-mouse-borders.conf`, and run `sudo gpasswd -d "$USER" input`.
 
 > **What `input` membership means.** Any program running as you can then read every keystroke on
 > the machine, not only Aujar. That is how Linux input access works, and the main cost of this
@@ -317,8 +328,8 @@ to work for that user. Logs: `journalctl -u aujar-mouse-borders`.
 | Machines never connect, `last_error` mentions the key | Different keys: run `key show` on both and compare |
 | `outside this machine's subnets` | Different networks, or a VPN. Set `same_subnet_only = false` if that is intended |
 | `cannot listen … in use` | Another Aujar instance (user daemon or system service) owns the port |
-| `no permission to read /dev/input` | Join the `input` group and log in again |
-| `cannot create the virtual keyboard` | Load `uinput` and install the udev rule, then re-plug or `sudo udevadm trigger` |
+| `no permission to read /dev/input` | Run `aujar mwb setup` |
+| `cannot create the virtual keyboard` | Run `aujar mwb setup` (it loads `uinput` and installs the udev rule) |
 | Pointer does not switch at edges, shortcuts do | Wayland (above), or `easy_mouse` is off or needs a modifier |
 | Keys stuck after switching | Report it; `aujar mwb reconnect` clears state on both ends |
 | Clipboard does not follow | Install `wl-clipboard` (Wayland) or `xclip` (X11) |

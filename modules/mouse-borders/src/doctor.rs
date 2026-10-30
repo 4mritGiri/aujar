@@ -223,7 +223,7 @@ fn platform(settings: &MouseBorders) -> Vec<Check> {
         Some(_) => Check::fail(
             "Capturing input",
             "no permission to read /dev/input/event*",
-            "add your user to the `input` group (sudo usermod -aG input $USER) and log in again",
+            "run `aujar mwb setup` (or `aujar-mwb setup`): it adds your user to the `input` group, and asks for your password once",
         ),
         None => Check::fail(
             "Capturing input",
@@ -238,7 +238,7 @@ fn platform(settings: &MouseBorders) -> Vec<Check> {
             Err(error) => Check::fail(
                 "Injecting input",
                 format!("cannot open /dev/uinput ({error})"),
-                "install the udev rule from packaging/udev, load the `uinput` module, add your user to `input`",
+                "run `aujar mwb setup` (or `aujar-mwb setup`): it loads `uinput`, installs the udev rule and adds your user to `input`",
             ),
         },
     );

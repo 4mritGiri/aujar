@@ -265,8 +265,8 @@ impl EvdevSource {
             return Err(Error::unsupported(
                 "input capture",
                 format!(
-                    "no permission to read {INPUT_DIR}/event*. Add your user to the `input` \
-                     group and log in again, or run Aujar's system service"
+                    "no permission to read {INPUT_DIR}/event*. Run `aujar mwb setup` once to fix \
+                     that (or run Aujar's system service)"
                 ),
             ));
         }
