@@ -138,8 +138,11 @@ pub fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    fn env(pairs: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
-        let pairs = pairs.to_vec();
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
+        let pairs = pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<Vec<_>>();
 
         move |name| {
             pairs
@@ -151,37 +154,46 @@ mod tests {
 
     #[test]
     fn linux_follows_xdg_and_falls_back_to_home() {
-        let xdg = env(&[("XDG_CONFIG_HOME", "/cfg"), ("HOME", "/home/me")]);
-        let plain = env(&[("HOME", "/home/me")]);
+        let base = std::env::temp_dir().join("aujar-platform-tests");
+        let xdg_root = base.join("config");
+        let home = base.join("home");
+        let xdg_root_text = xdg_root.to_string_lossy();
+        let home_text = home.to_string_lossy();
+        let xdg = env(&[("XDG_CONFIG_HOME", &xdg_root_text), ("HOME", &home_text)]);
+        let plain = env(&[("HOME", &home_text)]);
 
-        assert_eq!(config_dir_for(Os::Linux, &xdg), Path::new("/cfg/aujar"));
+        assert_eq!(config_dir_for(Os::Linux, &xdg), xdg_root.join("aujar"));
         assert_eq!(
             config_dir_for(Os::Linux, &plain),
-            Path::new("/home/me/.config/aujar")
+            home.join(".config/aujar")
         );
         assert_eq!(
             state_dir_for(Os::Linux, &plain),
-            Path::new("/home/me/.local/state/aujar")
+            home.join(".local/state/aujar")
         );
     }
 
     #[test]
     fn linux_ignores_relative_xdg_values() {
-        let relative = env(&[("XDG_CONFIG_HOME", "relative/dir"), ("HOME", "/home/me")]);
+        let home = std::env::temp_dir().join("aujar-platform-tests/home");
+        let home_text = home.to_string_lossy();
+        let relative = env(&[("XDG_CONFIG_HOME", "relative/dir"), ("HOME", &home_text)]);
 
         assert_eq!(
             config_dir_for(Os::Linux, &relative),
-            Path::new("/home/me/.config/aujar")
+            home.join(".config/aujar")
         );
     }
 
     #[test]
     fn macos_uses_application_support() {
-        let mac = env(&[("HOME", "/Users/me")]);
+        let home = std::env::temp_dir().join("aujar-platform-tests/home");
+        let home_text = home.to_string_lossy();
+        let mac = env(&[("HOME", &home_text)]);
 
         assert_eq!(
             config_dir_for(Os::MacOs, &mac),
-            Path::new("/Users/me/Library/Application Support/Aujar")
+            home.join("Library/Application Support/Aujar")
         );
         assert_eq!(
             config_dir_for(Os::MacOs, &mac),
@@ -189,39 +201,39 @@ mod tests {
         );
         assert_eq!(
             downloads_dir_for(Os::MacOs, &mac),
-            Some(PathBuf::from("/Users/me/Downloads/Aujar"))
+            Some(home.join("Downloads/Aujar"))
         );
-        // Linux keeps the capitalised folder name it always had.
+        // Linux keeps the capitalised downloads folder name it always had.
+        let linux_home = std::env::temp_dir().join("aujar-platform-tests/linux-home");
+        let linux_home_text = linux_home.to_string_lossy();
         assert_eq!(
-            downloads_dir_for(Os::Linux, &env(&[("HOME", "/home/me")])),
-            Some(PathBuf::from("/home/me/Downloads/Aujar"))
+            downloads_dir_for(Os::Linux, &env(&[("HOME", &linux_home_text)])),
+            Some(linux_home.join("Downloads/Aujar"))
         );
     }
 
     #[test]
     fn windows_uses_appdata_and_localappdata() {
+        let base = std::env::temp_dir().join("aujar-platform-tests");
+        let roaming = base.join("Roaming");
+        let local = base.join("Local");
+        let home = base.join("home");
+        let roaming_text = roaming.to_string_lossy();
+        let local_text = local.to_string_lossy();
+        let home_text = home.to_string_lossy();
         let win = env(&[
-            ("APPDATA", r"C:\Users\me\AppData\Roaming"),
-            ("LOCALAPPDATA", r"C:\Users\me\AppData\Local"),
-            ("USERPROFILE", r"C:\Users\me"),
+            ("APPDATA", &roaming_text),
+            ("LOCALAPPDATA", &local_text),
+            ("USERPROFILE", &home_text),
         ]);
 
-        assert_eq!(
-            config_dir_for(Os::Windows, &win),
-            Path::new(r"C:\Users\me\AppData\Roaming").join("Aujar")
-        );
-        assert_eq!(
-            state_dir_for(Os::Windows, &win),
-            Path::new(r"C:\Users\me\AppData\Local").join("Aujar")
-        );
+        assert_eq!(config_dir_for(Os::Windows, &win), roaming.join("Aujar"));
+        assert_eq!(state_dir_for(Os::Windows, &win), local.join("Aujar"));
         assert_eq!(
             downloads_dir_for(Os::Windows, &win),
-            Some(Path::new(r"C:\Users\me").join("Downloads").join("Aujar"))
+            Some(home.join("Downloads/Aujar"))
         );
-        assert_eq!(
-            home_dir_for(Os::Windows, &win),
-            Some(PathBuf::from(r"C:\Users\me"))
-        );
+        assert_eq!(home_dir_for(Os::Windows, &win), Some(home));
     }
 
     #[test]
@@ -236,32 +248,28 @@ mod tests {
 
     #[test]
     fn runtime_dirs() {
-        let linux = env(&[("XDG_RUNTIME_DIR", "/run/user/1000")]);
-        let mac = env(&[("TMPDIR", "/var/folders/ab/T/")]);
+        let base = std::env::temp_dir().join("aujar-platform-tests");
+        let linux_runtime = base.join("linux-runtime");
+        let mac_runtime = base.join("mac-runtime");
+        let linux_runtime_text = linux_runtime.to_string_lossy();
+        let mac_runtime_text = mac_runtime.to_string_lossy();
+        let linux = env(&[("XDG_RUNTIME_DIR", &linux_runtime_text)]);
+        let mac = env(&[("TMPDIR", &mac_runtime_text)]);
 
-        assert_eq!(
-            runtime_dir_for(Os::Linux, &linux),
-            Path::new("/run/user/1000")
-        );
-        assert_eq!(
-            runtime_dir_for(Os::MacOs, &mac),
-            Path::new("/var/folders/ab/T/")
-        );
+        assert_eq!(runtime_dir_for(Os::Linux, &linux), linux_runtime);
+        assert_eq!(runtime_dir_for(Os::MacOs, &mac), mac_runtime);
         assert_eq!(runtime_dir_for(Os::Linux, &env(&[])), std::env::temp_dir());
     }
 
     #[test]
     fn home_expansion() {
-        let home = Path::new("/home/me");
+        let home = std::env::temp_dir().join("aujar-platform-tests/home");
 
         assert_eq!(
-            expand_home(Path::new("~/Dl"), Some(home)),
-            Some(PathBuf::from("/home/me/Dl"))
+            expand_home(Path::new("~/Dl"), Some(&home)),
+            Some(home.join("Dl"))
         );
-        assert_eq!(
-            expand_home(Path::new("/abs"), None),
-            Some(PathBuf::from("/abs"))
-        );
+        assert_eq!(expand_home(&home, None), Some(home.clone()));
         assert_eq!(expand_home(Path::new("~/x"), None), None);
     }
 
