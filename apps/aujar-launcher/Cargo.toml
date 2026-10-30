@@ -19,7 +19,6 @@ clap_complete.workspace = true
 aujar-config = { workspace = true }
 aujar-core = { workspace = true }
 aujar-color = { workspace = true }
-aujar-daemon = { workspace = true }
 aujar-image-resizer = { workspace = true }
 aujar-ipc = { workspace = true }
 aujar-launcher = { workspace = true }
@@ -30,6 +29,9 @@ aujar-platform = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+aujar-daemon = { workspace = true }
 
 # ---- Debian/Ubuntu package: `cargo deb -p aujar-launcher-app` ----
 [package.metadata.deb]

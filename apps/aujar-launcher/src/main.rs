@@ -414,18 +414,7 @@ async fn main() -> Result<()> {
 
         Command::Daemon { socket } => {
             let socket_path = socket.unwrap_or_else(resolve_socket);
-
-            if let Err(error) = aujar_daemon::run(&socket_path).await {
-                if error
-                    .downcast_ref::<aujar_daemon::AlreadyRunning>()
-                    .is_some()
-                {
-                    eprintln!("aujar: {error}");
-                    std::process::exit(aujar_daemon::EXIT_ALREADY_RUNNING);
-                }
-
-                return Err(error);
-            }
+            run_daemon(socket_path).await?;
         }
 
         Command::Rename {
@@ -462,6 +451,30 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(not(windows))]
+async fn run_daemon(socket: PathBuf) -> Result<()> {
+    if let Err(error) = aujar_daemon::run(&socket).await {
+        if error
+            .downcast_ref::<aujar_daemon::AlreadyRunning>()
+            .is_some()
+        {
+            eprintln!("aujar: {error}");
+            std::process::exit(aujar_daemon::EXIT_ALREADY_RUNNING);
+        }
+
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn run_daemon(_socket: PathBuf) -> Result<()> {
+    anyhow::bail!(
+        r"the Windows daemon host is not installed yet; the Aujar client uses \\.\pipe\aujar when it becomes available"
+    )
 }
 
 async fn doctor() -> anyhow::Result<()> {
