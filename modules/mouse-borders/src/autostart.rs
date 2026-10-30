@@ -101,10 +101,17 @@ pub fn launch_agent_plist(exe: &Path, log: &Path) -> String {
          \t<string>{}</string>\n\
          </dict>\n\
          </plist>\n",
-        escape_xml(&exe.display().to_string()),
-        escape_xml(&log.display().to_string()),
-        escape_xml(&log.display().to_string()),
+        escape_xml(&macos_path(exe)),
+        escape_xml(&macos_path(log)),
+        escape_xml(&macos_path(log)),
     )
+}
+
+/// LaunchAgent files are interpreted by macOS, even when their plan is generated in a
+/// cross-platform test run. Keep their paths in the POSIX form macOS expects rather than
+/// serialising Windows separators into the XML.
+fn macos_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn home(os: Os, env: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> Result<PathBuf> {

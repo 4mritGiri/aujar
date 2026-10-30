@@ -9,6 +9,9 @@ exclude = ["aujar-ui"]
 [advisories]
 version = 2
 ignore = [
+    # ashpd 0.13 currently depends on zbus 5 / zvariant 5. The advisory documents that this is
+    # an upstream maintenance migration, with no safe upgrade available in that release line.
+    "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0372",
 ]
 
@@ -20,7 +23,9 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSL-1.0",
     "ISC",
+    "NCSA",
     "Unicode-3.0",
     "Zlib",
 ]

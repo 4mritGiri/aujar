@@ -9,13 +9,18 @@
 //! Everything runs on a dedicated thread with its own tokio runtime, so the
 //! daemon's runtime never depends on the portal's futures being `Send`.
 
+#[cfg(target_os = "linux")]
 use anyhow::{Context, Result};
+#[cfg(target_os = "linux")]
 use ashpd::{
     AppID,
     desktop::global_shortcuts::{BindShortcutsOptions, GlobalShortcuts, NewShortcut},
 };
+#[cfg(target_os = "linux")]
 use futures_util::StreamExt;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+#[cfg(target_os = "linux")]
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 /// Application id announced to the portal. Must match the installed desktop file
 /// (`packaging/desktop/dev.aujar.Aujar.desktop`). Change together with it.
@@ -45,35 +50,49 @@ pub enum HotkeyEvent {
 
 /// Start listening for the given shortcuts on a background thread.
 pub fn start(specs: Vec<ShortcutSpec>) -> UnboundedReceiver<HotkeyEvent> {
-    let (tx, rx) = unbounded_channel();
-    let thread_tx = tx.clone();
-
-    let spawned = std::thread::Builder::new()
-        .name("aujar-hotkeys".into())
-        .spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = thread_tx.send(HotkeyEvent::Unavailable(error.to_string()));
-                    return;
-                }
-            };
-
-            if let Err(error) = runtime.block_on(listen(&specs, &thread_tx)) {
-                let _ = thread_tx.send(HotkeyEvent::Unavailable(format!("{error:#}")));
-            }
-        });
-
-    if let Err(error) = spawned {
-        let _ = tx.send(HotkeyEvent::Unavailable(error.to_string()));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let (tx, rx) = unbounded_channel();
+        let _ = specs;
+        let _ = tx.send(HotkeyEvent::Unavailable(
+            "native global hotkeys are not implemented for this platform yet".to_owned(),
+        ));
+        return rx;
     }
 
-    rx
+    #[cfg(target_os = "linux")]
+    {
+        let (tx, rx) = unbounded_channel();
+        let thread_tx = tx.clone();
+
+        let spawned = std::thread::Builder::new()
+            .name("aujar-hotkeys".into())
+            .spawn(move || {
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        let _ = thread_tx.send(HotkeyEvent::Unavailable(error.to_string()));
+                        return;
+                    }
+                };
+
+                if let Err(error) = runtime.block_on(listen(&specs, &thread_tx)) {
+                    let _ = thread_tx.send(HotkeyEvent::Unavailable(format!("{error:#}")));
+                }
+            });
+
+        if let Err(error) = spawned {
+            let _ = tx.send(HotkeyEvent::Unavailable(error.to_string()));
+        }
+
+        rx
+    }
 }
 
+#[cfg(target_os = "linux")]
 async fn listen(specs: &[ShortcutSpec], tx: &UnboundedSender<HotkeyEvent>) -> Result<()> {
     // Host (non-Flatpak) apps have no app id unless they register one. Best effort:
     // some portal backends refuse shortcuts for unidentified apps.
@@ -147,7 +166,15 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn app_id_is_a_valid_portal_app_id() {
         assert!(AppID::try_from(APP_ID).is_ok());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn unsupported_platform_reports_a_clear_status() {
+        let mut events = start(Vec::new());
+        assert!(matches!(events.try_recv(), Ok(HotkeyEvent::Unavailable(_))));
     }
 }
