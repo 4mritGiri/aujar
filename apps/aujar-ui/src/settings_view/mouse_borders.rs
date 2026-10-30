@@ -9,7 +9,7 @@ use std::time::Duration;
 use aujar_config::{EasyMouse, MatrixMode, SwitchKeys};
 use aujar_ipc::{MouseBordersRequest, MouseBordersResponse, MouseBordersStatus, Request, Response};
 use aujar_mouse_borders::{
-    discovery::{scan_local_network, DiscoveredDevice},
+    discovery::{DiscoveredDevice, scan_local_network},
     keystore::KeyStore,
     net,
     pairing::PairingCode,
@@ -700,7 +700,7 @@ impl SettingsView {
                         .child("Contains your security key - treat it like a password"),
                 );
 
-            let buttons = div().flex().flex_row().gap_2().child(copy);
+            let buttons = div().flex().flex_row().gap_2().child(copy).child(join);
 
             rows.push(
                 self.row(
@@ -715,10 +715,11 @@ impl SettingsView {
                 ),
             );
         } else {
+            let buttons = div().flex().flex_row().gap_2().child(copy).child(join);
             rows.push(self.row(
                 "Pairing code",
                 "On the first machine, copy the code. On each other machine, click Join.",
-                div().flex().flex_row().gap_2().child(copy).child(join),
+                buttons,
             ));
         }
 
