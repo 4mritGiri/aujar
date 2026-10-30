@@ -305,7 +305,10 @@ mod tests {
         let provider = SystemProvider::new();
         let listed = provider.search("kind:action");
 
-        assert!(listed.len() >= 5);
+        // Four core power/session actions are always present. Additional actions depend on
+        // desktop tools (NetworkManager, PipeWire, GNOME, etc.) available on this host.
+        assert_eq!(listed.len(), provider.actions.len());
+        assert!(listed.len() >= 4);
         assert!(listed.iter().any(|result| result.id == "system:lock"));
         assert!(
             listed
