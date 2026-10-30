@@ -9,6 +9,13 @@ use crate::error::{Error, Result};
 /// At most this many machines share one keyboard and mouse.
 pub const MAX_MACHINES: usize = 4;
 
+/// Columns and rows of the free-form board ([`Shape::Plane`]).
+pub const PLANE_COLS: u8 = 4;
+pub const PLANE_ROWS: u8 = 3;
+
+/// Slots on the free-form board: `row * PLANE_COLS + col`.
+pub const PLANE_SLOTS: usize = PLANE_COLS as usize * PLANE_ROWS as usize;
+
 const MAX_NAME_LEN: usize = 63;
 
 /// A validated machine name: 1 to 63 characters of `A-Z a-z 0-9 . - _`.
@@ -104,6 +111,8 @@ pub enum Shape {
     Row,
     /// Two rows of two.
     Grid,
+    /// Anywhere on a 4 x 3 board, like arranging displays.
+    Plane,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,8 +123,21 @@ struct Cell {
 }
 
 impl Shape {
+    /// How many slots this shape has (not how many machines it may hold).
+    pub const fn slot_count(self) -> usize {
+        match self {
+            Self::Row | Self::Grid => MAX_MACHINES,
+            Self::Plane => PLANE_SLOTS,
+        }
+    }
+
     fn cell(self, slot: u8) -> Cell {
         match self {
+            Self::Plane => Cell {
+                col: slot % PLANE_COLS,
+                row: slot / PLANE_COLS,
+                slot,
+            },
             Self::Row => Cell {
                 col: slot,
                 row: 0,
@@ -146,15 +168,22 @@ impl Layout {
         machines: impl IntoIterator<Item = (MachineName, u8)>,
     ) -> Result<Self> {
         let mut cells = BTreeMap::new();
-        let mut used_slots = [false; MAX_MACHINES];
+        let slot_count = shape.slot_count();
+        let mut used_slots = vec![false; slot_count];
 
         for (name, slot) in machines {
             let index = usize::from(slot);
 
-            if index >= MAX_MACHINES {
+            if index >= slot_count {
                 return Err(Error::Layout(format!(
                     "machine `{name}` has slot {slot}; slots are 0 to {}",
-                    MAX_MACHINES - 1
+                    slot_count - 1
+                )));
+            }
+
+            if cells.len() >= MAX_MACHINES {
+                return Err(Error::Layout(format!(
+                    "the layout has more than {MAX_MACHINES} machines"
                 )));
             }
 
@@ -207,6 +236,28 @@ impl Layout {
             .iter()
             .find(|(_, cell)| cell.slot == slot)
             .map(|(name, _)| name)
+    }
+
+    /// The machine the shortcut `Ctrl+Alt+<n + 1>` jumps to. In a row or grid that is the
+    /// machine in slot `n`. On the free board slots are positions (0 to 11), not numbers, so
+    /// it is the `n`-th machine in reading order: left to right, top to bottom.
+    pub fn machine_for_shortcut(&self, n: u8) -> Option<&MachineName> {
+        match self.shape {
+            Shape::Plane => self.machines().get(usize::from(n)).copied(),
+            Shape::Row | Shape::Grid => self.machine_at_slot(n),
+        }
+    }
+
+    /// The number that [`Layout::machine_for_shortcut`] maps back to this machine.
+    pub fn shortcut_number_of(&self, name: &MachineName) -> Option<u8> {
+        match self.shape {
+            Shape::Plane => self
+                .machines()
+                .iter()
+                .position(|machine| *machine == name)
+                .map(|index| index as u8),
+            Shape::Row | Shape::Grid => self.slot_of(name),
+        }
     }
 
     /// The machine reached by leaving `from` through `edge`: the nearest machine in that
@@ -347,6 +398,65 @@ mod tests {
         let layout = Layout::new(Shape::Row, true, [(name("a"), 0)]).unwrap();
 
         assert_eq!(layout.neighbor(&name("a"), Edge::Right), None);
+    }
+
+    #[test]
+    fn plane_neighbors_follow_rows_and_columns() {
+        // a b .  .      row 0: a at col 0, b at col 1
+        // . c .  .      row 1: c at col 1
+        let layout = Layout::new(
+            Shape::Plane,
+            false,
+            [("a", 0), ("b", 1), ("c", 5)].map(|(n, s)| (name(n), s)),
+        )
+        .unwrap();
+
+        assert_eq!(layout.neighbor(&name("a"), Edge::Right), Some(&name("b")));
+        assert_eq!(layout.neighbor(&name("b"), Edge::Bottom), Some(&name("c")));
+        assert_eq!(layout.neighbor(&name("c"), Edge::Top), Some(&name("b")));
+        // `c` shares no row with `a`, and no column either.
+        assert_eq!(layout.neighbor(&name("a"), Edge::Bottom), None);
+        assert_eq!(layout.neighbor(&name("c"), Edge::Left), None);
+    }
+
+    #[test]
+    fn shortcuts_count_machines_on_the_board_and_slots_in_a_row() {
+        let plane = Layout::new(
+            Shape::Plane,
+            false,
+            [("a", 2), ("b", 5), ("c", 11)].map(|(n, s)| (name(n), s)),
+        )
+        .unwrap();
+
+        assert_eq!(plane.machine_for_shortcut(0), Some(&name("a")));
+        assert_eq!(plane.machine_for_shortcut(2), Some(&name("c")));
+        assert_eq!(plane.machine_for_shortcut(3), None);
+        assert_eq!(plane.shortcut_number_of(&name("b")), Some(1));
+
+        let row = Layout::new(Shape::Row, false, [(name("a"), 0), (name("c"), 2)]).unwrap();
+
+        assert_eq!(row.machine_for_shortcut(2), Some(&name("c")));
+        assert_eq!(row.machine_for_shortcut(1), None);
+        assert_eq!(row.shortcut_number_of(&name("c")), Some(2));
+    }
+
+    #[test]
+    fn plane_slots_go_up_to_the_board_size() {
+        let last = (PLANE_SLOTS - 1) as u8;
+
+        assert!(Layout::new(Shape::Plane, false, [(name("a"), last)]).is_ok());
+        assert!(Layout::new(Shape::Plane, false, [(name("a"), last + 1)]).is_err());
+        assert!(Layout::new(Shape::Row, false, [(name("a"), 4)]).is_err());
+    }
+
+    #[test]
+    fn five_machines_are_refused_even_on_the_plane() {
+        let machines = ["a", "b", "c", "d", "e"]
+            .iter()
+            .enumerate()
+            .map(|(slot, n)| (name(n), slot as u8));
+
+        assert!(Layout::new(Shape::Plane, false, machines).is_err());
     }
 
     #[test]

@@ -701,7 +701,7 @@ impl Actor {
                         .and_then(|peer| peer.remote.map(|addr| addr.to_string()))
                         .or_else(|| configured.clone()),
                     screen: peer.and_then(|_| self.router.screen(name)),
-                    slot: self.cfg.layout.slot_of(name),
+                    slot: self.cfg.layout.shortcut_number_of(name),
                     last_error: if peer.is_some() {
                         None
                     } else {
@@ -976,10 +976,15 @@ impl Actor {
 
                 self.on_command(Command::MultiMachineInput(on)).await
             }
-            HotkeyAction::Switch(slot) => match self.cfg.layout.machine_at_slot(slot).cloned() {
-                Some(machine) => self.switch_to(Some(machine)).await,
-                None => Err(Error::Layout(format!("no machine in slot {}", slot + 1))),
-            },
+            HotkeyAction::Switch(number) => {
+                match self.cfg.layout.machine_for_shortcut(number).cloned() {
+                    Some(machine) => self.switch_to(Some(machine)).await,
+                    None => Err(Error::Layout(format!(
+                        "no machine for shortcut {}",
+                        number + 1
+                    ))),
+                }
+            }
         };
 
         match result {

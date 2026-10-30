@@ -3,12 +3,12 @@
 //! Plain functions over [`MouseBorders`] so every front end changes the layout the same way
 //! and all of it is tested without a window.
 
-use aujar_config::{Machine, MouseBorders};
+use aujar_config::{Machine, MatrixMode, MouseBorders};
 
 use crate::{
     config::hostname_as_machine_name,
     error::{Error, Result},
-    layout::{MAX_MACHINES, MachineName},
+    layout::{MAX_MACHINES, MachineName, PLANE_COLS, PLANE_ROWS, PLANE_SLOTS},
 };
 
 /// This machine's name: the configured one, or the hostname.
@@ -32,11 +32,96 @@ pub fn slots(settings: &MouseBorders) -> [Option<&Machine>; MAX_MACHINES] {
     slots
 }
 
+/// How many slots the current arrangement has.
+fn slot_count(matrix: MatrixMode) -> usize {
+    match matrix {
+        MatrixMode::Row | MatrixMode::Grid => MAX_MACHINES,
+        MatrixMode::Free => PLANE_SLOTS,
+    }
+}
+
 fn first_free_slot(settings: &MouseBorders) -> Option<u8> {
-    slots(settings)
+    if settings.machines.len() >= MAX_MACHINES {
+        return None;
+    }
+
+    (0..slot_count(settings.matrix) as u8)
+        .find(|slot| !settings.machines.iter().any(|machine| machine.slot == *slot))
+}
+
+/// Where a slot sits on the 4 x 3 board, as `(column, row)`, for the arrangement `matrix`.
+pub fn board_position(matrix: MatrixMode, slot: u8) -> (u8, u8) {
+    match matrix {
+        MatrixMode::Row => (slot % PLANE_COLS, 0),
+        MatrixMode::Grid => (slot % 2, slot / 2),
+        MatrixMode::Free => (slot % PLANE_COLS, slot / PLANE_COLS),
+    }
+}
+
+/// The machine at each cell of the 4 x 3 board, `row * 4 + column`, whatever the arrangement.
+pub fn board(settings: &MouseBorders) -> [Option<&Machine>; PLANE_SLOTS] {
+    let mut board = [None; PLANE_SLOTS];
+
+    for machine in &settings.machines {
+        let (col, row) = board_position(settings.matrix, machine.slot);
+
+        if col < PLANE_COLS && row < PLANE_ROWS {
+            board[usize::from(row) * usize::from(PLANE_COLS) + usize::from(col)] = Some(machine);
+        }
+    }
+
+    board
+}
+
+/// Switch to the free board without moving anyone: every machine keeps its place.
+pub fn make_free(settings: &mut MouseBorders) {
+    if settings.matrix == MatrixMode::Free {
+        return;
+    }
+
+    let from = settings.matrix;
+
+    for machine in &mut settings.machines {
+        let (col, row) = board_position(from, machine.slot);
+
+        machine.slot = row * PLANE_COLS + col;
+    }
+
+    settings.matrix = MatrixMode::Free;
+}
+
+/// Put a machine on the board cell `target` (`row * 4 + column`). An occupied cell swaps
+/// places with the machine being moved. Switches to the free board first. Returns false for
+/// an unknown machine, a cell off the board or no change.
+pub fn place_machine(settings: &mut MouseBorders, name: &str, target: u8) -> bool {
+    if usize::from(target) >= PLANE_SLOTS {
+        return false;
+    }
+
+    make_free(settings);
+
+    let Some(from) = settings
+        .machines
         .iter()
-        .position(Option::is_none)
-        .map(|slot| slot as u8)
+        .find(|machine| machine.name == name)
+        .map(|machine| machine.slot)
+    else {
+        return false;
+    };
+
+    if from == target {
+        return false;
+    }
+
+    for machine in &mut settings.machines {
+        if machine.name == name {
+            machine.slot = target;
+        } else if machine.slot == target {
+            machine.slot = from;
+        }
+    }
+
+    true
 }
 
 /// Add a machine at the first free slot. Adding one that exists only updates its address
@@ -95,7 +180,7 @@ pub fn move_machine(settings: &mut MouseBorders, name: &str, direction: i8) -> b
 
     let to = i16::from(from) + i16::from(direction.signum());
 
-    if !(0..MAX_MACHINES as i16).contains(&to) {
+    if !(0..slot_count(settings.matrix) as i16).contains(&to) {
         return false;
     }
 
@@ -203,6 +288,84 @@ mod tests {
 
         assert!(!move_machine(&mut settings, "a", 1));
         assert_eq!(names(&settings), ["-", "-", "-", "a"]);
+    }
+
+    #[test]
+    fn making_a_row_free_keeps_every_machine_in_place() {
+        let mut settings = MouseBorders::default();
+        add_machine(&mut settings, &name("a"), None).unwrap();
+        add_machine(&mut settings, &name("b"), None).unwrap();
+
+        make_free(&mut settings);
+
+        assert_eq!(settings.matrix, MatrixMode::Free);
+        assert_eq!(settings.machines[0].slot, 0);
+        assert_eq!(settings.machines[1].slot, 1);
+    }
+
+    #[test]
+    fn making_a_grid_free_keeps_the_second_row_below() {
+        let mut settings = MouseBorders {
+            matrix: MatrixMode::Grid,
+            ..MouseBorders::default()
+        };
+        for letter in ["a", "b", "c", "d"] {
+            add_machine(&mut settings, &name(letter), None).unwrap();
+        }
+
+        make_free(&mut settings);
+
+        let slot_of = |who: &str| {
+            settings
+                .machines
+                .iter()
+                .find(|machine| machine.name == who)
+                .unwrap()
+                .slot
+        };
+
+        // a b . .      slots 0 1 2 3
+        // c d . .      slots 4 5 6 7
+        assert_eq!([slot_of("a"), slot_of("b"), slot_of("c"), slot_of("d")], [0, 1, 4, 5]);
+    }
+
+    #[test]
+    fn placing_moves_to_an_empty_cell_or_swaps() {
+        let mut settings = MouseBorders::default();
+        add_machine(&mut settings, &name("a"), None).unwrap();
+        add_machine(&mut settings, &name("b"), None).unwrap();
+
+        // Below `a`: row 1, column 0.
+        assert!(place_machine(&mut settings, "b", 4));
+        assert_eq!(settings.matrix, MatrixMode::Free);
+        assert_eq!(board(&settings)[4].unwrap().name, "b");
+        assert!(board(&settings)[1].is_none());
+
+        // Dropping `a` on `b` swaps them.
+        assert!(place_machine(&mut settings, "a", 4));
+        assert_eq!(board(&settings)[0].unwrap().name, "b");
+        assert_eq!(board(&settings)[4].unwrap().name, "a");
+
+        // Same cell, off the board, unknown machine: nothing happens.
+        assert!(!place_machine(&mut settings, "a", 4));
+        assert!(!place_machine(&mut settings, "a", PLANE_SLOTS as u8));
+        assert!(!place_machine(&mut settings, "nobody", 3));
+    }
+
+    #[test]
+    fn free_boards_hold_four_machines_in_any_cells() {
+        let mut settings = MouseBorders {
+            matrix: MatrixMode::Free,
+            ..MouseBorders::default()
+        };
+
+        for letter in ["a", "b", "c", "d"] {
+            add_machine(&mut settings, &name(letter), None).unwrap();
+        }
+
+        assert!(add_machine(&mut settings, &name("e"), None).is_err());
+        assert!(place_machine(&mut settings, "d", 11));
+        assert_eq!(board(&settings)[11].unwrap().name, "d");
     }
 
     #[test]

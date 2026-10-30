@@ -19,7 +19,7 @@ use aujar_config::{Machine, MatrixMode, MouseBorders};
 
 use crate::{
     error::{Error, Result},
-    layout::{MAX_MACHINES, MachineName},
+    layout::{MAX_MACHINES, MachineName, PLANE_SLOTS},
     net,
     secure::SecurityKey,
 };
@@ -114,6 +114,7 @@ impl PairingCode {
         let matrix = match self.matrix {
             MatrixMode::Row => "row",
             MatrixMode::Grid => "grid",
+            MatrixMode::Free => "free",
         };
         let mut code = format!("{PREFIX};{matrix};{}", self.key.to_display());
 
@@ -144,6 +145,7 @@ impl PairingCode {
         let matrix = match parts.next() {
             Some("row") => MatrixMode::Row,
             Some("grid") => MatrixMode::Grid,
+            Some("free") => MatrixMode::Free,
             _ => return Err(bad("unknown layout shape")),
         };
         let key = SecurityKey::parse(parts.next().ok_or_else(|| bad("no key"))?)?;
@@ -160,7 +162,12 @@ impl PairingCode {
 
             let slot: u8 = slot.parse().map_err(|_| bad("a slot is not a number"))?;
 
-            if usize::from(slot) >= MAX_MACHINES {
+            let slot_count = match matrix {
+                MatrixMode::Free => PLANE_SLOTS,
+                MatrixMode::Row | MatrixMode::Grid => MAX_MACHINES,
+            };
+
+            if usize::from(slot) >= slot_count {
                 return Err(bad("a slot is out of range"));
             }
 
@@ -216,8 +223,14 @@ impl PairingCode {
         let added_local = !self.machines.iter().any(|machine| machine.name == *local);
 
         if added_local {
-            let slot = (0..MAX_MACHINES as u8)
+            let slot_count = match self.matrix {
+                MatrixMode::Free => PLANE_SLOTS,
+                MatrixMode::Row | MatrixMode::Grid => MAX_MACHINES,
+            };
+
+            let slot = (0..slot_count as u8)
                 .find(|slot| !machines.iter().any(|machine| machine.slot == *slot))
+                .filter(|_| machines.len() < MAX_MACHINES)
                 .ok_or_else(|| {
                     Error::Layout(format!(
                         "the layout already has {MAX_MACHINES} machines; there is no room for `{local}`"
@@ -292,6 +305,24 @@ mod tests {
         assert_eq!(PairingCode::parse(&text).unwrap(), code);
         // Pasting usually brings a trailing newline or spaces.
         assert_eq!(PairingCode::parse(&format!("  {text}\n")).unwrap(), code);
+    }
+
+    #[test]
+    fn a_free_layout_round_trips_with_high_slots() {
+        let mut free = code();
+
+        free.matrix = MatrixMode::Free;
+        free.machines[1].slot = 10;
+
+        let text = free.encode();
+
+        assert!(text.starts_with("aujar-pair1;free;"), "{text}");
+        assert_eq!(PairingCode::parse(&text).unwrap(), free);
+
+        // Slot 10 does not exist in a row.
+        let as_row = text.replacen(";free;", ";row;", 1);
+
+        assert!(PairingCode::parse(&as_row).is_err());
     }
 
     #[test]

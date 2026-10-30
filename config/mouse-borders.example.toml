@@ -16,6 +16,9 @@ machine_name = "desk"
 port = 15101
 
 # "row": up to four side by side.  "grid": two rows of two (slots 0 1 / 2 3).
+# "free": a board of 4 columns by 3 rows, slot = row * 4 + column (slots 0 to 11), which is
+# what dragging machines in the settings window writes. Machines in the same row switch left
+# and right, machines in the same column switch up and down.
 matrix = "row"
 
 # Continue from the last machine back to the first.

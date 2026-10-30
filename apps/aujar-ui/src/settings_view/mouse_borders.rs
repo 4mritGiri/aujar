@@ -1,27 +1,43 @@
-//! Mouse Borders: turn it on, connect machines with a pairing code, arrange them, tune how
-//! switching works. Status refreshes by itself while this page is open.
+//! Mouse Borders: turn it on, pair machines over the network (or with a pairing code),
+//! arrange them by dragging, tune how switching works. Status refreshes by itself while this
+//! page is open.
 //!
 //! Key and layout changes work on files, so they do not need the daemon; only the live status
-//! asks it.
+//! asks it. Nothing here may wait on the network on the UI thread: scans run on the background
+//! executor and pairing runs on its own threads, polled twice a second.
 
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
-use aujar_config::{EasyMouse, MatrixMode, SwitchKeys};
+use aujar_config::{EasyMouse, Machine, Settings, SwitchKeys};
 use aujar_ipc::{MouseBordersRequest, MouseBordersResponse, MouseBordersStatus, Request, Response};
 use aujar_mouse_borders::{
-    discovery::{DiscoveredDevice, scan_local_network},
+    discovery::{self, DiscoveredDevice},
     keystore::KeyStore,
+    lan_pair::{self, HostConfig, PairState},
+    layout::{MachineName, PLANE_COLS, PLANE_ROWS},
     net,
     pairing::PairingCode,
     secure::SecurityKey,
     settings_edit,
 };
-use gpui::{AnyElement, ClipboardItem, Context, SharedString, div, prelude::*, px, rgb, rgba};
+use gpui::{
+    AnyElement, ClipboardItem, Context, FontWeight, SharedString, div, prelude::*, px, rgb, rgba,
+};
 
 use super::{Page, SettingsView};
 
-/// How often the status refreshes while the page is open.
-const REFRESH: Duration = Duration::from_secs(2);
+/// How often the page looks at a running pairing and repaints it.
+const TICK: Duration = Duration::from_millis(500);
+
+/// The daemon status is asked every this many ticks.
+const REFRESH_EVERY: u32 = 4;
+
+/// How long a scan listens for answers.
+const SCAN_TIME: Duration = Duration::from_secs(2);
+
+/// Size of one cell of the layout board.
+const CELL_W: f32 = 118.;
+const CELL_H: f32 = 58.;
 
 /// Two-step actions: the first click arms them, the second performs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +51,12 @@ struct Note {
     error: bool,
 }
 
+/// What is being dragged on the layout board.
+#[derive(Clone)]
+struct DraggedMachine {
+    name: String,
+}
+
 #[derive(Default)]
 pub(super) struct State {
     status: Option<Result<MouseBordersStatus, String>>,
@@ -42,6 +64,13 @@ pub(super) struct State {
     confirm: Option<Confirm>,
     refreshing: bool,
     discovered_devices: Vec<DiscoveredDevice>,
+    scanning: bool,
+    /// A pairing window this machine opened.
+    host: Option<lan_pair::Handle>,
+    /// A pairing this machine started with another one.
+    guest: Option<lan_pair::Handle>,
+    /// A code that arrived but needs the person to agree to replace the key first.
+    pending_join: Option<PairingCode>,
 }
 
 /// Ask the daemon for the status. Blocking: run it off the UI thread.
@@ -105,13 +134,18 @@ impl SettingsView {
         .detach();
     }
 
-    /// Re-ask the daemon every couple of seconds while this page is showing; stops when the
-    /// window closes.
+    /// Every half second while this window lives: move a running pairing along and, every
+    /// couple of seconds while this page is showing, re-ask the daemon. Stops when the window
+    /// closes.
     pub(super) fn keep_mouse_borders_status_fresh(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
+            let mut tick: u32 = 0;
+
             loop {
                 let alive = this.update(cx, |this, cx| {
-                    if this.page == Page::MouseBorders {
+                    this.poll_pairing(cx);
+
+                    if tick % REFRESH_EVERY == 0 && this.page == Page::MouseBorders {
                         this.refresh_mouse_borders(cx);
                     }
                 });
@@ -120,81 +154,62 @@ impl SettingsView {
                     break;
                 }
 
-                cx.background_executor().timer(REFRESH).await;
+                tick = tick.wrapping_add(1);
+                cx.background_executor().timer(TICK).await;
             }
         })
         .detach();
     }
 
-    /// Scan for Mouse Borders devices on the local network
+    /// Look for machines that are waiting to pair.
+    ///
+    /// The scan waits on the network, so it runs on the background executor. It must never
+    /// run on the UI thread: a socket that waits there freezes the whole window ("not
+    /// responding").
     pub(super) fn scan_for_devices(&mut self, cx: &mut Context<Self>) {
-        let _mb = &self.settings.mouse_borders;
-        let local_host = net::pick_host(&net::local_networks());
-
-        if local_host.is_none() {
-            self.set_note(
-                "No local network address found. Connect to a network first.",
-                true,
-                cx,
-            );
+        if self.mouse_borders.scanning {
             return;
         }
 
-        self.set_note(
-            "Scanning local network for Mouse Borders devices...",
-            false,
-            cx,
-        );
+        self.mouse_borders.scanning = true;
+        self.mouse_borders.discovered_devices.clear();
+        self.set_note("Looking for devices\u{2026}", false, cx);
 
         cx.spawn(async move |this, cx| {
-            let result = this.update(cx, |this, _cx| {
-                let settings = this.settings.clone();
-                let local = settings_edit::local_name(&settings.mouse_borders).to_string();
-                let local_host = net::pick_host(&net::local_networks());
-                (settings, local, local_host)
-            });
+            let result = cx
+                .background_executor()
+                .spawn(async { discovery::scan(SCAN_TIME) })
+                .await;
 
-            let local_host = match result {
-                Ok((_settings, _local, Some(host))) => host,
-                Ok((_, _, None)) => {
-                    let _ = this.update(cx, |this, cx| {
-                        this.set_note("No network connection", true, cx);
-                    });
-                    return;
-                }
-                Err(_) => {
-                    return;
-                }
-            };
+            let _ = this.update(cx, |this, cx| {
+                this.mouse_borders.scanning = false;
 
-            match scan_local_network(local_host, Duration::from_secs(2)).await {
-                Ok(devices) => {
-                    let is_empty = devices.is_empty();
-                    let count = devices.len();
-                    let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(devices) if devices.is_empty() => this.set_note(
+                        "No device found. On the other machine open Mouse Borders and choose \
+                         \u{201c}Start pairing\u{201d}, and check that both are on the same network.",
+                        false,
+                        cx,
+                    ),
+                    Ok(devices) => {
+                        let count = devices.len();
+
                         this.mouse_borders.discovered_devices = devices;
-                        if is_empty {
-                            this.set_note(
-                                "No other Mouse Borders devices found on this network.",
-                                false,
-                                cx,
-                            );
-                        } else {
-                            this.set_note(
-                                format!("Found {} device(s) on your local network!", count),
-                                false,
-                                cx,
-                            );
-                        }
-                        cx.notify();
-                    });
+                        this.set_note(
+                            if count == 1 {
+                                "Found 1 device. Choose Pair next to it.".to_owned()
+                            } else {
+                                format!("Found {count} devices. Choose Pair next to one.")
+                            },
+                            false,
+                            cx,
+                        );
+                    }
+                    Err(error) => this.set_note(format!("Could not scan: {error}"), true, cx),
                 }
-                Err(e) => {
-                    let _ = this.update(cx, |this, cx| {
-                        this.set_note(format!("Discovery error: {}", e), true, cx);
-                    });
-                }
-            }
+
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -208,37 +223,174 @@ impl SettingsView {
         cx.notify();
     }
 
+    // ---- Pairing over the network ----
+
+    fn active_pairing(&self) -> Option<&lan_pair::Handle> {
+        self.mouse_borders
+            .host
+            .as_ref()
+            .or(self.mouse_borders.guest.as_ref())
+    }
+
+    fn stop_pairing(&mut self) {
+        for handle in [self.mouse_borders.host.take(), self.mouse_borders.guest.take()]
+            .into_iter()
+            .flatten()
+        {
+            handle.cancel();
+        }
+    }
+
+    /// Open a pairing window: other machines can find this one and pair with it.
+    fn start_pairing(&mut self, cx: &mut Context<Self>) {
+        self.stop_pairing();
+
+        let (code, next) = match self.build_pairing_code() {
+            Ok(built) => built,
+            Err(error) => {
+                self.set_note(error, true, cx);
+
+                return;
+            }
+        };
+
+        let config = HostConfig {
+            name: settings_edit::local_name(&next.mouse_borders).to_string(),
+            sharing_port: next.mouse_borders.port,
+            code,
+            window: lan_pair::DEFAULT_WINDOW,
+        };
+
+        match lan_pair::host(config) {
+            Ok(handle) => {
+                self.mouse_borders.host = Some(handle);
+                self.mouse_borders.confirm = None;
+                self.mouse_borders.note = None;
+                // This machine is in the layout and sharing is on, as in the code it hands out.
+                self.mutate(cx, move |settings| *settings = next);
+            }
+            Err(error) => self.set_note(format!("Could not start pairing: {error}"), true, cx),
+        }
+    }
+
+    /// Pair with a machine found by a scan.
+    fn pair_with(&mut self, device: &DiscoveredDevice, cx: &mut Context<Self>) {
+        self.stop_pairing();
+
+        let local = settings_edit::local_name(&self.settings.mouse_borders).to_string();
+        let address = SocketAddr::new(device.address, device.port);
+
+        self.mouse_borders.guest = Some(lan_pair::join(address, local, device.name.clone()));
+        self.mouse_borders.note = None;
+        cx.notify();
+    }
+
+    fn answer_code_check(&mut self, matches: bool, cx: &mut Context<Self>) {
+        if let Some(handle) = self.active_pairing() {
+            handle.confirm(matches);
+        }
+
+        cx.notify();
+    }
+
+    fn cancel_pairing(&mut self, cx: &mut Context<Self>) {
+        self.stop_pairing();
+        self.set_note("Pairing cancelled.", false, cx);
+    }
+
+    /// Called every tick: collect the outcome of a pairing that ended.
+    fn poll_pairing(&mut self, cx: &mut Context<Self>) {
+        let host = self.mouse_borders.host.as_ref().map(|handle| handle.state());
+        let guest = self.mouse_borders.guest.as_ref().map(|handle| handle.state());
+
+        if host.is_none() && guest.is_none() {
+            return;
+        }
+
+        match host {
+            Some(PairState::Sent) => {
+                self.mouse_borders.host = None;
+                self.set_note(
+                    "Paired. The other machine joins the layout and connects by itself.",
+                    false,
+                    cx,
+                );
+            }
+            Some(PairState::Failed(why)) => {
+                self.mouse_borders.host = None;
+                self.set_note(why, true, cx);
+            }
+            _ => {}
+        }
+
+        match guest {
+            Some(PairState::Received(text)) => {
+                self.mouse_borders.guest = None;
+
+                match PairingCode::parse(&text) {
+                    Ok(code) => self.join_with_code(code, cx),
+                    Err(error) => self.set_note(
+                        format!("The other machine sent a pairing code that is not valid: {error}"),
+                        true,
+                        cx,
+                    ),
+                }
+            }
+            Some(PairState::Failed(why)) => {
+                self.mouse_borders.guest = None;
+                self.set_note(why, true, cx);
+            }
+            _ => {}
+        }
+
+        // Repaint for the countdown and the state changes.
+        cx.notify();
+    }
+
     // ---- Actions ----
 
-    fn copy_pairing_code(&mut self, cx: &mut Context<Self>) {
+    /// The pairing code for the other machines, and the settings it implies: this machine in
+    /// the layout and sharing on. The settings are not saved here.
+    fn build_pairing_code(&self) -> Result<(String, Settings), String> {
         let mut next = self.settings.clone();
         let local = settings_edit::local_name(&next.mouse_borders);
 
-        let code = (|| -> Result<String, String> {
-            settings_edit::add_machine(&mut next.mouse_borders, &local, None)
-                .map_err(|error| error.to_string())?;
+        settings_edit::add_machine(&mut next.mouse_borders, &local, None)
+            .map_err(|error| error.to_string())?;
 
-            let key = ensure_key()?;
-            let host = net::pick_host(&net::local_networks());
+        let key = ensure_key()?;
+        let host = net::pick_host(&net::local_networks());
+        let code = PairingCode::from_settings(&next.mouse_borders, key, &local, host)
+            .map(|code| code.encode())
+            .map_err(|error| error.to_string())?;
 
-            PairingCode::from_settings(&next.mouse_borders, key, &local, host)
-                .map(|code| code.encode())
-                .map_err(|error| error.to_string())
-        })();
+        next.mouse_borders.enabled = true;
 
-        match code {
-            Ok(code) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
-                next.mouse_borders.enabled = true;
+        Ok((code, next))
+    }
+
+    fn copy_pairing_code(&mut self, cx: &mut Context<Self>) {
+        match self.build_pairing_code() {
+            Ok((code, next)) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(code));
                 self.mouse_borders.confirm = None;
                 self.mutate(cx, move |settings| *settings = next);
-                self.set_note(format!("Pairing code copied to clipboard!"), false, cx);
+                self.set_note("Pairing code copied to the clipboard.", false, cx);
             }
             Err(error) => self.set_note(error, true, cx),
         }
     }
 
     fn join_from_clipboard(&mut self, cx: &mut Context<Self>) {
+        // The second click on "Replace key and join" uses the code that was already read.
+        if self.mouse_borders.confirm == Some(Confirm::Join)
+            && let Some(code) = self.mouse_borders.pending_join.take()
+        {
+            self.join_with_code(code, cx);
+
+            return;
+        }
+
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             self.set_note(
                 "Clipboard is empty. Copy a pairing code from the first machine first.",
@@ -249,15 +401,14 @@ impl SettingsView {
             return;
         };
 
-        let code = match PairingCode::parse(&text) {
-            Ok(code) => code,
-            Err(error) => {
-                self.set_note(format!("Invalid pairing code: {}", error), true, cx);
+        match PairingCode::parse(&text) {
+            Ok(code) => self.join_with_code(code, cx),
+            Err(error) => self.set_note(format!("Invalid pairing code: {error}"), true, cx),
+        }
+    }
 
-                return;
-            }
-        };
-
+    /// Adopt a pairing code: its key, its layout, and switch sharing on.
+    fn join_with_code(&mut self, code: PairingCode, cx: &mut Context<Self>) {
         let store = KeyStore::user_default();
 
         match store.load() {
@@ -265,9 +416,10 @@ impl SettingsView {
                 if existing != code.key && self.mouse_borders.confirm != Some(Confirm::Join) =>
             {
                 self.mouse_borders.confirm = Some(Confirm::Join);
+                self.mouse_borders.pending_join = Some(code);
                 self.set_note(
                     "This machine already has a different security key. \
-                     Click 'Replace key and join' again to use the new code \
+                     Click 'Replace key and join' to use the new one \
                      (machines using the old key will disconnect).",
                     false,
                     cx,
@@ -302,11 +454,12 @@ impl SettingsView {
         }
 
         self.mouse_borders.confirm = None;
+        self.mouse_borders.pending_join = None;
         next.mouse_borders.enabled = true;
         self.mutate(cx, move |settings| *settings = next);
         self.set_note(
             format!(
-                "\u{2705} Successfully joined! {} machines in the layout. Mouse and keyboard sharing is now active.",
+                "Paired. {} machines are in the layout; sharing is on.",
                 joined.machines,
             ),
             false,
@@ -330,6 +483,8 @@ impl SettingsView {
         }
 
         self.mouse_borders.confirm = None;
+        // A pairing window open now would hand out the old key.
+        self.stop_pairing();
 
         match store.generate(true) {
             Ok(_) => self.set_note(
@@ -365,6 +520,7 @@ impl SettingsView {
         ];
 
         // Help section at the top
+        let step = |text: &str| div().child(text.to_owned());
         let help_section = vec![
             div()
                 .px_4()
@@ -376,7 +532,7 @@ impl SettingsView {
                     div()
                         .text_sm()
                         .text_color(rgb(self.palette.text))
-                        .child("Quick Start:"),
+                        .child("Connect two machines in a minute:"),
                 )
                 .child(
                     div()
@@ -385,17 +541,12 @@ impl SettingsView {
                         .gap_1()
                         .text_xs()
                         .text_color(rgb(self.palette.text_dim))
-                        .child(
-                            div().child("1. On your first machine: Click 'Copy pairing code' below – it's automatically copied."),
-                        )
-                        .child(
-                            div().child("2. On each other machine: Click 'Join from clipboard' – the code is automatically detected."),
-                        )
-                        .child(
-                            div().child("3. Move your mouse to the screen edge to switch between machines."),
-                        ),
+                        .child(step("1. On the first machine choose \u{201c}Start pairing\u{201d}."))
+                        .child(step("2. On the other one choose \u{201c}Find devices\u{201d}, then Pair."))
+                        .child(step("3. Both screens show a code. If they match, click \u{201c}Codes match\u{201d} on both."))
+                        .child(step("4. Drag the machines in Layout to match your desk, then move the pointer past a screen edge to switch.")),
                 )
-                .into_any_element()
+                .into_any_element(),
         ];
 
         vec![
@@ -597,15 +748,182 @@ impl SettingsView {
         rows
     }
 
+    /// The panel shown while a pairing is running: what is going on, and what to click.
+    fn pairing_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let pal = self.palette;
+        let handle = self.active_pairing()?;
+        let hosting = self.mouse_borders.host.is_some();
+
+        let (title, detail, code, can_answer) = match handle.state() {
+            PairState::Waiting if hosting => (
+                "Waiting for another machine\u{2026}".to_owned(),
+                "On the other machine open Mouse Borders, choose \u{201c}Find devices\u{201d}, then \
+                 Pair next to this machine. This closes by itself after two minutes."
+                    .to_owned(),
+                None,
+                false,
+            ),
+            PairState::Waiting => (
+                "Connecting\u{2026}".to_owned(),
+                "Setting up a private connection.".to_owned(),
+                None,
+                false,
+            ),
+            PairState::Verify { sas, peer } => (
+                format!("Check this code with {peer}"),
+                format!(
+                    "{peer} must show exactly the same code. If it does, choose \u{201c}Codes match\u{201d} \
+                     here and there. If it does not, someone else may be on the network: choose \
+                     \u{201c}They differ\u{201d}."
+                ),
+                Some(sas),
+                true,
+            ),
+            PairState::Confirmed => (
+                "Waiting for the other machine\u{2026}".to_owned(),
+                "You confirmed the code. The other machine has to confirm it too.".to_owned(),
+                None,
+                false,
+            ),
+            PairState::Received(_) | PairState::Sent | PairState::Failed(_) => (
+                "Finishing\u{2026}".to_owned(),
+                String::new(),
+                None,
+                false,
+            ),
+        };
+
+        let buttons = if can_answer {
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(
+                    self.pill("mb-code-match".into(), "Codes match", true)
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.answer_code_check(true, cx)
+                        })),
+                )
+                .child(
+                    self.pill("mb-code-differ".into(), "They differ", false)
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.answer_code_check(false, cx)
+                        })),
+                )
+        } else {
+            div().flex().flex_row().gap_2().child(
+                self.pill("mb-pair-cancel".into(), "Cancel", false)
+                    .on_click(cx.listener(|this, _event, _window, cx| this.cancel_pairing(cx))),
+            )
+        };
+
+        Some(
+            div()
+                .px_4()
+                .py_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(self.dot(pal.accent))
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(pal.text))
+                                .child(title),
+                        ),
+                )
+                .children(code.map(|code| {
+                    div()
+                        .text_3xl()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(pal.text))
+                        .child(code)
+                }))
+                .children((!detail.is_empty()).then(|| {
+                    div()
+                        .text_xs()
+                        .text_color(rgb(pal.text_dim))
+                        .child(detail)
+                }))
+                .child(buttons)
+                .into_any_element(),
+        )
+    }
+
     fn connect_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let pal = self.palette;
         let confirm = self.mouse_borders.confirm;
 
-        let scan = self
-            .pill("mb-scan".into(), "Scan local network", false)
-            .on_click(cx.listener(|this, _event, _window, cx| this.scan_for_devices(cx)));
+        let mut rows: Vec<AnyElement> = Vec::new();
+
+        if let Some(panel) = self.pairing_panel(cx) {
+            rows.push(panel);
+        } else {
+            let start = self
+                .pill("mb-start-pairing".into(), "Start pairing", true)
+                .on_click(cx.listener(|this, _event, _window, cx| this.start_pairing(cx)));
+
+            rows.push(self.row(
+                "Pair a new device",
+                "Makes this machine visible for two minutes. Nothing to copy or paste: you compare a code on both screens.",
+                start,
+            ));
+
+            let scanning = self.mouse_borders.scanning;
+            let scan = self
+                .pill(
+                    "mb-scan".into(),
+                    if scanning {
+                        "Looking\u{2026}"
+                    } else {
+                        "Find devices"
+                    },
+                    false,
+                )
+                .on_click(cx.listener(|this, _event, _window, cx| this.scan_for_devices(cx)));
+
+            rows.push(self.row(
+                "Find devices",
+                "Look for a machine that is showing \u{201c}Waiting for another machine\u{201d}. Both must be on the same network.",
+                scan,
+            ));
+
+            for device in &self.mouse_borders.discovered_devices {
+                let control = if device.pairing_open {
+                    let device = device.clone();
+
+                    self.pill(
+                        SharedString::from(format!("mb-pair-{}", device.address)),
+                        "Pair",
+                        true,
+                    )
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.pair_with(&device, cx)
+                    }))
+                    .into_any_element()
+                } else {
+                    self.dim_text("Not accepting pairing").into_any_element()
+                };
+
+                rows.push(self.row(
+                    &device.name,
+                    &format!("{}:{}", device.address, device.port),
+                    control,
+                ));
+            }
+        }
+
+        // The old way, for networks that block discovery or machines that cannot reach each
+        // other directly.
         let copy = self
-            .pill("mb-copy-code".into(), "Copy pairing code", true)
+            .pill("mb-copy-code".into(), "Copy pairing code", false)
             .on_click(cx.listener(|this, _event, _window, cx| this.copy_pairing_code(cx)));
         let join = self
             .pill(
@@ -618,6 +936,13 @@ impl SettingsView {
                 confirm == Some(Confirm::Join),
             )
             .on_click(cx.listener(|this, _event, _window, cx| this.join_from_clipboard(cx)));
+
+        rows.push(self.row(
+            "Pairing code",
+            "Without discovery: copy the code here, send it to the other machine yourself, and click Join from clipboard there. The code contains your security key: treat it like a password.",
+            div().flex().flex_row().gap_2().child(copy).child(join),
+        ));
+
         let new_key = self
             .pill(
                 "mb-new-key".into(),
@@ -632,183 +957,9 @@ impl SettingsView {
 
         let key_hint = match KeyStore::user_default().load() {
             Ok(Some(_)) => "This machine has a security key.".to_owned(),
-            Ok(None) => "No key yet: one is created when you copy a pairing code.".to_owned(),
+            Ok(None) => "No key yet: one is created when you start pairing.".to_owned(),
             Err(error) => error.to_string(),
         };
-
-        // Check if we have a pairing code to display
-        let has_key = KeyStore::user_default().load().is_ok_and(|k| k.is_some());
-        let mb = &self.settings.mouse_borders;
-        let local = settings_edit::local_name(mb);
-
-        // Generate pairing code for display
-        let pairing_code = if has_key {
-            let key = KeyStore::user_default().load().ok().flatten();
-            let host =
-                aujar_mouse_borders::net::pick_host(&aujar_mouse_borders::net::local_networks());
-
-            if let (Some(key), Some(host)) = (key, host) {
-                let mut temp_settings = mb.clone();
-                if let Ok(_) = settings_edit::add_machine(&mut temp_settings, &local, None) {
-                    if let Ok(code) =
-                        PairingCode::from_settings(&temp_settings, key, &local, Some(host))
-                    {
-                        Some(code.encode())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let mut rows = Vec::new();
-
-        // Pairing instructions section
-        if let Some(code) = pairing_code {
-            // Show the pairing code prominently
-            let code_display = div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(pal.text_dim))
-                        .child("Share this code with other machines:"),
-                )
-                .child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .rounded_md()
-                        .bg(rgba(pal.hover))
-                        .border_1()
-                        .border_color(rgba(pal.keycap_border))
-                        .text_sm()
-                        .child(code.clone()),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(pal.text_faint))
-                        .child("Contains your security key - treat it like a password"),
-                );
-
-            let buttons = div().flex().flex_row().gap_2().child(copy).child(join);
-
-            rows.push(
-                self.row(
-                    "Pairing code",
-                    "Copy this on your first machine, then paste on others to connect.",
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(code_display)
-                        .child(buttons),
-                ),
-            );
-        } else {
-            let buttons = div().flex().flex_row().gap_2().child(copy).child(join);
-            rows.push(self.row(
-                "Pairing code",
-                "On the first machine, copy the code. On each other machine, click Join.",
-                buttons,
-            ));
-        }
-
-        // Display discovered devices
-        if !self.mouse_borders.discovered_devices.is_empty() {
-            let discovered = self.mouse_borders.discovered_devices.clone();
-            let devices_list: Vec<AnyElement> = discovered
-                .iter()
-                .map(|device| {
-                    let device_clone = device.clone();
-                    let add_button = self
-                        .pill(
-                            SharedString::from(format!("mb-add-{}", device.address)),
-                            "Add",
-                            false,
-                        )
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            let device = device_clone.clone();
-                            this.mutate(cx, move |settings| {
-                                let local = settings_edit::local_name(&settings.mouse_borders);
-                                let mut next = settings.clone();
-
-                                // Add the discovered device to the layout
-                                let used_slots: Vec<u8> =
-                                    next.mouse_borders.machines.iter().map(|m| m.slot).collect();
-
-                                let free_slot =
-                                    (0..4).find(|s| !used_slots.contains(s)).unwrap_or(0);
-
-                                next.mouse_borders.machines.push(aujar_config::Machine {
-                                    name: device.name.clone(),
-                                    slot: free_slot,
-                                    address: format!("{}:{}", device.address, device.port),
-                                });
-
-                                // Add local machine if not present
-                                settings_edit::add_machine(&mut next.mouse_borders, &local, None)
-                                    .ok();
-
-                                next.mouse_borders.enabled = true;
-                                *settings = next;
-                            });
-                        }));
-
-                    div()
-                        .flex()
-                        .flex_row()
-                        .justify_between()
-                        .items_center()
-                        .px_4()
-                        .py_2()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(pal.text))
-                                .child(format!("{}", device.name)),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(pal.text_dim))
-                                .child(format!("{}:{}", device.address, device.port)),
-                        )
-                        .child(add_button)
-                        .into_any_element()
-                })
-                .collect();
-
-            rows.push(
-                div()
-                    .px_4()
-                    .py_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(pal.text_dim))
-                            .child("Discovered devices on your local network:"),
-                    )
-                    .child(div().flex().flex_col().gap_1().children(devices_list))
-                    .into_any_element(),
-            );
-        }
-
-        // Add scan button
-        rows.push(self.row(
-            "Auto-discover",
-            "Scan your local network for other Mouse Borders devices. They must be running and on the same subnet.",
-            scan,
-        ));
 
         rows.push(self.row("Security key", &key_hint, new_key));
 
@@ -827,90 +978,112 @@ impl SettingsView {
         rows
     }
 
-    fn layout_rows(
+    /// One cell of the layout board: a machine you can drag, or an empty place you can drop on.
+    fn board_cell(
         &self,
         cx: &mut Context<Self>,
-        local: &aujar_mouse_borders::layout::MachineName,
-    ) -> Vec<AnyElement> {
+        index: u8,
+        machine: Option<&Machine>,
+        local: &MachineName,
+    ) -> AnyElement {
+        let pal = self.palette;
+        let accent = pal.accent;
+        let hover = pal.hover;
+
+        let cell = div()
+            .id(SharedString::from(format!("mb-cell-{index}")))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .w(px(CELL_W))
+            .h(px(CELL_H))
+            .rounded_md()
+            .border_1()
+            // Lights up while a machine is dragged over it.
+            .drag_over::<DraggedMachine>(move |style, _dragged, _window, _cx| {
+                style.border_color(rgb(accent)).bg(rgba(hover))
+            })
+            .on_drop(cx.listener(move |this, dragged: &DraggedMachine, _window, cx| {
+                let name = dragged.name.clone();
+
+                this.mutate(cx, move |settings| {
+                    settings_edit::place_machine(&mut settings.mouse_borders, &name, index);
+                });
+            }));
+
+        let Some(machine) = machine else {
+            return cell.border_color(rgba(pal.divider)).into_any_element();
+        };
+
+        let is_local = machine.name == local.as_str();
+        let name = machine.name.clone();
+
+        cell.border_color(if is_local {
+            rgb(pal.accent)
+        } else {
+            rgba(pal.keycap_border)
+        })
+        .bg(rgba(pal.hover))
+        .cursor_pointer()
+        .on_drag(
+            DraggedMachine { name: name.clone() },
+            move |dragged, _offset, _window, cx| {
+                let title = dragged.name.clone();
+
+                cx.new(|_| crate::DragGhost { title, accent })
+            },
+        )
+        .child(div().text_sm().text_color(rgb(pal.text)).child(name))
+        .children(is_local.then(|| {
+            div()
+                .text_xs()
+                .text_color(rgb(pal.accent))
+                .child("this machine")
+        }))
+        .into_any_element()
+    }
+
+    fn layout_rows(&self, cx: &mut Context<Self>, local: &MachineName) -> Vec<AnyElement> {
         let pal = self.palette;
         let mb = &self.settings.mouse_borders;
-        let slots = settings_edit::slots(mb);
+        let board = settings_edit::board(mb);
 
-        let cell = |slot: usize| -> AnyElement {
-            let machine = slots[slot];
-            let is_local = machine.is_some_and(|machine| machine.name == local.as_str());
+        // Rows of cells, like the display arrangement in an operating system.
+        let mut canvas = div().flex().flex_col().gap_2();
 
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap_1()
-                .w(px(132.))
-                .h(px(54.))
-                .rounded_md()
-                .border_1()
-                .border_color(if is_local {
-                    rgb(pal.accent)
-                } else {
-                    rgba(pal.keycap_border)
-                })
-                .bg(rgba(pal.hover))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(if machine.is_some() {
-                            pal.text
-                        } else {
-                            pal.text_faint
-                        }))
-                        .child(machine.map_or("empty".to_owned(), |machine| machine.name.clone())),
-                )
-                .children(is_local.then(|| {
-                    div()
-                        .text_xs()
-                        .text_color(rgb(pal.accent))
-                        .child("this machine")
-                }))
-                .into_any_element()
-        };
+        for row in 0..PLANE_ROWS {
+            let mut line = div().flex().flex_row().gap_2();
 
-        let diagram = match mb.matrix {
-            MatrixMode::Row => div().flex().flex_row().gap_2().children((0..4).map(cell)),
-            MatrixMode::Grid => div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().flex().flex_row().gap_2().children((0..2).map(cell)))
-                .child(div().flex().flex_row().gap_2().children((2..4).map(cell))),
-        };
+            for col in 0..PLANE_COLS {
+                let index = row * PLANE_COLS + col;
 
-        let shape = self.choices(vec![
-            self.pill("mb-row".into(), "One row", mb.matrix == MatrixMode::Row)
-                .on_click(cx.listener(|this, _event, _window, cx| {
-                    this.mutate(cx, |settings| {
-                        settings.mouse_borders.matrix = MatrixMode::Row
-                    })
-                })),
-            self.pill(
-                "mb-grid".into(),
-                "2 \u{d7} 2",
-                mb.matrix == MatrixMode::Grid,
-            )
-            .on_click(cx.listener(|this, _event, _window, cx| {
-                this.mutate(cx, |settings| {
-                    settings.mouse_borders.matrix = MatrixMode::Grid
-                })
-            })),
-        ]);
+                line = line.child(self.board_cell(cx, index, board[usize::from(index)], local));
+            }
+
+            canvas = canvas.child(line);
+        }
 
         let mut rows: Vec<AnyElement> = vec![
-            div().px_4().py_4().child(diagram).into_any_element(),
-            self.row("Arrangement", "How your machines sit on the desk. Slots are numbered left to right (row by row in 2 \u{d7} 2).", shape),
+            div()
+                .px_4()
+                .py_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(canvas)
+                .child(
+                    div().text_xs().text_color(rgb(pal.text_dim)).child(
+                        "Drag a machine to where it sits on your desk. Machines in the same row \
+                         switch left and right; machines in the same column switch up and down. \
+                         Drop on another machine to swap places.",
+                    ),
+                )
+                .into_any_element(),
         ];
 
-        for (index, machine) in slots.iter().enumerate() {
-            let Some(machine) = machine else { continue };
+        for machine in mb.machines.iter() {
             let name = machine.name.clone();
             let hint = if name == local.as_str() {
                 "This machine".to_owned()
@@ -918,23 +1091,6 @@ impl SettingsView {
                 "Found by its name".to_owned()
             } else {
                 machine.address.clone()
-            };
-
-            let step = |id: &str, label: &str, direction: i8, cx: &mut Context<Self>| {
-                let name = name.clone();
-
-                self.pill(SharedString::from(format!("mb-{id}-{name}")), label, false)
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        let name = name.clone();
-
-                        this.mutate(cx, move |settings| {
-                            settings_edit::move_machine(
-                                &mut settings.mouse_borders,
-                                &name,
-                                direction,
-                            );
-                        })
-                    }))
             };
 
             let remove = {
@@ -954,15 +1110,7 @@ impl SettingsView {
                 }))
             };
 
-            let controls = div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .child(step("left", "\u{25c0}", -1, cx))
-                .child(step("right", "\u{25b6}", 1, cx))
-                .child(remove);
-
-            rows.push(self.row(&format!("#{} {}", index + 1, name), &hint, controls));
+            rows.push(self.row(&name, &hint, remove));
         }
 
         if !mb
@@ -984,7 +1132,7 @@ impl SettingsView {
 
             rows.push(self.row(
                 "This machine is not in the layout",
-                "Add it, then connect the others with a pairing code.",
+                "Add it, then pair the others.",
                 add,
             ));
         }
