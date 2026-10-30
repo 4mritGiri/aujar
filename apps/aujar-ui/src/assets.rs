@@ -17,6 +17,43 @@ const ICONS: &[(&str, &[u8])] = &[
         "icons/layers.svg",
         include_bytes!("../assets/icons/layers.svg"),
     ),
+    ("icons/x.svg", include_bytes!("../assets/icons/x.svg")),
+    (
+        "icons/file-text.svg",
+        include_bytes!("../assets/icons/file-text.svg"),
+    ),
+    (
+        "icons/pdf.svg",
+        include_bytes!("../assets/icons/pdf.svg"),
+    ),
+    (
+        "icons/video.svg",
+        include_bytes!("../assets/icons/video.svg"),
+    ),
+    (
+        "icons/music.svg",
+        include_bytes!("../assets/icons/music.svg"),
+    ),
+    (
+        "icons/archive.svg",
+        include_bytes!("../assets/icons/archive.svg"),
+    ),
+    (
+        "icons/code.svg",
+        include_bytes!("../assets/icons/code.svg"),
+    ),
+    (
+        "icons/briefcase.svg",
+        include_bytes!("../assets/icons/briefcase.svg"),
+    ),
+    (
+        "icons/gamepad.svg",
+        include_bytes!("../assets/icons/gamepad.svg"),
+    ),
+    (
+        "icons/wrench.svg",
+        include_bytes!("../assets/icons/wrench.svg"),
+    ),
     ("icons/file.svg", include_bytes!("../assets/icons/file.svg")),
     ("icons/app.svg", include_bytes!("../assets/icons/app.svg")),
     (

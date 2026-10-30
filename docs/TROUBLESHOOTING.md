@@ -137,3 +137,21 @@ pgrep -a -x aujar-ui; pgrep -a -f 'aujar daemon'
 
 Two Aujar daemons running at once is never intended. To check, `ls -l $XDG_RUNTIME_DIR/aujar.sock`
 should be the only socket and `pgrep -a -f 'aujar daemon'` should show one process.
+
+
+## An app fails when started from Aujar but works from the app menu
+
+Programs started by Aujar are children of the Aujar daemon, so they inherit whatever restrictions
+the daemon runs with; the app menu starts them from your desktop session instead. If an app that
+needs a setuid helper (VirtualBox: `Effective UID is not root`, `VERR_PERMISSION_DENIED`) fails
+only from Aujar, check the daemon and the app:
+
+```bash
+grep NoNewPrivs /proc/$(pgrep -nx aujar)/status      # must say 0
+grep NoNewPrivs /proc/$(pgrep -n VirtualBox)/status  # the failing app (or its process name)
+```
+
+`NoNewPrivs: 1` on the daemon means an old `aujar.service` is still installed (versions before
+this fix set `NoNewPrivileges=true`). Re-run `scripts/install-local.sh`, or reinstall the package,
+then `systemctl --user daemon-reload && systemctl --user restart aujar`. Also remove any
+`~/.config/systemd/user/aujar.service.d/` drop-in of your own that sets `NoNewPrivileges=`.

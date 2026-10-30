@@ -1432,15 +1432,13 @@ impl SettingsView {
                             cx.notify();
                         })),
                 )
-                .children(
-                    data_shown
-                        .then(|| {
-                            data.iter()
-                                .map(|page| self.nav_item(*page, true, cx).into_any_element())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default(),
-                )
+                .children(if data_shown {
+                    data.iter()
+                        .map(|page| self.nav_item(*page, true, cx).into_any_element())
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                })
         });
 
         let general = self

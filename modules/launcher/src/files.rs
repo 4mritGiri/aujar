@@ -26,6 +26,9 @@ const REFRESH: Duration = Duration::from_secs(300);
 /// Maximum files/folders returned for one query.
 const MAX_RESULTS: usize = 8;
 
+/// A search with a `kind:` filter is a listing (the Files view): it may fill the UI's list.
+const LIST_MAX: usize = 40;
+
 const SKIPPED_DIRS: [&str; 8] = [
     "node_modules",
     "target",
@@ -69,6 +72,8 @@ impl Entry {
 enum Filter {
     Folder,
     Recent,
+    /// `kind:file`: every file and folder (so a typed name is searched with a longer list).
+    Any,
     Extensions(Vec<String>),
 }
 
@@ -80,6 +85,7 @@ fn kind_filter(name: &str) -> Filter {
     match name {
         "folder" | "folders" | "directory" | "dir" => Filter::Folder,
         "recent" | "history" => Filter::Recent,
+        "file" | "files" | "any" | "all" => Filter::Any,
         "pdf" => extensions(&["pdf"]),
         "image" | "images" | "photo" | "picture" => {
             extensions(&["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "heic"])
@@ -140,7 +146,7 @@ fn matches_filters(entry: &Entry, filters: &[Filter]) -> bool {
         || kinds.iter().any(|kind| match kind {
             Filter::Folder => entry.is_dir,
             Filter::Extensions(list) => list.iter().any(|ext| ext == entry.extension()),
-            Filter::Recent => true,
+            Filter::Any | Filter::Recent => true,
         })
 }
 
@@ -366,11 +372,17 @@ impl Provider for FilesProvider {
             })
             .collect();
 
+        let max = if filters.is_empty() {
+            MAX_RESULTS
+        } else {
+            LIST_MAX
+        };
+
         // A broad query can match tens of thousands of names; only the best few matter, so
         // partition instead of sorting everything.
-        if hits.len() > MAX_RESULTS {
-            hits.select_nth_unstable_by(MAX_RESULTS - 1, |a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-            hits.truncate(MAX_RESULTS);
+        if hits.len() > max {
+            hits.select_nth_unstable_by(max - 1, |a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            hits.truncate(max);
         }
 
         hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
@@ -381,6 +393,19 @@ impl Provider for FilesProvider {
             .enumerate()
             .map(|(order, (_, position))| {
                 let entry = &index[position];
+
+                // Size and date for the row's subtitle, which the UI words ("57 KB, 3 days
+                // ago"). Only the few results shown are looked at.
+                let meta = fs::metadata(&entry.path).ok();
+                let size = match &meta {
+                    Some(meta) if !entry.is_dir => meta.len(),
+                    _ => 0,
+                };
+                let modified = meta
+                    .as_ref()
+                    .and_then(|meta| meta.modified().ok())
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map_or(entry.modified, |elapsed| elapsed.as_secs());
 
                 SearchResult {
                     id: format!("files:open:{}", entry.path.display()),
@@ -395,7 +420,7 @@ impl Provider for FilesProvider {
                     // stay below applications for plain searches.
                     score: 560 + (count - order as u32),
                     icon: None,
-                    detail: None,
+                    detail: Some(format!("meta:{size}:{modified}")),
                 }
             })
             .collect()
@@ -484,6 +509,65 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "invoice.pdf");
+    }
+
+    #[test]
+    fn kind_file_matches_everything_and_lists_more_than_a_plain_search() {
+        let many = FilesProvider::from_entries(
+            (0..30)
+                .map(|n| entry(&format!("/home/u/Documents/note{n}.txt"), false, n, None))
+                .collect(),
+        );
+
+        // A plain search stops at 8; a `kind:` search is a listing.
+        assert_eq!(many.search("note").len(), MAX_RESULTS);
+        assert_eq!(many.search("kind:file note").len(), 30);
+        assert_eq!(many.search("kind:file").len(), 30);
+
+        // Folders count too.
+        assert_eq!(provider().search("kind:file reports").len(), 1);
+        assert_eq!(provider().search("kind:file").len(), 5);
+    }
+
+    #[test]
+    fn results_carry_size_and_date_for_the_subtitle() {
+        let dir = std::env::temp_dir().join(format!(
+            "aujar-files-meta-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sized.txt");
+        fs::write(&file, vec![b'x'; 1234]).unwrap();
+
+        let provider = FilesProvider::from_entries(vec![
+            entry(file.to_str().unwrap(), false, 7, None),
+            entry("/definitely/not/here/ghost.txt", false, 99, None),
+        ]);
+
+        let results = provider.search("kind:file");
+        let detail = |title: &str| {
+            results
+                .iter()
+                .find(|result| result.title == title)
+                .and_then(|result| result.detail.clone())
+                .unwrap()
+        };
+
+        // A real file: its true size; the date is whatever the file system says.
+        let real = detail("sized.txt");
+        let mut parts = real.strip_prefix("meta:").unwrap().split(':');
+
+        assert_eq!(parts.next(), Some("1234"));
+        assert!(parts.next().unwrap().parse::<u64>().unwrap() > 1_000_000_000);
+
+        // A file that is gone: size unknown, the indexed date is kept.
+        assert_eq!(detail("ghost.txt"), "meta:0:99");
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -17,10 +17,11 @@ RestartSec=2
 SuccessExitStatus=75
 RestartPreventExitStatus=75
 Environment=RUST_LOG=info
-# Light hardening that works in unprivileged user units (mount-namespace options such as
-# ProtectSystem= need user namespaces, which some distros restrict).
-NoNewPrivileges=true
-LockPersonality=true
+# No sandboxing directives here, on purpose. Every application the launcher starts is a child of
+# this service and inherits them: NoNewPrivileges= makes setuid programs fail (VirtualBox:
+# "Effective UID is not root", ping, Wireshark's capture helper, ...), LockPersonality= breaks
+# some 32-bit and Wine programs, and ProtectSystem=/ProtectHome=/PrivateTmp= would change what
+# launched applications can see. A test (crates/aujar-daemon/tests/unit_files.rs) keeps it so.
 
 [Install]
 WantedBy=graphical-session.target

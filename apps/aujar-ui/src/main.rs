@@ -22,7 +22,7 @@ use aujar_ipc::{
     subscribe,
 };
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, ExternalDragPayload, FileDragPaths,
+    AnyElement, AnyView, App, Bounds, ClipboardItem, Context, ExternalDragPayload, FileDragPaths,
     FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     ScrollHandle, SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
     WindowDecorations, WindowHandle, WindowOptions, div, img, point, prelude::*, px, rgb, rgba,
@@ -56,7 +56,15 @@ const POLL_DELAY: Duration = Duration::from_millis(450);
 /// Re-asks per search (about 20 s), after which the placeholder stays.
 const MAX_POLLS: u32 = 44;
 /// Tallest the results list gets before it scrolls.
-const LIST_MAX_H: f32 = 430.0;
+/// Height of the search row (the pill and the round buttons), and the gap below it.
+const ROW_H: f32 = 52.0;
+const ROW_GAP: f32 = 8.0;
+
+/// Height of the results card: tall when it lists something or shows the tips, short for a
+/// notice or a few examples. The window is resized to fit exactly, so no empty strip of window
+/// (and the shadow the compositor draws around it) is left below the card.
+const CARD_FULL_H: f32 = 500.0;
+const CARD_SHORT_H: f32 = 150.0;
 
 /// Bridge thread -> UI thread.
 enum UiMessage {
@@ -357,6 +365,64 @@ fn file_kind(path: &Path, is_dir: bool) -> String {
     }
 }
 
+/// `~/Downloads` for `/home/me/Downloads`.
+fn pretty_folder(dir: &Path) -> String {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+
+    pretty_folder_in(dir, home.as_deref())
+}
+
+fn pretty_folder_in(dir: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| dir.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => dir.display().to_string(),
+    }
+}
+
+/// `meta:<size>:<modified>` from the daemon: a file's size in bytes and modification time.
+fn parse_file_meta(detail: &str) -> Option<(u64, u64)> {
+    let (size, modified) = detail.strip_prefix("meta:")?.split_once(':')?;
+
+    Some((size.parse().ok()?, modified.parse().ok()?))
+}
+
+/// Word the daemon's file details for the row: "PDF document \u{b7} 57 KB \u{b7} yesterday 9:05 PM
+/// \u{b7} ~/Downloads". Results from a daemon that sends no details stay as they are.
+fn describe_files(hits: &mut [SearchHit]) {
+    let now = now_secs();
+    let now_stamp = local_stamp(now);
+
+    for hit in hits
+        .iter_mut()
+        .filter(|hit| matches!(hit.kind.as_str(), "file" | "folder"))
+    {
+        let Some((size, modified)) = hit.detail.as_deref().and_then(parse_file_meta) else {
+            continue;
+        };
+
+        let is_dir = hit.kind == "folder";
+        let mut parts = vec![file_kind(Path::new(&hit.title), is_dir)];
+
+        if !is_dir {
+            parts.push(human_size(size));
+        }
+
+        if modified > 0 {
+            let age = Duration::from_secs(now.saturating_sub(modified));
+
+            parts.push(copied_text(now_stamp, local_stamp(modified), age));
+        }
+
+        if let Some(folder) = hit.subtitle.take().filter(|folder| !folder.is_empty()) {
+            parts.push(folder);
+        }
+
+        hit.subtitle = Some(parts.join(" \u{b7} "));
+        hit.detail = None;
+    }
+}
+
 /// One clipboard history entry.
 #[derive(Debug, Clone)]
 struct ClipEntry {
@@ -561,7 +627,13 @@ fn build_preview(hit: &SearchHit, clips: &[ClipEntry]) -> Preview {
                 }
             }
 
-            if let Some(parent) = hit.subtitle.clone() {
+            // The row's subtitle now says kind, size and date; the location is the folder.
+            let folder = path
+                .parent()
+                .map(pretty_folder)
+                .filter(|folder| !folder.is_empty());
+
+            if let Some(parent) = folder.or_else(|| hit.subtitle.clone()) {
                 preview.rows.push(("Location", parent));
             }
         }
@@ -749,6 +821,20 @@ impl Quick {
         }
     }
 
+    /// What the tooltip says; a button that is on offers to switch itself off.
+    fn hint(self, on: bool) -> &'static str {
+        match (self, on) {
+            (Self::Applications, false) => "Applications",
+            (Self::Applications, true) => "Back to all results",
+            (Self::Files, false) => "Files",
+            (Self::Files, true) => "Back to all results",
+            (Self::Actions, false) => "Actions",
+            (Self::Actions, true) => "Back to all results",
+            (Self::Clipboard, false) => "Clipboard history",
+            (Self::Clipboard, true) => "Back to all results",
+        }
+    }
+
     /// The query this button types.
     fn query(self) -> &'static str {
         match self {
@@ -783,8 +869,220 @@ fn ghost_text(query: &str, hit: &SearchHit) -> Option<String> {
     Some(format!(" \u{2014} {}", first_chars(title, 40)))
 }
 
+/// A small text bubble shown when the mouse rests on an icon-only button.
+struct HoverTip {
+    text: SharedString,
+    bg: u32,
+    fg: u32,
+    border: u32,
+}
+
+impl Render for HoverTip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        rounded_px(div(), 7.)
+            .px_2()
+            .py_1()
+            .text_xs()
+            .border_1()
+            .border_color(rgba(self.border))
+            .bg(rgba(self.bg))
+            .text_color(rgb(self.fg))
+            .child(self.text.clone())
+    }
+}
+
+/// Step through `count` chip positions (0 is "All") from `current`, wrapping at both ends.
+fn cycle_index(count: usize, current: usize, delta: isize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+
+    (current as isize + delta).rem_euclid(count as isize) as usize
+}
+
+/// "Suggestions" in the Files grid: how many of your most-opened recent files lead it.
+const SUGGESTIONS_MAX: usize = 5;
+
+/// Whether a file name is a picture the grid can show as its own thumbnail.
+fn is_image_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+            )
+        })
+}
+
+/// Where each tile of the Files grid sits among the list's children: a "Suggestions" header and
+/// its rows (when there are suggestions), then a "Recents" header and its rows.
+fn files_grid_rows(suggested: usize, total: usize) -> Vec<usize> {
+    let mut rows = Vec::with_capacity(total);
+    let mut child = 0;
+
+    if suggested > 0 {
+        child += 1;
+        rows.extend((0..suggested).map(|index| child + index / GRID_COLS));
+        child += suggested.div_ceil(GRID_COLS);
+    }
+
+    if total > suggested {
+        child += 1;
+        rows.extend((0..total - suggested).map(|index| child + index / GRID_COLS));
+    }
+
+    rows
+}
+
 /// Applications per row in the Applications grid.
 const GRID_COLS: usize = 5;
+
+/// "View as List" in the "..." menu. The UI process outlives the launcher window, so the choice
+/// lasts until the UI is restarted.
+static APPS_AS_LIST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn apps_as_list() -> bool {
+    APPS_AS_LIST.load(Ordering::Relaxed)
+}
+
+/// The file-type chips of the Files view: label, the `kind:` word the daemon understands, and
+/// the icon on the chip and on the token in the search bar.
+const FILE_KINDS: [(&str, &str, &str); 8] = [
+    ("Documents", "document", "icons/file-text.svg"),
+    ("PDFs", "pdf", "icons/pdf.svg"),
+    ("Images", "image", "icons/image.svg"),
+    ("Videos", "video", "icons/video.svg"),
+    ("Audio", "audio", "icons/music.svg"),
+    ("Archives", "archive", "icons/archive.svg"),
+    ("Code", "code", "icons/code.svg"),
+    ("Folders", "folder", "icons/folder.svg"),
+];
+
+/// The icon of an Applications group chip.
+fn group_icon(group: &str) -> &'static str {
+    match group {
+        "Internet" => "icons/globe.svg",
+        "Productivity" => "icons/briefcase.svg",
+        "Media" => "icons/video.svg",
+        "Graphics" => "icons/image.svg",
+        "Development" => "icons/code.svg",
+        "Games" => "icons/gamepad.svg",
+        "Utilities" => "icons/wrench.svg",
+        "System" => "icons/sliders.svg",
+        "Education & Science" => "icons/book.svg",
+        _ => "icons/app.svg",
+    }
+}
+
+/// Something the launcher understands, shown as a click-to-try example.
+struct Tip {
+    title: &'static str,
+    /// What it looks like when typed.
+    example: &'static str,
+    /// What a click puts in the search field.
+    fill: &'static str,
+    /// The plugin that must be on for the tip to make sense.
+    plugin: Option<&'static str>,
+}
+
+const TIPS: [Tip; 12] = [
+    Tip {
+        title: "Open an app",
+        example: "fire",
+        fill: "fire",
+        plugin: None,
+    },
+    Tip {
+        title: "Find a file",
+        example: "report",
+        fill: "report",
+        plugin: Some("files"),
+    },
+    Tip {
+        title: "Only one kind of file",
+        example: "kind:pdf invoice",
+        fill: "kind:pdf ",
+        plugin: Some("files"),
+    },
+    Tip {
+        title: "Do math",
+        example: "2*(3+4)",
+        fill: "2*(3+4)",
+        plugin: Some("calculator"),
+    },
+    Tip {
+        title: "Convert units",
+        example: "10 km to mi",
+        fill: "10 km to mi",
+        plugin: Some("units"),
+    },
+    Tip {
+        title: "Lock, sleep, restart",
+        example: "lock",
+        fill: "lock",
+        plugin: Some("system"),
+    },
+    Tip {
+        title: "Switch to an open window",
+        example: "< firefox",
+        fill: "< ",
+        plugin: Some("windows"),
+    },
+    Tip {
+        title: "Look up a word",
+        example: "define serendipity",
+        fill: "define ",
+        plugin: Some("dictionary"),
+    },
+    Tip {
+        title: "Check the weather",
+        example: "weather kathmandu",
+        fill: "weather ",
+        plugin: Some("weather"),
+    },
+    Tip {
+        title: "Search the web",
+        example: "g rust lifetimes",
+        fill: "g ",
+        plugin: None,
+    },
+    Tip {
+        title: "Remote desktop",
+        example: "rdp office",
+        fill: "rdp ",
+        plugin: Some("nexdesk"),
+    },
+    Tip {
+        title: "Clipboard history",
+        example: "clip",
+        fill: "clip",
+        plugin: Some("clipboard"),
+    },
+];
+
+/// The keys worth knowing, for the tips panel.
+const SHORTCUTS: [(&str, &str); 9] = [
+    ("Enter", "Open"),
+    ("Ctrl+K", "More actions"),
+    ("Ctrl+C", "Copy"),
+    ("Ctrl+L", "Look up a word"),
+    ("\u{2191} \u{2193}  Tab", "Move"),
+    ("Alt+1 \u{2026} 9", "Open that row"),
+    ("Ctrl+B", "Search the web"),
+    ("Ctrl+,", "Settings"),
+    ("Esc", "Clear, then close"),
+];
+
+/// The items of the "..." menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MoreAction {
+    Grid,
+    List,
+    Tips,
+    Settings,
+}
 
 /// The groups of the Applications grid, in the order their chips appear.
 const APP_GROUPS: [&str; 10] = [
@@ -815,12 +1113,21 @@ fn is_listing_query(lower: &str) -> bool {
 /// The query for the typed `text` inside a quick button's `scope`: `kind:app fire` for
 /// "fire" in Applications, the scope's own listing query while the text is empty, and the text
 /// unchanged when no scope is on.
-fn scoped_query(scope: Option<Quick>, text: &str) -> String {
+fn scoped_query(scope: Option<Quick>, file_kind: Option<&str>, text: &str) -> String {
     let Some(scope) = scope else {
         return text.to_owned();
     };
 
     let text = text.trim();
+
+    // A file-type chip ("PDFs") turns the Files view into `kind:pdf` plus whatever is typed.
+    if let (Quick::Files, Some(kind)) = (scope, file_kind) {
+        return if text.is_empty() {
+            format!("kind:{kind}")
+        } else {
+            format!("kind:{kind} {text}")
+        };
+    }
 
     if text.is_empty() {
         return scope.query().to_owned();
@@ -830,8 +1137,8 @@ fn scoped_query(scope: Option<Quick>, text: &str) -> String {
         Quick::Applications | Quick::Actions | Quick::Clipboard => {
             format!("{} {text}", scope.query())
         }
-        // Plain file search; `scope_keeps` then shows only files and folders.
-        Quick::Files => text.to_owned(),
+        // `kind:file` lets the daemon list up to 40 matches (a plain search stops at 8).
+        Quick::Files => format!("kind:file {text}"),
     }
 }
 
@@ -883,6 +1190,16 @@ struct LauncherView {
     /// The round button whose scope is on. It stays on while you type: the text then searches
     /// inside it (Spotlight's Applications, Files, Actions and Clipboard views).
     scope: Option<Quick>,
+    /// The file-type chip of the Files view (`pdf`, `image`, ...); `None` is "All".
+    file_kind: Option<&'static str>,
+    /// How many tiles at the front of the Files grid are "Suggestions".
+    suggested: usize,
+    /// The height the window was last resized to.
+    window_h: f32,
+    /// The "..." menu is open.
+    more: bool,
+    /// The tips panel replaces the results.
+    tips: bool,
     /// Index of each result among the list's child elements (section headers count).
     row_index: Vec<usize>,
     scroll: ScrollHandle,
@@ -960,6 +1277,11 @@ impl LauncherView {
             chip: None,
             group: None,
             scope: None,
+            file_kind: None,
+            suggested: 0,
+            window_h: WINDOW_H,
+            more: false,
+            tips: false,
             row_index: Vec::new(),
             scroll: ScrollHandle::new(),
             preview_scroll: ScrollHandle::new(),
@@ -1116,6 +1438,8 @@ impl LauncherView {
 
     /// Call after the query text changed.
     fn edited(&mut self, cx: &mut Context<Self>) {
+        self.more = false;
+        self.tips = false;
         self.cursor = self.cursor.min(self.query.len());
         self.anchor = self.anchor.min(self.query.len());
         self.request_search();
@@ -1261,11 +1585,37 @@ impl LauncherView {
                 .unzip(),
         };
 
+        // The Files grid leads with the recent files you open most from here ("Suggestions").
+        let files_grid = self.is_files_grid(&self.all_hits);
+        let (hits, sections, suggested): (Vec<SearchHit>, Vec<Section>, usize) = if files_grid {
+            let count = |index: usize| self.history.count_of(&hits[index].id);
+            let mut leading: Vec<usize> = (0..hits.len()).filter(|&index| count(index) > 0).collect();
+
+            leading.sort_by_key(|&index| std::cmp::Reverse(count(index)));
+            leading.truncate(SUGGESTIONS_MAX);
+
+            let mut order = leading.clone();
+
+            order.extend((0..hits.len()).filter(|index| !leading.contains(index)));
+
+            (
+                order.iter().map(|&index| hits[index].clone()).collect(),
+                order.iter().map(|&index| sections[index]).collect(),
+                leading.len(),
+            )
+        } else {
+            (hits, sections, 0)
+        };
+
+        self.suggested = suggested;
+
         // Where each result sits among the list's children. In the list, a header precedes
         // each section; in the grid, one header precedes rows of `GRID_COLS` tiles.
         let mut row_index = Vec::with_capacity(sections.len());
 
-        if grid {
+        if files_grid {
+            row_index.extend(files_grid_rows(suggested, sections.len()));
+        } else if grid && !apps_as_list() {
             row_index.extend((0..sections.len()).map(|index| 1 + index / GRID_COLS));
         } else {
             let mut headers = 0;
@@ -1722,7 +2072,7 @@ impl LauncherView {
             items,
             selected: 0,
             x: x.clamp(8.0, (width - MENU_W - 8.0).max(8.0)),
-            y: y.clamp(8.0, (WINDOW_H - height - 8.0).max(8.0)),
+            y: y.clamp(8.0, (self.window_h - height - 8.0).max(8.0)),
         });
 
         cx.notify();
@@ -1808,7 +2158,10 @@ impl LauncherView {
             && !alt
             && matches!(key, "backspace" | "delete")
         {
-            self.clear_scope(cx);
+            if !self.remove_token(cx) {
+                self.clear_scope(cx);
+            }
+
             return;
         }
 
@@ -1835,6 +2188,15 @@ impl LauncherView {
                     self.selected = number - 1;
                     self.launch_selected(false, window, cx);
                 }
+                return;
+            }
+        }
+
+        // Alt+Left/Right switch the chips under the bar (All, Applications, Files, ...).
+        if alt && !ctrl && matches!(key, "left" | "right") {
+            let delta = if key == "left" { -1 } else { 1 };
+
+            if self.cycle_chip(delta, cx) {
                 return;
             }
         }
@@ -1977,6 +2339,11 @@ impl LauncherView {
                     self.edited(cx);
                 }
                 "b" => self.open_web_search(window, cx),
+                "/" => {
+                    self.more = false;
+                    self.tips = !self.tips;
+                    cx.notify();
+                }
                 "," => {
                     let _ = self.requests.try_send(UiRequest::OpenSettings);
                     window.remove_window();
@@ -1986,9 +2353,25 @@ impl LauncherView {
             return;
         }
 
+        // F1: help, like everywhere else.
+        if key == "f1" {
+            self.more = false;
+            self.tips = !self.tips;
+            cx.notify();
+            return;
+        }
+
         match key {
             "escape" => {
-                // First Esc clears the query (like Spotlight), second closes.
+                // Esc closes the "..." menu, then the tips; then it clears the query (like
+                // Spotlight), and last it closes the launcher.
+                if self.more || self.tips {
+                    self.more = false;
+                    self.tips = false;
+                    cx.notify();
+                    return;
+                }
+
                 if self.query.is_empty() {
                     window.remove_window();
                 } else {
@@ -2792,7 +3175,7 @@ impl LauncherView {
                 .flex_col()
                 .w(px(304.))
                 .max_w_full()
-                .max_h(px(LIST_MAX_H + 48.))
+                .min_h(px(0.))
                 .flex_shrink_0()
                 .overflow_y_scroll()
                 .track_scroll(&self.preview_scroll)
@@ -2857,6 +3240,18 @@ impl LauncherView {
                 hints.push(("nba", "Scores"));
                 hints.push(("< name", "Windows"));
             }
+        }
+
+        if self.grid_active() {
+            hints.push(("\u{2190}\u{2191}\u{2193}\u{2192}", "Move"));
+        }
+
+        if self.has_chips() {
+            hints.push(("Alt+\u{2190}\u{2192}", "Filter"));
+        }
+
+        if self.scope.is_some() && self.query.is_empty() {
+            hints.push(("Backspace", "Back"));
         }
 
         hints.push(("Esc", "Close"));
@@ -3023,18 +3418,22 @@ impl LauncherView {
                 this.mouse_drag_to(end, event.pressed_button == Some(MouseButton::Left), cx);
             }));
 
-        // "Applications" waits in the empty field, like a placeholder, until you type.
+        let token = self.scope_token();
+
+        // "Applications" waits in the empty field, like a placeholder, until you type; once a
+        // chip is picked, its token stands in front of the caret instead.
         if let Some(quick) = self.scope.filter(|_| self.query.is_empty()) {
-            return field
-                .child(caret())
-                .child(
+            return match token {
+                Some(token) => field.child(token).child(caret()),
+                None => field.child(caret()).child(
                     div()
                         .pl_1()
                         .text_color(rgb(pal.text_dim))
                         .child(quick.title()),
-                )
-                .child(filler)
-                .into_any_element();
+                ),
+            }
+            .child(filler)
+            .into_any_element();
         }
 
         if self.query.is_empty() {
@@ -3123,6 +3522,7 @@ impl LauncherView {
         }
 
         field
+            .children(token)
             .children(parts)
             .children(ghost)
             .child(filler)
@@ -3140,13 +3540,14 @@ impl LauncherView {
 
     /// What the daemon is asked: the typed text, behind the scope's prefix (`kind:app fire`).
     fn search_text(&self) -> String {
-        scoped_query(self.scope, &self.query)
+        scoped_query(self.scope, self.file_kind, &self.query)
     }
 
     fn set_scope(&mut self, quick: Quick, cx: &mut Context<Self>) {
         self.scope = Some(quick);
         self.chip = None;
         self.group = None;
+        self.file_kind = None;
         self.edited(cx);
     }
 
@@ -3154,6 +3555,7 @@ impl LauncherView {
         self.scope = None;
         self.chip = None;
         self.group = None;
+        self.file_kind = None;
         self.edited(cx);
     }
 
@@ -3191,6 +3593,7 @@ impl LauncherView {
 
                 rounded_px(div(), 26.)
                     .id(SharedString::from(format!("quick-{quick:?}")))
+                    .tooltip(self.hover_tip(quick.hint(on)))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -3244,6 +3647,151 @@ impl LauncherView {
         cx.notify();
     }
 
+    /// A tooltip builder in the current palette.
+    fn hover_tip(&self, text: &'static str) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+        let pal = self.palette;
+
+        move |_window, cx| {
+            cx.new(|_| HoverTip {
+                text: text.into(),
+                bg: pal.menu,
+                fg: pal.text,
+                border: pal.border,
+            })
+            .into()
+        }
+    }
+
+    /// The group chips of the Applications grid that apply to the current results.
+    fn present_groups(&self) -> Vec<&'static str> {
+        APP_GROUPS
+            .into_iter()
+            .filter(|group| {
+                self.all_hits
+                    .iter()
+                    .any(|hit| app_group(hit) == Some(*group))
+            })
+            .collect()
+    }
+
+    /// Whether chips are showing under the search bar (so Alt+Left/Right has something to do).
+    fn has_chips(&self) -> bool {
+        if self.scope == Some(Quick::Files) {
+            return true;
+        }
+
+        if self.is_grid_list(&self.all_hits) {
+            return self.present_groups().len() >= 2;
+        }
+
+        self.chip_sections().len() >= 2
+    }
+
+    /// The chip you picked, shown inside the search field as a blue token ("PDFs", "Internet")
+    /// ahead of the text, like Spotlight's.
+    fn scope_token(&self) -> Option<AnyElement> {
+        let pal = self.palette;
+
+        let (icon, label) = match self.scope? {
+            Quick::Files => {
+                let kind = self.file_kind?;
+                let (label, _, icon) = FILE_KINDS.iter().find(|(_, k, _)| *k == kind)?;
+
+                (*icon, *label)
+            }
+            Quick::Applications => {
+                let group = self.group.as_deref()?;
+                let label = *APP_GROUPS.iter().find(|g| **g == group)?;
+
+                (group_icon(label), label)
+            }
+            _ => return None,
+        };
+
+        Some(
+            rounded_px(div(), 9.)
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .flex_shrink_0()
+                .mr_2()
+                .px_2()
+                .h(px(30.))
+                .bg(rgba(pal.accent_soft))
+                .text_color(rgb(pal.accent_fg))
+                .text_lg()
+                .child(self.glyph(icon, 16., pal.accent_fg))
+                .child(label)
+                .into_any_element(),
+        )
+    }
+
+    /// Backspace on an empty field removes the token first (the chip goes back to "All"), then
+    /// the scope. `false` when there was no token.
+    fn remove_token(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.scope == Some(Quick::Files) && self.file_kind.is_some() {
+            self.select_file_kind(None, cx);
+            return true;
+        }
+
+        if self.scope == Some(Quick::Applications) && self.group.is_some() {
+            self.select_group(None, cx);
+            return true;
+        }
+
+        false
+    }
+
+    /// Alt+Left/Right: the next or previous chip, wrapping around. `false` when no chips show.
+    fn cycle_chip(&mut self, delta: isize, cx: &mut Context<Self>) -> bool {
+        if self.scope == Some(Quick::Files) {
+            let current = FILE_KINDS
+                .iter()
+                .position(|(_, kind, _)| Some(*kind) == self.file_kind)
+                .map_or(0, |index| index + 1);
+            let next = cycle_index(FILE_KINDS.len() + 1, current, delta);
+
+            self.select_file_kind(next.checked_sub(1).map(|index| FILE_KINDS[index].1), cx);
+            return true;
+        }
+
+        if self.is_grid_list(&self.all_hits) {
+            let groups = self.present_groups();
+
+            if groups.len() < 2 {
+                return false;
+            }
+
+            let current = groups
+                .iter()
+                .position(|group| Some(*group) == self.group.as_deref())
+                .map_or(0, |index| index + 1);
+            let next = cycle_index(groups.len() + 1, current, delta);
+
+            self.select_group(
+                next.checked_sub(1).map(|index| groups[index].to_owned()),
+                cx,
+            );
+            return true;
+        }
+
+        let sections = self.chip_sections();
+
+        if sections.len() < 2 {
+            return false;
+        }
+
+        let current = sections
+            .iter()
+            .position(|section| Some(*section) == self.chip)
+            .map_or(0, |index| index + 1);
+        let next = cycle_index(sections.len() + 1, current, delta);
+
+        self.select_chip(next.checked_sub(1).map(|index| sections[index]), cx);
+        true
+    }
+
     /// The result Enter would open, when the bar should speak for it (grey title after the
     /// text, its icon at the right end).
     fn bar_hit(&self) -> Option<&SearchHit> {
@@ -3268,8 +3816,23 @@ impl LauncherView {
             && hits.iter().all(|hit| hit.kind == "application")
     }
 
+    /// Whether `hits` should be drawn as the Files grid: the Files view with nothing typed and
+    /// no file type chosen (the recent files). Typing or a chip turns it into the detailed list.
+    fn is_files_grid(&self, hits: &[SearchHit]) -> bool {
+        self.scope == Some(Quick::Files)
+            && self.file_kind.is_none()
+            && self.query.trim().is_empty()
+            && !apps_as_list()
+            && !hits.is_empty()
+            && hits
+                .iter()
+                .all(|hit| matches!(hit.kind.as_str(), "file" | "folder"))
+    }
+
+    /// Results are drawn as a grid of tiles (Applications, or the recent files), not as a list
+    /// ("View as List" in the "..." menu turns the grids off).
     fn grid_active(&self) -> bool {
-        self.is_grid_list(&self.results)
+        !apps_as_list() && (self.is_grid_list(&self.results) || self.is_files_grid(&self.results))
     }
 
     /// Move the selection across (`+-1`) or down (`+-GRID_COLS`) the tiles, without wrapping.
@@ -3289,6 +3852,7 @@ impl LauncherView {
     fn render_tile(&self, index: usize, hit: &SearchHit, cx: &mut Context<Self>) -> AnyElement {
         let pal = self.palette;
         let selected = index == self.selected;
+        let is_file = matches!(hit.kind.as_str(), "file" | "folder");
 
         div()
             .id(SharedString::from(format!("tile-{index}")))
@@ -3306,13 +3870,15 @@ impl LauncherView {
             .when(!selected, |this| {
                 this.hover(|style| style.bg(rgba(pal.hover)))
             })
-            .child(self.leading(hit, 48.))
+            .child(self.tile_icon(hit))
             .child(
                 div()
                     .w_full()
                     .text_xs()
                     .text_center()
-                    .truncate()
+                    // File names get two lines; an application's name fits on one.
+                    .when(is_file, |this| this.line_clamp(2))
+                    .when(!is_file, |this| this.truncate())
                     .text_color(if selected {
                         rgb(pal.on_accent)
                     } else {
@@ -3335,10 +3901,33 @@ impl LauncherView {
             .into_any_element()
     }
 
-    /// The Applications grid: a title, then rows of `GRID_COLS` tiles.
-    fn render_grid(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The picture of a tile: a picture file is its own thumbnail, anything else shows its icon.
+    fn tile_icon(&self, hit: &SearchHit) -> AnyElement {
+        if self.settings.appearance.show_icons && hit.kind == "file" && is_image_name(&hit.title) {
+            if let Some(path) = hit.id.strip_prefix("files:open:") {
+                return img(PathBuf::from(path))
+                    .size(px(52.))
+                    .rounded_md()
+                    .flex_shrink_0()
+                    .into_any_element();
+            }
+        }
+
+        self.leading(hit, if matches!(hit.kind.as_str(), "file" | "folder") { 52. } else { 48. })
+    }
+
+    /// A titled block of tiles, `GRID_COLS` to a row: the results `range` of the list.
+    fn push_grid_section(
+        &self,
+        rows: &mut Vec<AnyElement>,
+        title: &'static str,
+        range: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
         let pal = self.palette;
-        let mut rows: Vec<AnyElement> = vec![
+        let start = range.start;
+
+        rows.push(
             div()
                 .px_5()
                 .pt_3()
@@ -3346,15 +3935,15 @@ impl LauncherView {
                 .text_xs()
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(rgb(pal.text_faint))
-                .child("Applications")
+                .child(title)
                 .into_any_element(),
-        ];
+        );
 
-        for (row, chunk) in self.results.chunks(GRID_COLS).enumerate() {
+        for (row, chunk) in self.results[range].chunks(GRID_COLS).enumerate() {
             let mut line = div().flex().flex_row().gap_1().px_3();
 
             for (offset, hit) in chunk.iter().enumerate() {
-                line = line.child(self.render_tile(row * GRID_COLS + offset, hit, cx));
+                line = line.child(self.render_tile(start + row * GRID_COLS + offset, hit, cx));
             }
 
             // Keep the last row's tiles the same width as the others.
@@ -3363,6 +3952,25 @@ impl LauncherView {
             }
 
             rows.push(line.into_any_element());
+        }
+    }
+
+    /// The grids: all the applications, or the recent files in "Suggestions" and "Recents".
+    fn render_grid(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut rows: Vec<AnyElement> = Vec::new();
+
+        if self.is_files_grid(&self.results) {
+            let suggested = self.suggested.min(self.results.len());
+
+            if suggested > 0 {
+                self.push_grid_section(&mut rows, "Suggestions", 0..suggested, cx);
+            }
+
+            if self.results.len() > suggested {
+                self.push_grid_section(&mut rows, "Recents", suggested..self.results.len(), cx);
+            }
+        } else {
+            self.push_grid_section(&mut rows, "Applications", 0..self.results.len(), cx);
         }
 
         rows
@@ -3399,9 +4007,14 @@ impl LauncherView {
             .into_iter()
             .map(|(group, label)| {
                 let on = self.group.as_deref() == group;
+                let tint = if on { pal.accent_fg } else { pal.text_dim };
 
                 div()
                     .id(SharedString::from(format!("group-{label}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
                     .px_3()
                     .py_1()
                     .rounded_full()
@@ -3415,6 +4028,9 @@ impl LauncherView {
                         this.bg(rgba(pal.pill))
                             .text_color(rgb(pal.text_dim))
                             .hover(|style| style.bg(rgba(pal.hover)))
+                    })
+                    .when_some(group, |this, group| {
+                        this.child(self.glyph(group_icon(group), 14., tint))
                     })
                     .child(label)
                     .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -3438,6 +4054,411 @@ impl LauncherView {
                 .children(chips)
                 .into_any_element(),
         )
+    }
+
+    // ---- The "..." menu, the tips panel and the "Try" chips ----
+
+    /// Whether a tip makes sense with the plugins that are switched on.
+    fn tip_enabled(&self, tip: &Tip) -> bool {
+        let plugins = &self.settings.plugins;
+
+        match tip.plugin {
+            None => true,
+            Some("files") => plugins.files,
+            Some("calculator") => plugins.calculator,
+            Some("units") => plugins.units,
+            Some("system") => plugins.system,
+            Some("windows") => plugins.windows,
+            Some("dictionary") => plugins.dictionary,
+            Some("weather") => plugins.weather,
+            Some("nexdesk") => plugins.nexdesk,
+            Some("clipboard") => plugins.clipboard,
+            Some(_) => true,
+        }
+    }
+
+    /// A tip was clicked: leave any scope and put its example in the search field.
+    fn use_tip(&mut self, fill: &str, cx: &mut Context<Self>) {
+        self.scope = None;
+        self.chip = None;
+        self.group = None;
+        self.file_kind = None;
+        self.set_query(fill, cx);
+    }
+
+    /// Run the same search again so the list is laid out afresh (grid or list).
+    fn relayout(&mut self) {
+        let hits = self.all_hits.clone();
+        let sections = self.all_sections.clone();
+
+        self.install(hits, sections);
+    }
+
+    fn more_action(&mut self, action: MoreAction, window: &mut Window, cx: &mut Context<Self>) {
+        self.more = false;
+
+        match action {
+            MoreAction::Grid => {
+                APPS_AS_LIST.store(false, Ordering::Relaxed);
+                self.relayout();
+            }
+            MoreAction::List => {
+                APPS_AS_LIST.store(true, Ordering::Relaxed);
+                self.relayout();
+            }
+            MoreAction::Tips => self.tips = true,
+            MoreAction::Settings => {
+                let _ = self.requests.try_send(UiRequest::OpenSettings);
+                window.remove_window();
+                return;
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// The "..." menu under the search bar: view options of the current view, tips, settings.
+    fn render_more(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.more {
+            return None;
+        }
+
+        let pal = self.palette;
+        let mut items: Vec<(MoreAction, &'static str, bool)> = Vec::new();
+
+        if matches!(self.scope, Some(Quick::Applications | Quick::Files)) {
+            items.push((MoreAction::Grid, "View as Grid", !apps_as_list()));
+            items.push((MoreAction::List, "View as List", apps_as_list()));
+        }
+
+        items.push((MoreAction::Tips, "Tips & shortcuts", false));
+        items.push((MoreAction::Settings, "Settings", false));
+
+        let rows: Vec<AnyElement> = items
+            .into_iter()
+            .enumerate()
+            .map(|(index, (action, label, checked))| {
+                div()
+                    .id(SharedString::from(format!("more-{index}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .mx_1()
+                    .px_3()
+                    .h(px(MENU_ROW_H))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(rgb(pal.text))
+                    .hover(|style| style.bg(rgba(pal.hover)))
+                    .child(
+                        div()
+                            .w(px(14.))
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(rgb(pal.accent_fg))
+                            .child(if checked { "\u{2713}" } else { "" }),
+                    )
+                    .child(div().text_sm().child(label))
+                    .on_click(cx.listener(move |this, _event, window, cx| {
+                        this.more_action(action, window, cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        let dismiss = |this: &mut Self,
+                       _event: &MouseDownEvent,
+                       _window: &mut Window,
+                       cx: &mut Context<Self>| {
+            this.more = false;
+            cx.notify();
+        };
+
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .h(px(WINDOW_H))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .on_mouse_down(MouseButton::Left, cx.listener(dismiss))
+                        .on_mouse_down(MouseButton::Right, cx.listener(dismiss)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(60.))
+                        .right(px(256.))
+                        .w(px(MENU_W))
+                        .py_1()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(rgba(pal.border))
+                        .bg(rgba(pal.menu))
+                        .occlude()
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Everything you can type and every key worth knowing, with examples that run on a click.
+    fn render_tips(&self, cx: &mut Context<Self>) -> AnyElement {
+        let pal = self.palette;
+
+        let tips: Vec<AnyElement> = TIPS
+            .iter()
+            .filter(|tip| self.tip_enabled(tip))
+            .enumerate()
+            .map(|(index, tip)| {
+                let fill = tip.fill;
+
+                div()
+                    .id(SharedString::from(format!("tip-{index}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .mx_2()
+                    .px_3()
+                    .py_2()
+                    .rounded_lg()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgba(pal.hover)))
+                    .child(div().text_sm().text_color(rgb(pal.text)).child(tip.title))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(pal.text_faint))
+                            .child(tip.example),
+                    )
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.use_tip(fill, cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        let keys: Vec<AnyElement> = SHORTCUTS
+            .iter()
+            .map(|(keys, what)| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(self.keycap(keys))
+                    .child(div().text_xs().text_color(rgb(pal.text_dim)).child(*what))
+                    .into_any_element()
+            })
+            .collect();
+
+        let section = |title: &'static str| {
+            div()
+                .px_5()
+                .pt_3()
+                .pb_1()
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgb(pal.text_faint))
+                .child(title)
+        };
+
+        div()
+            .id("tips")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .pb_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .px_5()
+                    .pt_4()
+                    .pb_1()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_base()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(rgb(pal.text))
+                            .child("Tips & shortcuts"),
+                    )
+                    .child(
+                        div()
+                            .id("tips-close")
+                            .px_3()
+                            .py_1()
+                            .rounded_full()
+                            .text_sm()
+                            .cursor_pointer()
+                            .bg(rgba(pal.pill))
+                            .text_color(rgb(pal.text_dim))
+                            .hover(|style| style.bg(rgba(pal.hover)))
+                            .child("Close")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.tips = false;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(section("Click one to try it"))
+            .children(tips)
+            .child(section("Keyboard"))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_x_5()
+                    .gap_y_2()
+                    .px_5()
+                    .pt_1()
+                    .children(keys),
+            )
+            .into_any_element()
+    }
+
+    /// Clickable examples for an empty launcher with nothing recent to show: no commands to
+    /// remember.
+    fn render_try(&self, cx: &mut Context<Self>) -> AnyElement {
+        let pal = self.palette;
+
+        let chips: Vec<AnyElement> = TIPS
+            .iter()
+            .filter(|tip| self.tip_enabled(tip))
+            .take(8)
+            .enumerate()
+            .map(|(index, tip)| {
+                let fill = tip.fill;
+
+                div()
+                    .id(SharedString::from(format!("try-{index}")))
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .text_sm()
+                    .cursor_pointer()
+                    .bg(rgba(pal.pill))
+                    .text_color(rgb(pal.text_dim))
+                    .hover(|style| style.bg(rgba(pal.hover)))
+                    .child(tip.title)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.use_tip(fill, cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .px_5()
+            .py_4()
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(rgb(pal.text_faint))
+                    .child("Try one of these, or just start typing"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_2()
+                    .children(chips),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(pal.text_faint))
+                    .child("Press F1 or use the \u{22ef} menu for all tips and shortcuts."),
+            )
+            .into_any_element()
+    }
+
+    /// Narrow the Files view to one kind of file (`None` is "All").
+    fn select_file_kind(&mut self, kind: Option<&'static str>, cx: &mut Context<Self>) {
+        self.file_kind = kind;
+        self.edited(cx);
+    }
+
+    /// "All  Documents  PDFs  Images ...": the file-type chips of the Files view. They search
+    /// again (`kind:pdf`) rather than filtering what is already on screen.
+    fn render_file_chips(&self, cx: &mut Context<Self>) -> AnyElement {
+        let pal = self.palette;
+        let mut entries: Vec<(Option<&'static str>, &'static str, Option<&'static str>)> =
+            vec![(None, "All", None)];
+
+        entries.extend(
+            FILE_KINDS
+                .iter()
+                .map(|(label, kind, icon)| (Some(*kind), *label, Some(*icon))),
+        );
+
+        let chips: Vec<AnyElement> = entries
+            .into_iter()
+            .map(|(kind, label, icon)| {
+                let on = self.file_kind == kind;
+                let tint = if on { pal.accent_fg } else { pal.text_dim };
+
+                div()
+                    .id(SharedString::from(format!("filekind-{label}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(on, |this| {
+                        this.bg(rgba(pal.accent_soft))
+                            .text_color(rgb(pal.accent_fg))
+                    })
+                    .when(!on, |this| {
+                        this.bg(rgba(pal.pill))
+                            .text_color(rgb(pal.text_dim))
+                            .hover(|style| style.bg(rgba(pal.hover)))
+                    })
+                    .when_some(icon, |this, icon| this.child(self.glyph(icon, 14., tint)))
+                    .child(label)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.select_file_kind(kind, cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_2()
+            .px_4()
+            .pt_3()
+            .pb_2()
+            .border_b_1()
+            .border_color(rgba(pal.divider))
+            .children(chips)
+            .into_any_element()
     }
 
     /// "Clear history" in the clipboard view: forget every entry, here and in the app.
@@ -3500,6 +4521,10 @@ impl LauncherView {
 
     /// "All  Applications  Files ...": only when the results hold more than one kind.
     fn render_chips(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.scope == Some(Quick::Files) {
+            return Some(self.render_file_chips(cx));
+        }
+
         if self.is_grid_list(&self.all_hits) {
             return self.render_group_chips(cx);
         }
@@ -3572,7 +4597,7 @@ impl Focusable for LauncherView {
 }
 
 impl Render for LauncherView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pal = self.palette;
 
         let mut rows: Vec<AnyElement> = Vec::new();
@@ -3614,13 +4639,59 @@ impl Render for LauncherView {
             self.render_preview(cx)
         };
         let menu = self.render_menu(cx);
-        let chips = self.render_chips(cx);
-        let clip_header = self.render_clip_header(cx);
+        let tips_on = self.tips;
+        let chips = if tips_on { None } else { self.render_chips(cx) };
+        let clip_header = if tips_on {
+            None
+        } else {
+            self.render_clip_header(cx)
+        };
+        let tips_panel = tips_on.then(|| self.render_tips(cx));
+        let more_menu = self.render_more(cx);
         let movable = self.settings.appearance.launcher_movable;
 
         // Like Spotlight: with nothing to show, only the search field and its buttons remain.
+        // The exceptions help someone who does not know what to type: the file-type chips of
+        // the Files view, the tips panel, and a few clickable examples on an empty launcher.
         let rows_empty = rows.is_empty();
-        let has_card = !rows_empty || self.notice.is_some() || self.status.is_some();
+        let files_view = self.scope == Some(Quick::Files);
+        let show_try = rows_empty
+            && self.query.is_empty()
+            && self.scope.is_none()
+            && !tips_on
+            && self.notice.is_none()
+            && self.status.is_none();
+        let has_card = !rows_empty
+            || self.notice.is_some()
+            || self.status.is_some()
+            || tips_on
+            || files_view
+            || show_try;
+        let card_h = if !rows_empty || tips_on {
+            CARD_FULL_H
+        } else {
+            CARD_SHORT_H
+        };
+
+        // Fit the window to what is drawn: the search row alone, or the row and the card. The
+        // "..." menu hangs below the row and needs some room even when nothing else shows.
+        let mut want_h = if has_card {
+            ROW_H + ROW_GAP + card_h
+        } else {
+            ROW_H
+        };
+
+        if self.more {
+            want_h = want_h.max(ROW_H + ROW_GAP + 150.0);
+        }
+
+        if (self.window_h - want_h).abs() > 0.5 {
+            self.window_h = want_h;
+
+            let width = window.viewport_size().width;
+
+            window.on_next_frame(move |window, _cx| window.resize(size(width, px(want_h))));
+        }
 
         // The search field: a pill of its own, with the round quick buttons beside it.
         let search_bar = rounded_px(div(), 26.)
@@ -3652,7 +4723,66 @@ impl Render for LauncherView {
             // The icon of the result Enter would open, like Spotlight's at the right of the bar.
             .when_some(self.bar_hit(), |this, hit| {
                 this.child(self.leading(hit, 30.))
-            });
+            })
+            // Clear what was typed (the scope, if any, stays).
+            .when(!self.query.is_empty(), |this| {
+                this.child(
+                    div()
+                        .id("clear")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(26.))
+                        .flex_shrink_0()
+                        .rounded_full()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(rgba(pal.hover)))
+                        .tooltip(self.hover_tip("Clear"))
+                        .child(self.glyph("icons/x.svg", 14., pal.text_dim))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _event, _window, cx| {
+                                cx.stop_propagation();
+                                this.set_query("", cx);
+                            }),
+                        ),
+                )
+            })
+            // "...": view options, tips and settings, so nothing has to be remembered.
+            .child(
+                div()
+                    .id("more")
+                    .tooltip(self.hover_tip("More"))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(30.))
+                    .flex_shrink_0()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(self.more, |this| this.bg(rgba(pal.accent_soft)))
+                    .when(!self.more, |this| {
+                        this.hover(|style| style.bg(rgba(pal.hover)))
+                    })
+                    .child(self.glyph(
+                        "icons/more.svg",
+                        18.,
+                        if self.more {
+                            pal.accent_fg
+                        } else {
+                            pal.text_dim
+                        },
+                    ))
+                    // The bar moves the window on mouse-down; this button must not.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _event, _window, cx| {
+                            cx.stop_propagation();
+                            this.more = !this.more;
+                            cx.notify();
+                        }),
+                    ),
+            );
 
         let search_row = div()
             .flex()
@@ -3669,17 +4799,20 @@ impl Render for LauncherView {
             .flex_col()
             .w_full()
             .bg(rgba(pal.card))
+            .h(px(card_h))
             .border_1()
             .border_color(rgba(pal.border))
             .overflow_hidden()
             .text_color(rgb(pal.text))
             .when_some(clip_header, |this, header| this.child(header))
             .when_some(chips, |this, chips| this.child(chips))
-            .when(!rows_empty, |this| {
+            .when(!rows_empty && !tips_on, |this| {
                 this.child(
                     div()
                         .flex()
                         .flex_row()
+                        .flex_1()
+                        .min_h(px(0.))
                         .child(
                             div()
                                 .id("results")
@@ -3687,7 +4820,7 @@ impl Render for LauncherView {
                                 .flex_col()
                                 .flex_1()
                                 .min_w(px(0.))
-                                .max_h(px(LIST_MAX_H))
+                                .min_h(px(0.))
                                 .overflow_y_scroll()
                                 .track_scroll(&self.scroll)
                                 .pt_1()
@@ -3717,7 +4850,9 @@ impl Render for LauncherView {
                         .child(status),
                 )
             })
-            .when(show_footer && !rows_empty, |this| {
+            .when_some(tips_panel, |this, panel| this.child(panel))
+            .when(show_try, |this| this.child(self.render_try(cx)))
+            .when(show_footer && !rows_empty && !tips_on, |this| {
                 this.child(self.render_footer(cx))
             });
 
@@ -3738,6 +4873,7 @@ impl Render for LauncherView {
             .child(search_row)
             .when(has_card, |this| this.child(card))
             .when_some(menu, |this, menu| this.child(menu))
+            .when_some(more_menu, |this, menu| this.child(menu))
     }
 }
 
@@ -4096,7 +5232,13 @@ async fn search(socket: &Path, query: &str) -> Result<Vec<SearchHit>> {
     });
 
     match send(socket, request).await? {
-        Response::Search(response) => Ok(response.results),
+        Response::Search(response) => {
+            let mut results = response.results;
+
+            describe_files(&mut results);
+
+            Ok(results)
+        }
         Response::Error(message) => bail!(message),
         other => bail!("unexpected response: {other:?}"),
     }
@@ -4372,7 +5514,7 @@ fn main() {
                 let mut state = UiState::default();
 
                 while let Ok(message) = message_rx.recv().await {
-                    let _ = cx.update(|cx| handle_message(cx, &mut state, &request_tx, message));
+                    cx.update(|cx| handle_message(cx, &mut state, &request_tx, message));
                 }
             })
             .detach();
@@ -4484,6 +5626,157 @@ mod tests {
     }
 
     #[test]
+    fn file_details_become_a_readable_subtitle() {
+        assert_eq!(parse_file_meta("meta:1234:99"), Some((1234, 99)));
+        assert_eq!(parse_file_meta("meta:x:99"), None);
+        assert_eq!(parse_file_meta("group:Internet"), None);
+
+        let hit = |kind: &str, title: &str, detail: Option<&str>| SearchHit {
+            id: format!("files:open:/home/u/Downloads/{title}"),
+            title: title.into(),
+            subtitle: Some("~/Downloads".into()),
+            kind: kind.into(),
+            score: 0,
+            icon: None,
+            detail: detail.map(str::to_owned),
+        };
+
+        let mut hits = vec![
+            hit("file", "invoice.pdf", Some("meta:58368:0")),
+            hit("folder", "Receipts", Some("meta:0:0")),
+            hit("file", "old.txt", None),
+            hit("application", "Firefox", Some("meta:1:1")),
+        ];
+
+        describe_files(&mut hits);
+
+        // No date when the daemon does not know one (0); a folder has no size.
+        assert_eq!(
+            hits[0].subtitle.as_deref(),
+            Some("PDF document \u{b7} 57.0 KB \u{b7} ~/Downloads")
+        );
+        assert_eq!(hits[0].detail, None);
+        assert_eq!(
+            hits[1].subtitle.as_deref(),
+            Some("Folder \u{b7} ~/Downloads")
+        );
+
+        // Without details (an older daemon) or for other kinds, nothing changes.
+        assert_eq!(hits[2].subtitle.as_deref(), Some("~/Downloads"));
+        assert_eq!(hits[3].detail.as_deref(), Some("meta:1:1"));
+
+        // A recent file gets a date in words.
+        let mut recent = vec![hit(
+            "file",
+            "a.png",
+            Some(&format!("meta:2048:{}", now_secs().saturating_sub(30))),
+        )];
+
+        describe_files(&mut recent);
+
+        assert_eq!(
+            recent[0].subtitle.as_deref(),
+            Some("PNG image \u{b7} 2.0 KB \u{b7} just now \u{b7} ~/Downloads")
+        );
+    }
+
+    #[test]
+    fn every_chip_and_token_icon_is_built_in_and_the_types_differ() {
+        use gpui::AssetSource;
+
+        let mut icons: Vec<&str> = Vec::new();
+
+        icons.extend(FILE_KINDS.iter().map(|(_, _, icon)| *icon));
+        icons.extend(APP_GROUPS.iter().map(|group| group_icon(group)));
+        icons.extend(Quick::ALL.iter().map(|quick| quick.icon()));
+
+        for icon in &icons {
+            assert!(
+                assets::Assets.load(icon).unwrap().is_some(),
+                "{icon} is not built in"
+            );
+        }
+
+        // PDFs, pictures, videos and the rest must not all look alike.
+        let mut file_icons: Vec<&str> = FILE_KINDS.iter().map(|(_, _, icon)| *icon).collect();
+
+        file_icons.sort_unstable();
+        file_icons.dedup();
+        assert_eq!(file_icons.len(), FILE_KINDS.len());
+
+        // Groups may share an icon only when the meaning is the same; at least most differ.
+        let mut group_icons: Vec<&str> = APP_GROUPS.iter().map(|g| group_icon(g)).collect();
+
+        group_icons.sort_unstable();
+        group_icons.dedup();
+        assert!(group_icons.len() >= 8, "{group_icons:?}");
+    }
+
+    #[test]
+    fn the_files_grid_has_suggestions_then_recents() {
+        // Only recents: a header, then rows of five.
+        assert_eq!(files_grid_rows(0, 7), [1, 1, 1, 1, 1, 2, 2]);
+        // Three suggestions, five more recents: header 0, one row, header 2, one row.
+        assert_eq!(files_grid_rows(3, 8), [1, 1, 1, 3, 3, 3, 3, 3]);
+        // Five suggestions fill a row; recents start after their own header.
+        assert_eq!(files_grid_rows(5, 7), [1, 1, 1, 1, 1, 3, 3]);
+        // Only suggestions.
+        assert_eq!(files_grid_rows(2, 2), [1, 1]);
+        assert!(files_grid_rows(0, 0).is_empty());
+    }
+
+    #[test]
+    fn pictures_get_thumbnails() {
+        assert!(is_image_name("shot.PNG"));
+        assert!(is_image_name("a.b.jpeg"));
+        assert!(is_image_name("x.webp"));
+        assert!(!is_image_name("report.pdf"));
+        assert!(!is_image_name("png"));
+        assert!(!is_image_name("photo.png.zip"));
+    }
+
+    #[test]
+    fn chips_cycle_and_wrap() {
+        // Four positions: All, A, B, C.
+        assert_eq!(cycle_index(4, 0, 1), 1);
+        assert_eq!(cycle_index(4, 3, 1), 0);
+        assert_eq!(cycle_index(4, 0, -1), 3);
+        assert_eq!(cycle_index(4, 2, -1), 1);
+        assert_eq!(cycle_index(1, 0, 1), 0);
+        assert_eq!(cycle_index(0, 0, 1), 0);
+    }
+
+    #[test]
+    fn every_button_says_what_it_does() {
+        for quick in Quick::ALL {
+            assert!(!quick.hint(false).is_empty());
+            assert_ne!(quick.hint(false), quick.hint(true));
+        }
+    }
+
+    #[test]
+    fn folders_are_shown_with_a_tilde() {
+        let home = Some(Path::new("/home/u"));
+
+        assert_eq!(
+            pretty_folder_in(Path::new("/home/u/Downloads/x"), home),
+            "~/Downloads/x"
+        );
+        assert_eq!(pretty_folder_in(Path::new("/home/u"), home), "~");
+        assert_eq!(pretty_folder_in(Path::new("/mnt/data"), home), "/mnt/data");
+        assert_eq!(pretty_folder_in(Path::new("/home/u/a"), None), "/home/u/a");
+    }
+
+    #[test]
+    fn the_window_fits_its_content() {
+        // The row alone, the row with a short card, the row with the full card.
+        assert!(ROW_H < ROW_H + ROW_GAP + CARD_SHORT_H);
+        assert!(CARD_SHORT_H < CARD_FULL_H);
+        // Never taller than the window the launcher opens with.
+        assert!(ROW_H + ROW_GAP + CARD_FULL_H <= WINDOW_H);
+    }
+
+    #[test]
     fn the_bar_completes_with_the_title_of_the_result() {
         let hit = |kind: &str, title: &str| SearchHit {
             id: "x".into(),
@@ -4542,32 +5835,76 @@ mod tests {
     #[test]
     fn typed_text_searches_inside_the_scope() {
         // No scope: the text is the query, untouched.
-        assert_eq!(scoped_query(None, "  fire "), "  fire ");
+        assert_eq!(scoped_query(None, None, "  fire "), "  fire ");
 
         // An empty field lists everything in the scope.
-        assert_eq!(scoped_query(Some(Quick::Applications), ""), "kind:app");
-        assert_eq!(scoped_query(Some(Quick::Applications), "   "), "kind:app");
-        assert_eq!(scoped_query(Some(Quick::Actions), ""), "kind:action");
-        assert_eq!(scoped_query(Some(Quick::Files), ""), "kind:recent");
-        assert_eq!(scoped_query(Some(Quick::Clipboard), ""), "clip");
+        assert_eq!(scoped_query(Some(Quick::Applications), None, ""), "kind:app");
+        assert_eq!(scoped_query(Some(Quick::Applications), None, "   "), "kind:app");
+        assert_eq!(scoped_query(Some(Quick::Actions), None, ""), "kind:action");
+        assert_eq!(scoped_query(Some(Quick::Files), None, ""), "kind:recent");
+        assert_eq!(scoped_query(Some(Quick::Clipboard), None, ""), "clip");
 
         // Text narrows it.
         assert_eq!(
-            scoped_query(Some(Quick::Applications), " fire "),
+            scoped_query(Some(Quick::Applications), None, " fire "),
             "kind:app fire"
         );
         assert_eq!(
-            scoped_query(Some(Quick::Actions), "lock"),
+            scoped_query(Some(Quick::Actions), None, "lock"),
             "kind:action lock"
         );
-        assert_eq!(scoped_query(Some(Quick::Clipboard), "url"), "clip url");
-        assert_eq!(scoped_query(Some(Quick::Files), "invoice"), "invoice");
+        assert_eq!(scoped_query(Some(Quick::Clipboard), None, "url"), "clip url");
+        assert_eq!(
+            scoped_query(Some(Quick::Files), None, "invoice"),
+            "kind:file invoice"
+        );
+
+        // A file-type chip searches by kind, with or without text.
+        assert_eq!(
+            scoped_query(Some(Quick::Files), Some("pdf"), ""),
+            "kind:pdf"
+        );
+        assert_eq!(
+            scoped_query(Some(Quick::Files), Some("pdf"), " invoice "),
+            "kind:pdf invoice"
+        );
+        // The chip only belongs to the Files view.
+        assert_eq!(scoped_query(None, Some("pdf"), "x"), "x");
+        assert_eq!(
+            scoped_query(Some(Quick::Applications), Some("pdf"), "x"),
+            "kind:app x"
+        );
 
         // Every scoped query with text is still a listing (no web row, no top hit), except
         // Files and Clipboard, which have their own handling.
         assert!(is_listing_query("kind:app fire"));
         assert!(is_listing_query("kind:action lock"));
         assert!(!is_listing_query("kind:apple"));
+    }
+
+    #[test]
+    fn every_tip_is_something_the_launcher_understands() {
+        for tip in &TIPS {
+            assert!(!tip.title.is_empty() && !tip.example.is_empty() && !tip.fill.is_empty());
+            // What a click types is the start of what the example shows.
+            assert!(
+                tip.example.starts_with(tip.fill.trim_end()),
+                "{} / {}",
+                tip.example,
+                tip.fill
+            );
+        }
+
+        // Clicks fill the field, so no two tips may do the same thing.
+        let mut fills: Vec<&str> = TIPS.iter().map(|tip| tip.fill).collect();
+
+        fills.sort_unstable();
+        fills.dedup();
+        assert_eq!(fills.len(), TIPS.len());
+
+        for (label, kind, _) in FILE_KINDS {
+            assert!(!label.is_empty() && !kind.contains(' '));
+        }
     }
 
     #[test]
@@ -4589,7 +5926,10 @@ mod tests {
         assert!(is_listing_query("kind:action"));
         assert!(is_listing_query("kind:recent"));
         assert!(!is_listing_query("kind:pdf"));
-        assert!(!is_listing_query("kind:app firefox"));
+        // Text after the trigger is still a listing: it searches inside the scope.
+        assert!(is_listing_query("kind:app firefox"));
+        assert!(is_listing_query("kind:action lock"));
+        assert!(!is_listing_query("kind:apple"));
         assert!(!is_listing_query("firefox"));
 
         // Every button except Clipboard (which has its own `clip` view) lists something.
