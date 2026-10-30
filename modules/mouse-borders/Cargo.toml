@@ -16,7 +16,7 @@ async-trait.workspace = true
 aujar-config = { workspace = true }
 aujar-core = { workspace = true }
 aujar-runtime = { workspace = true }
-getrandom = "0.3"
+getrandom = "0.4"
 gethostname = "1"
 if-addrs = "0.13"
 png = "0.17"
