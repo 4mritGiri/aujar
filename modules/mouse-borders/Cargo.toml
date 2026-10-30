@@ -23,7 +23,7 @@ png = "0.17"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
+sha2 = "0.11"
 # Pure-Rust primitives only (no `ring`, so no C toolchain is needed on Windows or macOS).
 snow = { version = "0.10", default-features = false, features = ["default-resolver", "use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
 thiserror.workspace = true
