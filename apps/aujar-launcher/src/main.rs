@@ -471,10 +471,8 @@ async fn run_daemon(socket: PathBuf) -> Result<()> {
 }
 
 #[cfg(windows)]
-async fn run_daemon(_socket: PathBuf) -> Result<()> {
-    anyhow::bail!(
-        r"the Windows daemon host is not installed yet; the Aujar client uses \\.\pipe\aujar when it becomes available"
-    )
+async fn run_daemon(socket: PathBuf) -> Result<()> {
+    aujar_daemon::run(socket).await
 }
 
 async fn doctor() -> anyhow::Result<()> {

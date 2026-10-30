@@ -19,6 +19,7 @@ clap_complete.workspace = true
 aujar-config = { workspace = true }
 aujar-core = { workspace = true }
 aujar-color = { workspace = true }
+aujar-daemon = { workspace = true }
 aujar-image-resizer = { workspace = true }
 aujar-ipc = { workspace = true }
 aujar-launcher = { workspace = true }
@@ -29,9 +30,6 @@ aujar-platform = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-
-[target.'cfg(not(windows))'.dependencies]
-aujar-daemon = { workspace = true }
 
 # ---- Debian/Ubuntu package: `cargo deb -p aujar-launcher-app` ----
 [package.metadata.deb]
@@ -50,6 +48,7 @@ depends = "$auto"
 assets = [
     ["target/release/aujar", "usr/bin/", "755"],
     ["../../packaging/systemd/aujar.service", "usr/lib/systemd/user/", "644"],
+    ["../../packaging/desktop/aujar.desktop", "usr/share/applications/", "644"],
     ["../../packaging/desktop/dev.aujar.Aujar.desktop", "usr/share/applications/", "644"],
     ["../../config/policy.example.toml", "usr/share/doc/aujar/", "644"],
     ["../../config/mouse-borders.example.toml", "usr/share/doc/aujar/", "644"],
