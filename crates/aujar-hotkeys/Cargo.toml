@@ -7,8 +7,10 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
 # Portal bindings. async-io backend (not tokio) so workspace builds unify with GPUI.
 ashpd = { workspace = true, features = ["global_shortcuts"] }
 futures-util = "0.3"
-tokio.workspace = true
-tracing.workspace = true

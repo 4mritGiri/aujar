@@ -2,10 +2,19 @@ use anyhow::{Context, Result};
 use aujar_core::{Capability, Health, WindowId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::Path;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::UnixStream,
-};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+#[cfg(unix)]
+use tokio::net::UnixStream;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+
+/// The local byte stream used by Aujar IPC. Linux and macOS use a user-owned Unix socket;
+/// Windows uses a named pipe. Both carry the same versioned JSON-line protocol.
+#[cfg(unix)]
+type LocalStream = UnixStream;
+#[cfg(windows)]
+type LocalStream = NamedPipeClient;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 
@@ -221,17 +230,29 @@ pub fn decode_line<T: DeserializeOwned>(line: &str) -> Result<T> {
     Ok(envelope.payload)
 }
 
-async fn open(socket: impl AsRef<Path>, request: Request) -> Result<UnixStream> {
-    let mut stream = UnixStream::connect(socket)
+#[cfg(unix)]
+async fn connect(socket: impl AsRef<Path>) -> Result<LocalStream> {
+    UnixStream::connect(socket)
         .await
-        .context("failed to connect to Aujar daemon")?;
+        .context("failed to connect to Aujar daemon")
+}
+
+#[cfg(windows)]
+async fn connect(socket: impl AsRef<Path>) -> Result<LocalStream> {
+    ClientOptions::new()
+        .open(socket.as_ref())
+        .context("failed to connect to Aujar daemon named pipe")
+}
+
+async fn open(socket: impl AsRef<Path>, request: Request) -> Result<LocalStream> {
+    let mut stream = connect(socket).await?;
 
     stream.write_all(&encode_line(request)?).await?;
 
     Ok(stream)
 }
 
-async fn read_reply(reader: &mut BufReader<UnixStream>) -> Result<String> {
+async fn read_reply(reader: &mut BufReader<LocalStream>) -> Result<String> {
     let mut line = String::new();
 
     if reader.read_line(&mut line).await? == 0 {
@@ -256,7 +277,7 @@ pub async fn send(socket: impl AsRef<Path>, request: Request) -> Result<Response
 
 /// A live subscription to daemon events.
 pub struct EventStream {
-    reader: BufReader<UnixStream>,
+    reader: BufReader<LocalStream>,
 }
 
 impl EventStream {
@@ -399,5 +420,13 @@ mod tests {
             decode_line::<Response>(&line).unwrap(),
             Response::MouseBorders(MouseBordersResponse::Key(key)) if key == "AAAA"
         ));
+    }
+
+    #[test]
+    fn local_transport_is_selected_at_compile_time() {
+        #[cfg(unix)]
+        assert!(cfg!(unix));
+        #[cfg(windows)]
+        assert!(cfg!(windows));
     }
 }

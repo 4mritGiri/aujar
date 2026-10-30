@@ -13,8 +13,12 @@ mod mouse_borders;
 mod nexdesk;
 mod shortcut;
 
+#[cfg(not(windows))]
 const DEFAULT_SOCKET_NAME: &str = "aujar.sock";
+#[cfg(not(windows))]
 const FALLBACK_SOCKET: &str = "/tmp/aujar.sock";
+#[cfg(windows)]
+const WINDOWS_PIPE_NAME: &str = r"\\.\pipe\aujar";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -520,11 +524,19 @@ fn resolve_socket() -> PathBuf {
         return PathBuf::from(socket);
     }
 
-    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime_dir).join(DEFAULT_SOCKET_NAME);
+    #[cfg(windows)]
+    {
+        return PathBuf::from(WINDOWS_PIPE_NAME);
     }
 
-    PathBuf::from(FALLBACK_SOCKET)
+    #[cfg(not(windows))]
+    {
+        if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+            return PathBuf::from(runtime_dir).join(DEFAULT_SOCKET_NAME);
+        }
+
+        PathBuf::from(FALLBACK_SOCKET)
+    }
 }
 
 fn print_health(health: &Health) {
