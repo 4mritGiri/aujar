@@ -20,7 +20,7 @@ const FALLBACK_SOCKET: &str = "/tmp/aujar.sock";
 #[command(
     name = "aujar",
     version,
-    about = "Aujar — Native Linux Productivity Platform"
+    about = "Aujar — Cross-platform productivity toolkit"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -86,6 +86,9 @@ enum ColorAction {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Report the features supported by this operating system and desktop backend.
+    Platform,
+
     /// Check whether the Aujar daemon is reachable.
     Ping,
 
@@ -139,6 +142,12 @@ enum Command {
     Color {
         #[command(subcommand)]
         action: ColorAction,
+    },
+
+    /// Resize an image without requiring a running daemon or desktop integration.
+    Image {
+        #[command(subcommand)]
+        action: ImageAction,
     },
 
     /// Share one keyboard, mouse, clipboard and files between your machines.
@@ -195,11 +204,37 @@ enum Command {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ImageAction {
+    /// Resize one image while preserving its aspect ratio.
+    Resize {
+        /// Source image path.
+        input: PathBuf,
+
+        /// Destination image path; its extension selects PNG, JPEG, WebP, etc.
+        output: PathBuf,
+
+        /// Maximum output width in pixels.
+        #[arg(long)]
+        width: Option<u32>,
+
+        /// Maximum output height in pixels.
+        #[arg(long)]
+        height: Option<u32>,
+
+        /// Never enlarge an image that already fits the requested bounds.
+        #[arg(long)]
+        shrink_only: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Platform => print_platform_report(),
+
         Command::Ping => {
             let response = send(&resolve_socket(), Request::Ping).await?;
             println!("{response:?}");
@@ -340,6 +375,35 @@ async fn main() -> Result<()> {
             }
         },
 
+        Command::Image { action } => match action {
+            ImageAction::Resize {
+                input,
+                output,
+                width,
+                height,
+                shrink_only,
+            } => {
+                let result = aujar_image_resizer::resize(
+                    &input,
+                    &output,
+                    aujar_image_resizer::ResizeOptions {
+                        width,
+                        height,
+                        shrink_only,
+                    },
+                )?;
+                println!(
+                    "Resized {} ({}×{}) -> {} ({}×{})",
+                    result.input.display(),
+                    result.source_width,
+                    result.source_height,
+                    result.output.display(),
+                    result.width,
+                    result.height,
+                );
+            }
+        },
+
         Command::MouseBorders { action } => mouse_borders::run(action, resolve_socket()).await?,
 
         Command::NexDesk { action } => nexdesk::run(action, resolve_socket()).await?,
@@ -467,13 +531,34 @@ fn print_health(health: &Health) {
     let session = match health.session {
         Session::X11 => "X11",
         Session::Wayland => "Wayland",
+        Session::MacOs => "macOS",
+        Session::Windows => "Windows",
         Session::Unknown => "Unknown",
     };
 
     println!(
-        "Health(name={}, version={}, session={})",
-        health.name, health.version, session
+        "Health(name={}, version={}, platform={}, session={})",
+        health.name,
+        health.version,
+        health.platform.as_str(),
+        session
     );
+}
+
+fn print_platform_report() {
+    let platform = aujar_platform::current_platform();
+    let session = aujar_platform::detect_session();
+
+    println!("Platform: {} ({session:?})", platform.as_str());
+    println!("Feature                         Support");
+
+    for support in aujar_platform::feature_support(platform) {
+        println!(
+            "{:<31} {}",
+            support.feature.as_str(),
+            support.level.as_str()
+        );
+    }
 }
 
 fn print_rename_response(plan: &aujar_rename::RenamePlan, applied: bool) {

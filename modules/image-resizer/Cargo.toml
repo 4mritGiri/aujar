@@ -1,0 +1,10 @@
+[package]
+name = "aujar-image-resizer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Portable image resize engine for Aujar"
+
+[dependencies]
+image.workspace = true
+thiserror.workspace = true

@@ -62,7 +62,123 @@ impl Rect {
 pub enum Session {
     X11,
     Wayland,
+    MacOs,
+    Windows,
     Unknown,
+}
+
+/// Operating system hosting Aujar. This is separate from [`Session`]: Linux has several
+/// desktop protocols, while Windows and macOS each expose one native desktop API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Platform {
+    Linux,
+    MacOs,
+    Windows,
+    #[default]
+    Other,
+}
+
+impl Platform {
+    pub const fn current() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Windows
+        } else if cfg!(target_os = "macos") {
+            Self::MacOs
+        } else if cfg!(target_os = "linux") {
+            Self::Linux
+        } else {
+            Self::Other
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Linux => "Linux",
+            Self::MacOs => "macOS",
+            Self::Windows => "Windows",
+            Self::Other => "Other",
+        }
+    }
+}
+
+/// A stable capability identifier for the PowerToys-compatible product surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DesktopFeature {
+    Launcher,
+    PowerRename,
+    ImageResizer,
+    ColorPicker,
+    ScreenRuler,
+    ClipboardHistory,
+    Awake,
+    TextExtractor,
+    MouseWithoutBorders,
+    AlwaysOnTop,
+    FancyZones,
+    KeyboardManager,
+    WindowManagement,
+}
+
+impl DesktopFeature {
+    pub const ALL: [Self; 13] = [
+        Self::Launcher,
+        Self::PowerRename,
+        Self::ImageResizer,
+        Self::ColorPicker,
+        Self::ScreenRuler,
+        Self::ClipboardHistory,
+        Self::Awake,
+        Self::TextExtractor,
+        Self::MouseWithoutBorders,
+        Self::AlwaysOnTop,
+        Self::FancyZones,
+        Self::KeyboardManager,
+        Self::WindowManagement,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Launcher => "launcher",
+            Self::PowerRename => "power_rename",
+            Self::ImageResizer => "image_resizer",
+            Self::ColorPicker => "color_picker",
+            Self::ScreenRuler => "screen_ruler",
+            Self::ClipboardHistory => "clipboard_history",
+            Self::Awake => "awake",
+            Self::TextExtractor => "text_extractor",
+            Self::MouseWithoutBorders => "mouse_without_borders",
+            Self::AlwaysOnTop => "always_on_top",
+            Self::FancyZones => "fancy_zones",
+            Self::KeyboardManager => "keyboard_manager",
+            Self::WindowManagement => "window_management",
+        }
+    }
+}
+
+/// How far a backend can take a feature on the current desktop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SupportLevel {
+    Available,
+    Partial,
+    Planned,
+    Unsupported,
+}
+
+impl SupportLevel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Partial => "partial",
+            Self::Planned => "planned",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeatureSupport {
+    pub feature: DesktopFeature,
+    pub level: SupportLevel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +186,8 @@ pub struct Health {
     pub name: String,
     pub version: String,
     pub session: Session,
+    #[serde(default)]
+    pub platform: Platform,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,7 +254,7 @@ impl std::fmt::Display for Capability {
 
 #[cfg(test)]
 mod tests {
-    use super::{Capability, Position, Rect};
+    use super::{Capability, DesktopFeature, Platform, Position, Rect};
 
     #[test]
     fn capability_names_round_trip() {
@@ -174,5 +292,12 @@ mod tests {
             Rect::new(3, 4, 0, 0).clamp(Position { x: 99, y: 99 }),
             Position { x: 3, y: 4 }
         );
+    }
+
+    #[test]
+    fn platform_and_feature_names_are_stable() {
+        assert!(!Platform::current().as_str().is_empty());
+        assert_eq!(DesktopFeature::PowerRename.as_str(), "power_rename");
+        assert_eq!(DesktopFeature::ALL.len(), 13);
     }
 }

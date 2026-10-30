@@ -25,6 +25,7 @@ members = [
     "modules/zones",
     "modules/clipboard",
     "modules/color",
+    "modules/image-resizer",
     "modules/ruler",
     "modules/rename",
     "modules/mouse-borders",
@@ -47,6 +48,7 @@ default-members = [
     "modules/zones",
     "modules/clipboard",
     "modules/color",
+    "modules/image-resizer",
     "modules/ruler",
     "modules/rename",
     "modules/mouse-borders",
@@ -73,6 +75,7 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+image = { version = "0.25.10", default-features = true }
 
 tokio = { version = "1", features = [
     "macros",
@@ -97,6 +100,7 @@ aujar-config = { path = "crates/aujar-config", version = "0.1.1" }
 aujar-core = { path = "crates/aujar-core", version = "0.1.1" }
 aujar-daemon = { path = "crates/aujar-daemon", version = "0.1.1" }
 aujar-hotkeys = { path = "crates/aujar-hotkeys", version = "0.1.1" }
+aujar-image-resizer = { path = "modules/image-resizer", version = "0.1.1" }
 aujar-ipc = { path = "crates/aujar-ipc", version = "0.1.1" }
 aujar-launcher = { path = "modules/launcher", version = "0.1.1" }
 aujar-mouse-borders = { path = "modules/mouse-borders", version = "0.1.1" }
