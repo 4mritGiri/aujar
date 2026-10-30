@@ -41,7 +41,7 @@ license-file = ["../../LICENSE", "0"]
 extended-description = """\
 Aujar is a modular productivity toolkit for Linux desktops: a launcher, batch rename \
 and more, served by a small per-user daemon that talks to desktop UIs over a local socket. \
-Enable the daemon with: systemctl --user enable --now aujar"""
+\nAfter installing this package, enable both services with:\n  systemctl --user enable --now aujar.service aujar-ui.service\n\nThis will start the daemon and the launcher UI, allowing you to use the\nkeyboard shortcut (Ctrl+Alt+Space) to show the launcher."""
 section = "utils"
 priority = "optional"
 depends = "$auto"
