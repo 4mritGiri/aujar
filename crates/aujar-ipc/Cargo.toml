@@ -6,10 +6,10 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-aujar-core = { path = "../aujar-core" }
-aujar-mouse-borders = { path = "../../modules/mouse-borders", default-features = false }
-aujar-nexdesk = { path = "../../modules/nexdesk" }
-aujar-rename = { path = "../../modules/rename" }
+aujar-core = { workspace = true }
+aujar-mouse-borders = { path = "../../modules/mouse-borders", version = "0.1.1", default-features = false }
+aujar-nexdesk = { workspace = true }
+aujar-rename = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

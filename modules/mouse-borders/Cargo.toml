@@ -13,9 +13,9 @@ linux-backend = ["dep:evdev", "dep:x11rb"]
 
 [dependencies]
 async-trait.workspace = true
-aujar-config = { path = "../../crates/aujar-config" }
-aujar-core = { path = "../../crates/aujar-core" }
-aujar-runtime = { path = "../../crates/aujar-runtime" }
+aujar-config = { workspace = true }
+aujar-core = { workspace = true }
+aujar-runtime = { workspace = true }
 getrandom = "0.3"
 gethostname = "1"
 if-addrs = "0.13"

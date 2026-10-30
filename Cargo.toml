@@ -18,9 +18,7 @@ members = [
     "apps/aujar-mwb",
     # The GPUI launcher UI is a member (so `cargo run -p aujar-ui --release` works) but NOT a
     # default member: plain `cargo build` / `cargo check` skip it and need no GPU or
-    # windowing libraries. CI and `just check` pass `--exclude aujar-ui` for `--workspace`.
-    # Never build it together with the daemon in ONE cargo command: `ashpd` is used with the
-    # tokio runtime by the daemon and with async-io by GPUI, and the features would unify.
+    # windowing libraries. CI still passes `--exclude aujar-ui` so platform jobs stay light.
     "apps/aujar-ui",
     "modules/launcher",
     "modules/window",
@@ -65,6 +63,9 @@ repository = "https://github.com/4mritGiri/aujar"
 
 [workspace.dependencies]
 anyhow = "1"
+# Prefer ashpd's async-io backend (not tokio) so feature unification with GPUI succeeds.
+# ashpd refuses to enable both runtimes at once.
+ashpd = { version = "=0.13.13", default-features = false, features = ["async-io"] }
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
@@ -89,3 +90,18 @@ toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+
+# Internal path crates. Version is required so cargo-deny `wildcards = "deny"` accepts them.
+aujar-color = { path = "modules/color", version = "0.1.1" }
+aujar-config = { path = "crates/aujar-config", version = "0.1.1" }
+aujar-core = { path = "crates/aujar-core", version = "0.1.1" }
+aujar-daemon = { path = "crates/aujar-daemon", version = "0.1.1" }
+aujar-hotkeys = { path = "crates/aujar-hotkeys", version = "0.1.1" }
+aujar-ipc = { path = "crates/aujar-ipc", version = "0.1.1" }
+aujar-launcher = { path = "modules/launcher", version = "0.1.1" }
+aujar-mouse-borders = { path = "modules/mouse-borders", version = "0.1.1" }
+aujar-mwb-cli = { path = "crates/aujar-mwb-cli", version = "0.1.1" }
+aujar-nexdesk = { path = "modules/nexdesk", version = "0.1.1" }
+aujar-platform = { path = "crates/aujar-platform", version = "0.1.1" }
+aujar-rename = { path = "modules/rename", version = "0.1.1" }
+aujar-runtime = { path = "crates/aujar-runtime", version = "0.1.1" }

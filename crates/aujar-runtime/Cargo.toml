@@ -6,5 +6,5 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-aujar-core = { path = "../aujar-core" }
+aujar-core = { workspace = true }
 thiserror.workspace = true

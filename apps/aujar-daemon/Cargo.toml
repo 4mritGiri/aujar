@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-aujar-daemon = { path = "../../crates/aujar-daemon" }
+aujar-daemon = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

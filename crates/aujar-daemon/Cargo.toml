@@ -7,17 +7,17 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-aujar-config = { path = "../aujar-config" }
-aujar-core = { path = "../aujar-core" }
-aujar-color = { path = "../../modules/color" }
-aujar-hotkeys = { path = "../aujar-hotkeys" }
-aujar-ipc = { path = "../aujar-ipc" }
-aujar-mouse-borders = { path = "../../modules/mouse-borders" }
-aujar-nexdesk = { path = "../../modules/nexdesk" }
-aujar-launcher = { path = "../../modules/launcher" }
-aujar-platform = { path = "../aujar-platform" }
-aujar-rename = { path = "../../modules/rename" }
-aujar-runtime = { path = "../aujar-runtime" }
+aujar-config = { workspace = true }
+aujar-core = { workspace = true }
+aujar-color = { workspace = true }
+aujar-hotkeys = { workspace = true }
+aujar-ipc = { workspace = true }
+aujar-mouse-borders = { workspace = true }
+aujar-nexdesk = { workspace = true }
+aujar-launcher = { workspace = true }
+aujar-platform = { workspace = true }
+aujar-rename = { workspace = true }
+aujar-runtime = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

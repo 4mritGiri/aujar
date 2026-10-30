@@ -53,8 +53,8 @@ instead of starting a second copy.
   the Aujar daemon would weaken that.
 - [THREAT_MODEL](THREAT_MODEL.md) rules out in-process native plugins.
 - Both projects use GPUI and tokio, but with different pins, patched IronRDP (`vendor/`) and
-  feature sets. Aujar already has to build its UI and daemon in separate cargo invocations
-  ([ADR 0002](adr/0002-ui-framework-gpui.md)); one more dependency graph would make that worse.
+  feature sets. Folding NexDesk into Aujar's workspace would tangle those graphs further
+  ([ADR 0002](adr/0002-ui-framework-gpui.md)).
 
 ## Where the executable is looked for
 

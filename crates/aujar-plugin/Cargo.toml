@@ -5,5 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-aujar-core = { path = "../aujar-core" }
+aujar-core = { workspace = true }
 serde.workspace = true

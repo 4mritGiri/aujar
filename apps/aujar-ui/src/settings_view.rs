@@ -303,7 +303,9 @@ impl Page {
                 "web search engine duckduckgo google brave bing startpage shortcuts keyword"
             }
             Self::MouseBorders => "mouse keyboard share machines network clipboard files cursor",
-            Self::NexDesk => "nexdesk rdp remote desktop connection connections open install installed",
+            Self::NexDesk => {
+                "nexdesk rdp remote desktop connection connections open install installed"
+            }
             Self::Files => "files index indexed roots depth folders directories",
             Self::History => "history recent frequent clear clipboard clip launch",
             Self::General => "general shortcut keyboard keys config file about version",

@@ -307,7 +307,11 @@ mod tests {
 
         assert!(listed.len() >= 5);
         assert!(listed.iter().any(|result| result.id == "system:lock"));
-        assert!(listed.iter().all(|result| provider.resolve(&result.id).is_some()));
+        assert!(
+            listed
+                .iter()
+                .all(|result| provider.resolve(&result.id).is_some())
+        );
 
         let locks = provider.search("kind:action lock");
 

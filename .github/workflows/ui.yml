@@ -6,6 +6,9 @@ on:
   pull_request:
     paths: ["apps/aujar-ui/**", "crates/aujar-ipc/**", "crates/aujar-config/**", "Cargo.lock"]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     if: ${{ hashFiles('apps/aujar-ui/Cargo.toml') != '' }}

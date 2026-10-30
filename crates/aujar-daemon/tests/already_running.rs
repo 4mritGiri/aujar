@@ -28,7 +28,10 @@ async fn a_second_daemon_refuses_to_replace_a_live_one() {
         .await
         .expect_err("the second daemon must not start");
 
-    assert!(error.downcast_ref::<AlreadyRunning>().is_some(), "{error:#}");
+    assert!(
+        error.downcast_ref::<AlreadyRunning>().is_some(),
+        "{error:#}"
+    );
 
     // The first daemon still owns the socket and still answers.
     assert!(matches!(

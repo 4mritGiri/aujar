@@ -16,15 +16,15 @@ anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
-aujar-config = { path = "../../crates/aujar-config" }
-aujar-core = { path = "../../crates/aujar-core" }
-aujar-color = { path = "../../modules/color" }
-aujar-daemon = { path = "../../crates/aujar-daemon" }
-aujar-ipc = { path = "../../crates/aujar-ipc" }
-aujar-launcher = { path = "../../modules/launcher" }
-aujar-mouse-borders = { path = "../../modules/mouse-borders" }
-aujar-mwb-cli = { path = "../../crates/aujar-mwb-cli" }
-aujar-rename = { path = "../../modules/rename" }
+aujar-config = { workspace = true }
+aujar-core = { workspace = true }
+aujar-color = { workspace = true }
+aujar-daemon = { workspace = true }
+aujar-ipc = { workspace = true }
+aujar-launcher = { workspace = true }
+aujar-mouse-borders = { workspace = true }
+aujar-mwb-cli = { workspace = true }
+aujar-rename = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

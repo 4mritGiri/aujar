@@ -1534,7 +1534,9 @@ impl LauncherView {
             return;
         }
 
-        let _ = self.requests.try_send(UiRequest::Search { query, attempt: 0 });
+        let _ = self
+            .requests
+            .try_send(UiRequest::Search { query, attempt: 0 });
     }
 
     fn install(&mut self, hits: Vec<SearchHit>, sections: Vec<Section>) {
@@ -1589,7 +1591,8 @@ impl LauncherView {
         let files_grid = self.is_files_grid(&self.all_hits);
         let (hits, sections, suggested): (Vec<SearchHit>, Vec<Section>, usize) = if files_grid {
             let count = |index: usize| self.history.count_of(&hits[index].id);
-            let mut leading: Vec<usize> = (0..hits.len()).filter(|&index| count(index) > 0).collect();
+            let mut leading: Vec<usize> =
+                (0..hits.len()).filter(|&index| count(index) > 0).collect();
 
             leading.sort_by_key(|&index| std::cmp::Reverse(count(index)));
             leading.truncate(SUGGESTIONS_MAX);
@@ -1885,18 +1888,18 @@ impl LauncherView {
                 usize::MAX
             } else {
                 match section {
-                Section::Answer => 2,
-                Section::Lookup => 6,
-                Section::Windows => 8,
-                Section::Applications => apps_cap,
-                Section::Commands => 4,
-                Section::Files => apps_cap.min(6),
-                Section::Web => 3,
-                Section::Recent
-                | Section::RecentFiles
-                | Section::Frequent
-                | Section::TopHit
-                | Section::Clipboard => usize::MAX,
+                    Section::Answer => 2,
+                    Section::Lookup => 6,
+                    Section::Windows => 8,
+                    Section::Applications => apps_cap,
+                    Section::Commands => 4,
+                    Section::Files => apps_cap.min(6),
+                    Section::Web => 3,
+                    Section::Recent
+                    | Section::RecentFiles
+                    | Section::Frequent
+                    | Section::TopHit
+                    | Section::Clipboard => usize::MAX,
                 }
             };
 
@@ -2786,7 +2789,11 @@ impl LauncherView {
                 .child(self.glyph(
                     "icons/clipboard.svg",
                     14.,
-                    if selected { pal.on_accent } else { pal.text_dim },
+                    if selected {
+                        pal.on_accent
+                    } else {
+                        pal.text_dim
+                    },
                 ))
                 .on_click(cx.listener(move |this, _event, window, cx| {
                     cx.stop_propagation();
@@ -3913,7 +3920,14 @@ impl LauncherView {
             }
         }
 
-        self.leading(hit, if matches!(hit.kind.as_str(), "file" | "folder") { 52. } else { 48. })
+        self.leading(
+            hit,
+            if matches!(hit.kind.as_str(), "file" | "folder") {
+                52.
+            } else {
+                48.
+            },
+        )
     }
 
     /// A titled block of tiles, `GRID_COLS` to a row: the results `range` of the list.
@@ -3991,7 +4005,11 @@ impl LauncherView {
     fn render_group_chips(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let present: Vec<&'static str> = APP_GROUPS
             .into_iter()
-            .filter(|group| self.all_hits.iter().any(|hit| app_group(hit) == Some(*group)))
+            .filter(|group| {
+                self.all_hits
+                    .iter()
+                    .any(|hit| app_group(hit) == Some(*group))
+            })
             .collect();
 
         if present.len() < 2 {
@@ -4376,14 +4394,7 @@ impl LauncherView {
                     .text_color(rgb(pal.text_faint))
                     .child("Try one of these, or just start typing"),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap_2()
-                    .children(chips),
-            )
+            .child(div().flex().flex_row().flex_wrap().gap_2().children(chips))
             .child(
                 div()
                     .text_xs()
@@ -4633,11 +4644,7 @@ impl Render for LauncherView {
         }
 
         let show_footer = self.settings.appearance.show_footer;
-        let preview = if grid {
-            None
-        } else {
-            self.render_preview(cx)
-        };
+        let preview = if grid { None } else { self.render_preview(cx) };
         let menu = self.render_menu(cx);
         let tips_on = self.tips;
         let chips = if tips_on { None } else { self.render_chips(cx) };
@@ -5797,7 +5804,10 @@ mod tests {
         assert_eq!(ghost_text("  ", &hit("application", "Firefox")), None);
 
         // The web-search row and clipboard entries do not complete the text.
-        assert_eq!(ghost_text("fire", &hit("web", "Search the web for fire")), None);
+        assert_eq!(
+            ghost_text("fire", &hit("web", "Search the web for fire")),
+            None
+        );
         assert_eq!(ghost_text("fire", &hit("clip", "fire alarm")), None);
 
         // A long title is cut.
@@ -5838,8 +5848,14 @@ mod tests {
         assert_eq!(scoped_query(None, None, "  fire "), "  fire ");
 
         // An empty field lists everything in the scope.
-        assert_eq!(scoped_query(Some(Quick::Applications), None, ""), "kind:app");
-        assert_eq!(scoped_query(Some(Quick::Applications), None, "   "), "kind:app");
+        assert_eq!(
+            scoped_query(Some(Quick::Applications), None, ""),
+            "kind:app"
+        );
+        assert_eq!(
+            scoped_query(Some(Quick::Applications), None, "   "),
+            "kind:app"
+        );
         assert_eq!(scoped_query(Some(Quick::Actions), None, ""), "kind:action");
         assert_eq!(scoped_query(Some(Quick::Files), None, ""), "kind:recent");
         assert_eq!(scoped_query(Some(Quick::Clipboard), None, ""), "clip");
@@ -5853,7 +5869,10 @@ mod tests {
             scoped_query(Some(Quick::Actions), None, "lock"),
             "kind:action lock"
         );
-        assert_eq!(scoped_query(Some(Quick::Clipboard), None, "url"), "clip url");
+        assert_eq!(
+            scoped_query(Some(Quick::Clipboard), None, "url"),
+            "clip url"
+        );
         assert_eq!(
             scoped_query(Some(Quick::Files), None, "invoice"),
             "kind:file invoice"

@@ -6,4 +6,4 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-aujar-core = { path = "../../crates/aujar-core" }
+aujar-core = { workspace = true }

@@ -66,8 +66,13 @@ fn the_ui_unit_does_not_either() {
         let key = line.trim().split('=').next().unwrap_or_default().trim();
 
         assert!(
-            !["NoNewPrivileges", "LockPersonality", "ProtectHome", "ProtectSystem"]
-                .contains(&key),
+            ![
+                "NoNewPrivileges",
+                "LockPersonality",
+                "ProtectHome",
+                "ProtectSystem"
+            ]
+            .contains(&key),
             "aujar-ui.service sets `{key}`"
         );
     }

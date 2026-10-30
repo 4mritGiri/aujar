@@ -348,7 +348,10 @@ async fn main() -> Result<()> {
             let socket_path = socket.unwrap_or_else(resolve_socket);
 
             if let Err(error) = aujar_daemon::run(&socket_path).await {
-                if error.downcast_ref::<aujar_daemon::AlreadyRunning>().is_some() {
+                if error
+                    .downcast_ref::<aujar_daemon::AlreadyRunning>()
+                    .is_some()
+                {
                     eprintln!("aujar: {error}");
                     std::process::exit(aujar_daemon::EXIT_ALREADY_RUNNING);
                 }

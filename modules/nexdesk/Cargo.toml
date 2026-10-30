@@ -8,7 +8,7 @@ description = "Launch and supervise the NexDesk remote-access suite from Aujar (
 
 [dependencies]
 async-trait.workspace = true
-aujar-runtime = { path = "../../crates/aujar-runtime" }
+aujar-runtime = { workspace = true }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

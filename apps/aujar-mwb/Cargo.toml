@@ -12,10 +12,10 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-aujar-config = { path = "../../crates/aujar-config" }
-aujar-core = { path = "../../crates/aujar-core" }
-aujar-mouse-borders = { path = "../../modules/mouse-borders" }
-aujar-mwb-cli = { path = "../../crates/aujar-mwb-cli" }
+aujar-config = { workspace = true }
+aujar-core = { workspace = true }
+aujar-mouse-borders = { workspace = true }
+aujar-mwb-cli = { workspace = true }
 clap.workspace = true
 tokio.workspace = true
 tracing.workspace = true

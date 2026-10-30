@@ -34,10 +34,11 @@ Known constraints:
    crates does not require GPU/windowing system libraries. UI has its own CI job.
    *Amendment:* it is now a non-default workspace **member** (not excluded), so
    `cargo run -p aujar-ui --release` works from the repository root. The platform jobs use
-   `--workspace --exclude aujar-ui`, `cargo-deny` excludes it from its graph, and the UI is
-   covered by `just check-ui` / the UI workflow. The cost: one shared `Cargo.lock`, and the UI
-   and the daemon must be built in **separate** cargo invocations (`ashpd`'s `tokio` and
-   `async-io` features are mutually exclusive and would unify otherwise).
+   `--workspace --exclude aujar-ui` to stay light (no GPU/windowing libs), `cargo-deny`
+   excludes it from its graph, and the UI is covered by `just check-ui` / the UI workflow.
+   Portal crates (`aujar-hotkeys`, `aujar-color`) use ashpd's `async-io` backend so a full
+   `--workspace` build can unify features with GPUI (ashpd forbids enabling `tokio` and
+   `async-io` together).
 4. Global hotkeys, tray and window control stay in the daemon (portals, X11 grabs, compositor
    IPC), not in the UI toolkit. The daemon tells the UI to show/hide via IPC events.
 5. No Aujar logic in the UI: it renders state and sends requests.

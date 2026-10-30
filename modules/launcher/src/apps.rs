@@ -44,8 +44,8 @@ impl DesktopEntry {
                 "Development" | "IDE" | "Debugger" | "RevisionControl" | "GUIDesigner"
                 | "WebDevelopment" | "Building" | "Profiling" | "Translation" => "Development",
                 "Game" | "ArcadeGame" | "BoardGame" | "CardGame" | "LogicGame" | "RolePlaying"
-                | "Simulation" | "SportsGame" | "StrategyGame" | "ActionGame"
-                | "AdventureGame" | "BlocksGame" => "Games",
+                | "Simulation" | "SportsGame" | "StrategyGame" | "ActionGame" | "AdventureGame"
+                | "BlocksGame" => "Games",
                 "Education" | "Science" | "Math" | "Astronomy" | "Chemistry" | "Geography"
                 | "History" | "Languages" | "Biology" | "Physics" | "Literature" | "Art"
                 | "Electronics" => "Education & Science",
@@ -674,7 +674,10 @@ Exec=firefox --new-window
             ["Network", "WebBrowser"]
         );
         assert_eq!(entry("Network;WebBrowser;").group(), "Internet");
-        assert_eq!(entry("GTK;Settings;X-GNOME-NetworkSettings;").group(), "System");
+        assert_eq!(
+            entry("GTK;Settings;X-GNOME-NetworkSettings;").group(),
+            "System"
+        );
         assert_eq!(entry("Utility;Calculator;Science;").group(), "Utilities");
         assert_eq!(entry("Development;IDE;").group(), "Development");
         assert_eq!(entry("AudioVideo;Player;").group(), "Media");
@@ -717,16 +720,22 @@ Exec=firefox --new-window
 
         assert_eq!(matching.len(), 1);
         assert!(matching[0].title.to_lowercase().contains("fire"));
-        assert!(matching[0].detail.as_deref().is_some_and(|d| d.starts_with("group:")));
+        assert!(
+            matching[0]
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.starts_with("group:"))
+        );
         assert!(provider.search("kind:apple").is_empty());
 
         assert!(listed[0].score > listed[1].score);
         assert!(listed.iter().all(|result| result.score < 600));
-        assert!(
-            listed
-                .iter()
-                .all(|result| result.detail.as_deref().is_some_and(|d| d.starts_with("group:")))
-        );
+        assert!(listed.iter().all(|result| {
+            result
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.starts_with("group:"))
+        }));
 
         fs::remove_dir_all(dir).unwrap();
     }

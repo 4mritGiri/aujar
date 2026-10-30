@@ -7,4 +7,4 @@ license.workspace=true
 name="aujar-settings"
 path="src/main.rs"
 [dependencies]
-aujar-config={path="../../crates/aujar-config"}
+aujar-config = { workspace = true }
