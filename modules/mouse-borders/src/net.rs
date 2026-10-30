@@ -95,6 +95,22 @@ fn masked_v6(ip: Ipv6Addr, prefix: u8) -> u128 {
     u128::from(ip) & mask
 }
 
+/// Run `attempt` again for a moment while the address is still in use. A pairing window that
+/// was just closed keeps its sockets until its thread notices, a fraction of a second later.
+pub(crate) fn retry_in_use<T>(mut attempt: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut tries = 0;
+
+    loop {
+        match attempt() {
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse && tries < 6 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Split `host`, `host:port`, `1.2.3.4`, `[::1]:15101` into a host and port. Bare IPv6
 /// addresses (several colons, no brackets) are taken as a host with the default port.
 pub fn split_host_port(address: &str, default_port: u16) -> Result<(String, u16)> {

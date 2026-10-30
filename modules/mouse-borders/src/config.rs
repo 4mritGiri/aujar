@@ -101,6 +101,7 @@ impl EngineConfig {
         let shape = match settings.matrix {
             MatrixMode::Row => Shape::Row,
             MatrixMode::Grid => Shape::Grid,
+            MatrixMode::Free => Shape::Plane,
         };
         let layout = Layout::new(shape, settings.wrap_mouse, machines)?;
 

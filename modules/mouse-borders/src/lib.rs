@@ -16,6 +16,7 @@ pub mod input;
 pub mod keymap;
 pub mod keys;
 pub mod keystore;
+pub mod lan_pair;
 pub mod layout;
 pub mod link;
 pub mod net;

@@ -33,21 +33,36 @@ combination of the three systems works together.
 ## Quick start
 
 On every machine install Aujar and make sure the daemon runs (`systemctl --user enable --now aujar`).
-Then connect them with a **pairing code**: one line holding the security key and the layout, so
-you never type a key or an address.
+Then pair them. In the settings window nothing has to be copied, sent or pasted: the two
+machines find each other on the network and you compare a short code on both screens.
 
 **In the settings window** (open the launcher, then Settings → **Mouse Borders**):
 
-1. On the first machine click **Copy pairing code**. This turns Mouse Borders on, creates the key
-   and adds the machine to the layout.
-2. On the second machine click **Join from clipboard**. It adopts the key and layout and adds itself.
-3. On the second machine click **Copy pairing code**, and on the first click **Join from clipboard**,
-   so the first machine learns about the second. With three or four machines, send the *latest*
-   code to every machine that is already part of the layout.
-4. Check the **Status** card at the top of the page: machines show as connected.
-5. Arrange the machines under **Layout** (◀ ▶ move a machine one slot, the picture above the list
-   shows the desk) and give your user access to the input devices
-   ([Permissions](#permissions)); then push the pointer through a screen edge.
+1. On the first machine choose **Start pairing**. This turns Mouse Borders on, creates the key,
+   adds the machine to the layout and makes it visible on the network for two minutes.
+2. On the second machine choose **Find devices**, then **Pair** next to the first machine.
+3. Both screens now show the same eight digits (`4821 0937`). If they match, choose
+   **Codes match** on both; if they differ, choose **They differ** (someone else may be on the
+   network). Only after both of you confirm does the key travel, over the encrypted connection,
+   and the second machine adopts the key and the layout.
+4. For a third or fourth machine repeat steps 1 to 3 with any machine that is already paired.
+5. Check the **Status** card at the top of the page: machines show as connected.
+6. **Drag the machines** in **Layout** to where they sit on your desk (the board is 4 columns by
+   3 rows, like the display arrangement in your system settings; dropping on another machine
+   swaps them), give your user access to the input devices ([Permissions](#permissions)), and
+   push the pointer through a screen edge. Machines in the same row switch left and right,
+   machines in the same column switch up and down.
+
+Pairing needs the machines on one network that lets broadcasts through (UDP 15101) and TCP
+15102 between them (the sharing port plus one). On a firewalled machine
+(`ufw allow from 192.168.1.0/24 to any port 15101,15102`) or a guest Wi-Fi with client isolation
+**Find devices** finds nothing; use the pairing code below instead.
+
+**Pairing code (no discovery).** **Copy pairing code** on one machine and **Join from clipboard** on
+the other does the same job: the code is one line holding the key and the layout, so you never
+type a key or an address. Send it yourself (it is a secret: anyone who sees it can connect to
+your machines). With three or four machines, send the *latest* code to every machine that is
+already part of the layout.
 
 **From the command line** it is the same flow:
 
@@ -115,7 +130,8 @@ works the same as `aujar mwb …` below. The agent keeps its settings in the sam
 | File transfer, 100 MB limit | ✅ CLI | `aujar mwb send laptop file…`. Drag-and-drop and paste-a-file are 📅 |
 | Service mode (login screen, elevated windows) | ✅ | A least-privilege system service ([below](#service-mode)) |
 | Multi-machine input mode | ✅ | `Ctrl+Alt+M` |
-| Device layout: row or 2×2 | ✅ | Settings window (picture and ◀ ▶ buttons) or `matrix` and `slot` in the config; drag-and-drop 📅 |
+| Device layout: row, 2×2 or free board | ✅ | Settings window (drag machines on a 4 × 3 board) or `matrix` and `slot` in the config |
+| Pair over the network | ✅ | Settings window: Start pairing / Find devices, compare an 8-digit code |
 | Wrap mouse | ✅ | `wrap_mouse = true` |
 | Easy Mouse (always / hold Shift / hold Ctrl / off) | ✅ | `easy_mouse = …`, toggle with `Ctrl+Alt+E` |
 | Block mouse at corners | ✅ | `block_corners = true` |
@@ -224,6 +240,13 @@ contents, keystrokes, file contents or the key. It is private to your user, rota
 * **Pairing.** The security key is generated (160 bits) and shown as eight groups of four. It
   lives in `~/.config/aujar/mouse-borders.key` with mode `0600`; a more permissive file is
   refused. Keys cannot be typed freely: a short password could be guessed offline.
+* **Pairing over the network.** The two machines run an unauthenticated Noise `NN` handshake and
+  both show an 8-digit code derived from it; you compare them. A machine in the middle has a
+  different handshake with each side, so the codes differ. The handshake has 10 seconds to finish,
+  which rules out trying keys until the codes happen to match. The pairing code with the key is
+  sent only after *both* people confirmed, and only inside the encrypted channel. The pairing
+  window is open for two minutes, answers discovery only to machines on its own subnets and stops
+  after one pairing. Nothing listens for pairing outside that window.
 * **Authentication and encryption.** Every connection runs a Noise `XXpsk3` handshake keyed from
   the security key, then ChaCha20-Poly1305 with a strict message counter. A machine without the
   key cannot complete a connection; modified, replayed or reordered messages are rejected and
@@ -315,7 +338,8 @@ to work for that user. Logs: `journalctl -u aujar-mouse-borders`.
   L-shaped arrangement can land the pointer off-screen unless `move_relatively` is on.
 * Edge switching and `hide_mouse_at_edge` need X11. The virtual-terminal shortcuts are not
   forwarded.
-* No drag-and-drop in the layout editor and no drag-and-drop or paste-a-file transfer yet.
+* No drag-and-drop or paste-a-file transfer yet. Two machines are neighbours only when they share a
+  row or a column of the layout board (a machine placed diagonally has no edge towards the other).
 * This was developed against in-memory and loopback tests plus two real daemons on one host. The
   evdev, uinput and X11 code paths could not be exercised on physical hardware in CI: expect
   to report some device-specific bugs.

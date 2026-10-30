@@ -339,12 +339,15 @@ impl Default for Web {
     }
 }
 
-/// How machines are arranged on the desk: one row of up to four, or a 2x2 matrix.
+/// How machines are arranged on the desk: one row of up to four, a 2x2 matrix, or freely on
+/// a board (4 columns by 3 rows) like the display arrangement in an operating system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MatrixMode {
     Row,
     Grid,
+    /// Slot `n` is column `n % 4`, row `n / 4` of a 4 x 3 board.
+    Free,
 }
 
 /// When moving the pointer past a screen edge hands control to the neighbouring machine.
@@ -372,8 +375,9 @@ pub enum SwitchKeys {
     FunctionKeys,
 }
 
-/// One machine in the layout. `slot` is its place on the desk, `0..=3`: left to right in
-/// `row` mode; row-major (`0 1 / 2 3`) in `grid` mode.
+/// One machine in the layout. `slot` is its place on the desk: `0..=3` left to right in `row`
+/// mode, `0..=3` row-major (`0 1 / 2 3`) in `grid` mode, and `0..=11` (`row * 4 + column` of a
+/// 4 x 3 board) in `free` mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Machine {
     pub name: String,
@@ -671,6 +675,17 @@ mod tests {
         assert_eq!(mb.machines.len(), 2);
         assert_eq!(mb.machines[0].address, "");
         assert_eq!(mb.machines[1].slot, 1);
+    }
+
+    #[test]
+    fn the_free_board_arrangement_round_trips() {
+        let mut settings = Settings::default();
+        settings.mouse_borders.matrix = MatrixMode::Free;
+
+        let text = toml::to_string_pretty(&settings).unwrap();
+
+        assert!(text.contains("matrix = \"free\""), "{text}");
+        assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
     }
 
     #[test]
