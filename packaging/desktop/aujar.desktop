@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Aujar
 Comment=Native Linux Productivity Platform
-Exec=aujar-ui
+Exec=aujar launcher toggle
 Icon=aujar
 Terminal=false
 Type=Application

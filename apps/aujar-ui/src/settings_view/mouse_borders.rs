@@ -149,13 +149,12 @@ impl SettingsView {
 
         match code {
             Ok(code) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(code));
+                cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
                 next.mouse_borders.enabled = true;
                 self.mouse_borders.confirm = None;
                 self.mutate(cx, move |settings| *settings = next);
                 self.set_note(
-                    "Pairing code copied. On your other machine click \u{201c}Join from clipboard\u{201d}. \
-                     It contains your security key: do not share it.",
+                    format!("Pairing code copied to clipboard!\n\n{}", code),
                     false,
                     cx,
                 );
@@ -167,7 +166,7 @@ impl SettingsView {
     fn join_from_clipboard(&mut self, cx: &mut Context<Self>) {
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             self.set_note(
-                "The clipboard is empty. Copy a pairing code on the other machine first.",
+                "Clipboard is empty. Copy a pairing code from the first machine first.",
                 true,
                 cx,
             );
@@ -178,7 +177,11 @@ impl SettingsView {
         let code = match PairingCode::parse(&text) {
             Ok(code) => code,
             Err(error) => {
-                self.set_note(error.to_string(), true, cx);
+                self.set_note(
+                    format!("Invalid pairing code: {}", error),
+                    true,
+                    cx,
+                );
 
                 return;
             }
@@ -192,8 +195,9 @@ impl SettingsView {
             {
                 self.mouse_borders.confirm = Some(Confirm::Join);
                 self.set_note(
-                    "This machine already has a different security key. Click again to replace it \
-                     (machines still using the old key will disconnect).",
+                    "This machine already has a different security key. \
+                     Click 'Replace key and join' again to use the new code \
+                     (machines using the old key will disconnect).",
                     false,
                     cx,
                 );
@@ -227,16 +231,13 @@ impl SettingsView {
         }
 
         self.mouse_borders.confirm = None;
+        next.mouse_borders.enabled = true;
         self.mutate(cx, move |settings| *settings = next);
         self.set_note(
             format!(
-                "Joined: {} machines in the layout{}. Connecting\u{2026}",
+                "\u{2705} Successfully joined! {} machines in the layout. \
+                 Mouse and keyboard sharing is now active.",
                 joined.machines,
-                if joined.added_local {
-                    " (this machine was added)"
-                } else {
-                    ""
-                }
             ),
             false,
             cx,
@@ -293,7 +294,35 @@ impl SettingsView {
             ),
         ];
 
+        // Help section at the top
+        let help_section = vec![
+            div()
+                .px_4()
+                .py_3()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(self.palette.text))
+                        .child("Quick Start:"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(self.palette.text_dim))
+                        .child(
+                            "1. On your first machine: Click 'Copy pairing code' below \u{2014} it's automatically copied. \
+                             2. On each other machine: Click 'Join from clipboard' \u{2014} the code is automatically detected. \
+                             3. Move your mouse to the screen edge to switch between machines.",
+                        ),
+                )
+                .into_any_element()
+        ];
+
         vec![
+            self.section("Quick Start", help_section),
             self.section("Status", self.status_rows(cx)),
             self.section("Share keyboard and mouse", enable),
             self.section("Connect machines", self.connect_rows(cx)),
@@ -527,14 +556,83 @@ impl SettingsView {
             Err(error) => error.to_string(),
         };
 
-        let mut rows = vec![
-            self.row(
+        // Check if we have a pairing code to display
+        let has_key = KeyStore::user_default().load().is_ok_and(|k| k.is_some());
+        let mb = &self.settings.mouse_borders;
+        let local = settings_edit::local_name(mb);
+        
+        // Generate pairing code for display
+        let pairing_code = if has_key {
+            let key = KeyStore::user_default().load().ok().flatten();
+            let host = aujar_mouse_borders::net::pick_host(&aujar_mouse_borders::net::local_networks());
+            
+            if let (Some(key), Some(host)) = (key, host) {
+                let mut temp_settings = mb.clone();
+                if let Ok(_) = settings_edit::add_machine(&mut temp_settings, &local, None) {
+                    if let Ok(code) = PairingCode::from_settings(&temp_settings, key, &local, Some(host)) {
+                        Some(code.encode())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let mut rows = Vec::new();
+        
+        // Pairing instructions section
+        if let Some(code) = pairing_code {
+            // Show the pairing code prominently
+            let code_display = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(pal.text_dim))
+                        .child("Share this code with other machines:"),
+                )
+                .child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .rounded_md()
+                        .bg(rgba(pal.hover))
+                        .border_1()
+                        .border_color(rgba(pal.keycap_border))
+                        .text_sm()
+                        .child(code.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(pal.text_faint))
+                        .child("Contains your security key - treat it like a password"),
+                );
+            
+            rows.push(self.row(
                 "Pairing code",
-                "On the first machine, copy the code. On each other machine, click Join. The code carries the security key and the layout.",
+                "Copy this on your first machine, then paste on others to connect.",
+                div().flex().flex_col().gap_2()
+                    .child(code_display)
+                    .child(div().flex().flex_row().gap_2().child(copy)),
+            ));
+        } else {
+            rows.push(self.row(
+                "Pairing code",
+                "On the first machine, copy the code. On each other machine, click Join.",
                 div().flex().flex_row().gap_2().child(copy).child(join),
-            ),
-            self.row("Security key", &key_hint, new_key),
-        ];
+            ));
+        }
+        
+        rows.push(self.row("Security key", &key_hint, new_key));
 
         if let Some(note) = &self.mouse_borders.note {
             rows.push(
