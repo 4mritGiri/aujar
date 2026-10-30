@@ -9,7 +9,7 @@ use std::time::Duration;
 use aujar_config::{EasyMouse, MatrixMode, SwitchKeys};
 use aujar_ipc::{MouseBordersRequest, MouseBordersResponse, MouseBordersStatus, Request, Response};
 use aujar_mouse_borders::{
-    discovery::{DiscoveredDevice, start_discovery},
+    discovery::{scan_local_network, DiscoveredDevice},
     keystore::KeyStore,
     net,
     pairing::PairingCode,
@@ -154,8 +154,8 @@ impl SettingsView {
                 (settings, local, local_host)
             });
 
-            let (settings, local, local_host) = match result {
-                Ok((settings, local, Some(host))) => (settings, local, host),
+            let local_host = match result {
+                Ok((_settings, _local, Some(host))) => host,
                 Ok((_, _, None)) => {
                     let _ = this.update(cx, |this, cx| {
                         this.set_note("No network connection", true, cx);
@@ -167,23 +167,8 @@ impl SettingsView {
                 }
             };
 
-            match start_discovery(settings.mouse_borders, local, local_host) {
-                Ok(mut rx) => {
-                    let mut devices = Vec::new();
-
-                    // Wait for some results
-                    for _ in 0..5 {
-                        match rx.try_recv() {
-                            Ok(device) => {
-                                devices.push(device);
-                            }
-                            Err(_) => {}
-                        }
-                        cx.background_executor()
-                            .timer(Duration::from_millis(500))
-                            .await;
-                    }
-
+            match scan_local_network(local_host, Duration::from_secs(2)).await {
+                Ok(devices) => {
                     let is_empty = devices.is_empty();
                     let count = devices.len();
                     let _ = this.update(cx, |this, cx| {
