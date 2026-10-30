@@ -319,7 +319,9 @@ async fn main() -> Result<()> {
 
             match send(&resolve_socket(), request).await? {
                 Response::Delivered { subscribers: 0 } => {
-                    eprintln!("No launcher UI is subscribed yet (0 subscribers).");
+                    eprintln!("No launcher UI is running.");
+                    eprintln!("Start it with: systemctl --user start aujar-ui.service");
+                    eprintln!("Enable for login: systemctl --user enable aujar-ui.service");
                 }
                 Response::Delivered { subscribers } => {
                     println!("Delivered to {subscribers} subscriber(s).");
