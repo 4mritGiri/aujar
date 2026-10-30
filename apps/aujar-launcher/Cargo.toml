@@ -47,6 +47,7 @@ priority = "optional"
 depends = "$auto"
 assets = [
     ["target/release/aujar", "usr/bin/", "755"],
+    ["../../target/release/aujar-ui", "usr/bin/", "755"],
     ["../../packaging/systemd/aujar.service", "usr/lib/systemd/user/", "644"],
     ["../../packaging/desktop/aujar.desktop", "usr/share/applications/", "644"],
     ["../../packaging/desktop/dev.aujar.Aujar.desktop", "usr/share/applications/", "644"],
@@ -70,6 +71,7 @@ url = "https://github.com/4mritGiri/aujar"
 auto-req = "builtin"
 assets = [
     { source = "target/release/aujar", dest = "/usr/bin/aujar", mode = "0755" },
+    { source = "target/release/aujar-ui", dest = "/usr/bin/aujar-ui", mode = "0755" },
     { source = "packaging/systemd/aujar.service", dest = "/usr/lib/systemd/user/aujar.service", mode = "0644" },
     { source = "packaging/desktop/dev.aujar.Aujar.desktop", dest = "/usr/share/applications/dev.aujar.Aujar.desktop", mode = "0644" },
     { source = "config/policy.example.toml", dest = "/usr/share/doc/aujar/policy.example.toml", mode = "0644", doc = true },
