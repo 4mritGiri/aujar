@@ -130,7 +130,9 @@ fn decode(data: &[u8]) -> Result<(PacketType, Option<Presence>)> {
     let flags = body[0];
     let port = u16::from_be_bytes([body[1], body[2]]);
     let length = usize::from(body[3]);
-    let name = body.get(4..4 + length).ok_or_else(|| bad("truncated name"))?;
+    let name = body
+        .get(4..4 + length)
+        .ok_or_else(|| bad("truncated name"))?;
     let name = std::str::from_utf8(name).map_err(|_| bad("name is not text"))?;
 
     // The same rule as for every machine name, so a stranger cannot put odd characters into
@@ -282,11 +284,12 @@ pub struct Responder {
 
 impl Responder {
     pub fn bind(presence: Presence) -> Result<Self> {
-        let socket = retry_in_use(|| UdpSocket::bind(("0.0.0.0", DISCOVERY_PORT))).map_err(|error| {
-            Error::Config(format!(
-                "cannot listen for discovery on UDP port {DISCOVERY_PORT}: {error}"
-            ))
-        })?;
+        let socket =
+            retry_in_use(|| UdpSocket::bind(("0.0.0.0", DISCOVERY_PORT))).map_err(|error| {
+                Error::Config(format!(
+                    "cannot listen for discovery on UDP port {DISCOVERY_PORT}: {error}"
+                ))
+            })?;
 
         socket
             .set_read_timeout(Some(TICK))
@@ -318,9 +321,7 @@ impl Responder {
             return;
         }
 
-        if is_own_address(from.ip(), &self.networks)
-            || !is_same_subnet(from.ip(), &self.networks)
-        {
+        if is_own_address(from.ip(), &self.networks) || !is_same_subnet(from.ip(), &self.networks) {
             return;
         }
 

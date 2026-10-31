@@ -170,6 +170,14 @@ impl SettingsView {
                     toggle_row!(
                         self,
                         cx,
+                        "animations",
+                        "Animations",
+                        "Fade the launcher in when it opens and out when it closes",
+                        appearance.animations
+                    ),
+                    toggle_row!(
+                        self,
+                        cx,
                         "footer",
                         "Keyboard hints",
                         "Show the shortcut bar at the bottom",

@@ -45,8 +45,12 @@ fn first_free_slot(settings: &MouseBorders) -> Option<u8> {
         return None;
     }
 
-    (0..slot_count(settings.matrix) as u8)
-        .find(|slot| !settings.machines.iter().any(|machine| machine.slot == *slot))
+    (0..slot_count(settings.matrix) as u8).find(|slot| {
+        !settings
+            .machines
+            .iter()
+            .any(|machine| machine.slot == *slot)
+    })
 }
 
 /// Where a slot sits on the 4 x 3 board, as `(column, row)`, for the arrangement `matrix`.
@@ -326,7 +330,10 @@ mod tests {
 
         // a b . .      slots 0 1 2 3
         // c d . .      slots 4 5 6 7
-        assert_eq!([slot_of("a"), slot_of("b"), slot_of("c"), slot_of("d")], [0, 1, 4, 5]);
+        assert_eq!(
+            [slot_of("a"), slot_of("b"), slot_of("c"), slot_of("d")],
+            [0, 1, 4, 5]
+        );
     }
 
     #[test]
