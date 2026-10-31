@@ -297,7 +297,7 @@ impl Page {
             Self::Search => {
                 "plugins applications apps files folders windows system clipboard calculator \
                  units currency dictionary weather stocks nepse nepal sports shell online \
-                 nexdesk rdp remote desktop connections"
+                 nexdesk rdp remote desktop connections wifi bluetooth display sound settings pages"
             }
             Self::Web => {
                 "web search engine duckduckgo google brave bing startpage shortcuts keyword"

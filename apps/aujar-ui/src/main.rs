@@ -22,11 +22,11 @@ use aujar_ipc::{
     subscribe,
 };
 use gpui::{
-    AnyElement, AnyView, App, Bounds, ClipboardItem, Context, ExternalDragPayload, FileDragPaths,
-    FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ScrollHandle, SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowHandle, WindowOptions, div, img, point, prelude::*, px, rgb, rgba,
-    size, svg,
+    Animation, AnimationExt as _, AnyElement, AnyView, App, Bounds, ClipboardItem, Context,
+    ExternalDragPayload, FileDragPaths, FocusHandle, Focusable, FontWeight, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ScrollHandle, SharedString, TitlebarOptions,
+    Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowHandle,
+    WindowOptions, div, img, point, prelude::*, px, rgb, rgba, size, svg,
 };
 use gpui_platform::application;
 use model::{
@@ -55,7 +55,17 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(30);
 const POLL_DELAY: Duration = Duration::from_millis(450);
 /// Re-asks per search (about 20 s), after which the placeholder stays.
 const MAX_POLLS: u32 = 44;
-/// Tallest the results list gets before it scrolls.
+/// How long the launcher takes to fade in and out (milliseconds), and how far it rises while
+/// fading in (pixels). Turned off with `appearance.animations`.
+const OPEN_MS: u64 = 150;
+const CLOSE_MS: u64 = 110;
+const OPEN_RISE: f32 = 6.0;
+
+/// Fast at first, gentle at the end: `0.0 -> 0.0`, `1.0 -> 1.0`.
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+}
+
 /// Height of the search row (the pill and the round buttons), and the gap below it.
 const ROW_H: f32 = 52.0;
 const ROW_GAP: f32 = 8.0;
@@ -987,7 +997,7 @@ struct Tip {
     plugin: Option<&'static str>,
 }
 
-const TIPS: [Tip; 12] = [
+const TIPS: [Tip; 13] = [
     Tip {
         title: "Open an app",
         example: "fire",
@@ -1029,6 +1039,12 @@ const TIPS: [Tip; 12] = [
         example: "< firefox",
         fill: "< ",
         plugin: Some("windows"),
+    },
+    Tip {
+        title: "Open a settings page",
+        example: "wifi",
+        fill: "wifi",
+        plugin: Some("settings_panels"),
     },
     Tip {
         title: "Look up a word",
@@ -1194,6 +1210,8 @@ struct LauncherView {
     file_kind: Option<&'static str>,
     /// How many tiles at the front of the Files grid are "Suggestions".
     suggested: usize,
+    /// The launcher is fading out; its window goes when the fade is done.
+    closing: bool,
     /// The height the window was last resized to.
     window_h: f32,
     /// The "..." menu is open.
@@ -1279,6 +1297,7 @@ impl LauncherView {
             scope: None,
             file_kind: None,
             suggested: 0,
+            closing: false,
             window_h: WINDOW_H,
             more: false,
             tips: false,
@@ -1997,7 +2016,7 @@ impl LauncherView {
 
         if let Some(url) = url {
             cx.open_url(&url);
-            window.remove_window();
+            self.close(window, cx);
         }
     }
 
@@ -2100,7 +2119,7 @@ impl LauncherView {
             Action::Reveal => self.launch_selected(true, window, cx),
             Action::Copy => {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(&hit)));
-                window.remove_window();
+                self.close(window, cx);
             }
             Action::LookUp => self.look_up(cx),
             Action::WebSearch => self.open_web_search(window, cx),
@@ -2137,6 +2156,11 @@ impl LauncherView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Already fading out: ignore what is typed in the meantime.
+        if self.closing {
+            return;
+        }
+
         let keystroke = &event.keystroke;
         let modifiers = &keystroke.modifiers;
         let key = keystroke.key.as_str();
@@ -2298,7 +2322,7 @@ impl LauncherView {
                         ));
                     } else if let Some(hit) = self.results.get(self.selected) {
                         cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(hit)));
-                        window.remove_window();
+                        self.close(window, cx);
                     }
                 }
                 "x" => {
@@ -2349,7 +2373,7 @@ impl LauncherView {
                 }
                 "," => {
                     let _ = self.requests.try_send(UiRequest::OpenSettings);
-                    window.remove_window();
+                    self.close(window, cx);
                 }
                 _ => {}
             }
@@ -2376,7 +2400,7 @@ impl LauncherView {
                 }
 
                 if self.query.is_empty() {
-                    window.remove_window();
+                    self.close(window, cx);
                 } else {
                     self.delete_range(0, self.query.len());
                     self.edited(cx);
@@ -2493,7 +2517,7 @@ impl LauncherView {
             }
         }
 
-        window.remove_window();
+        self.close(window, cx);
     }
 
     // ---- Rendering ----
@@ -3654,6 +3678,32 @@ impl LauncherView {
         cx.notify();
     }
 
+    /// Close the launcher: fade it out, then remove its window (at once with animations off).
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.settings.appearance.animations {
+            window.remove_window();
+            return;
+        }
+
+        if self.closing {
+            return;
+        }
+
+        self.closing = true;
+        cx.notify();
+
+        let handle = window.window_handle();
+
+        cx.spawn(async move |_this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(CLOSE_MS))
+                .await;
+
+            let _ = cx.update(|cx| handle.update(cx, |_, window, _| window.remove_window()));
+        })
+        .detach();
+    }
+
     /// A tooltip builder in the current palette.
     fn hover_tip(&self, text: &'static str) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
         let pal = self.palette;
@@ -4090,6 +4140,7 @@ impl LauncherView {
             Some("dictionary") => plugins.dictionary,
             Some("weather") => plugins.weather,
             Some("nexdesk") => plugins.nexdesk,
+            Some("settings_panels") => plugins.settings_panels,
             Some("clipboard") => plugins.clipboard,
             Some(_) => true,
         }
@@ -4127,7 +4178,7 @@ impl LauncherView {
             MoreAction::Tips => self.tips = true,
             MoreAction::Settings => {
                 let _ = self.requests.try_send(UiRequest::OpenSettings);
-                window.remove_window();
+                self.close(window, cx);
                 return;
             }
         }
@@ -4865,7 +4916,7 @@ impl Render for LauncherView {
 
         // The window is transparent: only the search row and the card are painted. The menu
         // floats above them.
-        div()
+        let root = div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_up(
@@ -4880,7 +4931,38 @@ impl Render for LauncherView {
             .child(search_row)
             .when(has_card, |this| this.child(card))
             .when_some(menu, |this, menu| this.child(menu))
-            .when_some(more_menu, |this, menu| this.child(menu))
+            .when_some(more_menu, |this, menu| this.child(menu));
+
+        if !self.settings.appearance.animations {
+            return root.into_any_element();
+        }
+
+        // Fade in with a slight rise when the window opens; fade out when it is closing.
+        let closing = self.closing;
+
+        root.with_animation(
+            if closing {
+                "launcher-out"
+            } else {
+                "launcher-in"
+            },
+            Animation::new(Duration::from_millis(if closing {
+                CLOSE_MS
+            } else {
+                OPEN_MS
+            }))
+            .with_easing(ease_out_cubic),
+            move |element, progress| {
+                if closing {
+                    element.opacity(1.0 - progress)
+                } else {
+                    element
+                        .opacity(progress)
+                        .top(px(OPEN_RISE * (1.0 - progress)))
+                }
+            },
+        )
+        .into_any_element()
     }
 }
 
@@ -4997,7 +5079,7 @@ fn open_launcher(
             let opened = Instant::now();
 
             view.update(cx, |_view, cx| {
-                cx.observe_window_activation(window, move |_this, window, _cx| {
+                cx.observe_window_activation(window, move |this, window, cx| {
                     if window.is_window_active() {
                         // Focus is back (drag finished, background read done): resume normal
                         // click-away behaviour shortly after.
@@ -5021,7 +5103,7 @@ fn open_launcher(
                     }
 
                     debug("  closing: click-away");
-                    window.remove_window();
+                    this.close(window, cx);
                 })
                 .detach();
             });
@@ -5148,7 +5230,7 @@ fn handle_message(
                 }
                 (true, false) => {
                     if let Some(handle) = state.launcher.take() {
-                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                        let _ = handle.update(cx, |view, window, cx| view.close(window, cx));
                     }
                 }
                 _ => {}
@@ -5740,6 +5822,31 @@ mod tests {
         assert!(!is_image_name("report.pdf"));
         assert!(!is_image_name("png"));
         assert!(!is_image_name("photo.png.zip"));
+    }
+
+    #[test]
+    fn the_fade_eases_out_between_zero_and_one() {
+        assert_eq!(ease_out_cubic(0.0), 0.0);
+        assert_eq!(ease_out_cubic(1.0), 1.0);
+        // Out-of-range input (a late frame) is held at the ends.
+        assert_eq!(ease_out_cubic(-1.0), 0.0);
+        assert_eq!(ease_out_cubic(2.0), 1.0);
+
+        // Fast at first: well over halfway at the halfway point; and never going backwards.
+        assert!(ease_out_cubic(0.5) > 0.8);
+
+        let mut previous = 0.0;
+
+        for step in 0..=20 {
+            let value = ease_out_cubic(step as f32 / 20.0);
+
+            assert!(value >= previous);
+            previous = value;
+        }
+
+        // Quick enough not to feel slow, long enough to be seen.
+        assert!((80..=250).contains(&OPEN_MS) && (60..=200).contains(&CLOSE_MS));
+        assert!(CLOSE_MS <= OPEN_MS);
     }
 
     #[test]

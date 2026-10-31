@@ -115,7 +115,9 @@ impl Handle {
 
     fn lock(&self) -> MutexGuard<'_, Shared> {
         // A panic on the pairing thread must not take the window down with it.
-        self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn state(&self) -> PairState {
@@ -277,7 +279,9 @@ pub struct HostConfig {
 pub fn host(config: HostConfig) -> Result<Handle> {
     let port = pair_port(config.sharing_port);
     let listener = retry_in_use(|| TcpListener::bind(("0.0.0.0", port))).map_err(|error| {
-        Error::Config(format!("cannot listen for pairing on TCP port {port}: {error}"))
+        Error::Config(format!(
+            "cannot listen for pairing on TCP port {port}: {error}"
+        ))
     })?;
 
     listener
@@ -301,12 +305,7 @@ pub fn host(config: HostConfig) -> Result<Handle> {
     Ok(handle)
 }
 
-fn host_loop(
-    listener: TcpListener,
-    mut responder: Responder,
-    config: HostConfig,
-    handle: Handle,
-) {
+fn host_loop(listener: TcpListener, mut responder: Responder, config: HostConfig, handle: Handle) {
     let deadline = Instant::now() + config.window;
 
     loop {
@@ -375,8 +374,12 @@ fn serve(
 ) -> Result<()> {
     // Accepted sockets may inherit the listener's non-blocking mode.
     stream.set_nonblocking(false).map_err(io_error)?;
-    stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).map_err(io_error)?;
-    stream.set_write_timeout(Some(HANDSHAKE_TIMEOUT)).map_err(io_error)?;
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .map_err(io_error)?;
+    stream
+        .set_write_timeout(Some(HANDSHAKE_TIMEOUT))
+        .map_err(io_error)?;
 
     let mut state = Builder::new(params()?)
         .build_responder()
@@ -465,8 +468,12 @@ fn guest(address: SocketAddr, local_name: &str, peer_name: &str, handle: &Handle
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5))
         .map_err(|error| Error::Handshake(format!("cannot reach {address}: {error}")))?;
 
-    stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).map_err(io_error)?;
-    stream.set_write_timeout(Some(HANDSHAKE_TIMEOUT)).map_err(io_error)?;
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .map_err(io_error)?;
+    stream
+        .set_write_timeout(Some(HANDSHAKE_TIMEOUT))
+        .map_err(io_error)?;
 
     let mut state = Builder::new(params()?)
         .build_initiator()
@@ -604,7 +611,10 @@ mod tests {
 
         let received = wait_for(&guest, PairState::is_over);
 
-        assert_eq!(received, PairState::Received("aujar-pair1;row;SECRET".into()));
+        assert_eq!(
+            received,
+            PairState::Received("aujar-pair1;row;SECRET".into())
+        );
         assert_eq!(wait_for(&host, PairState::is_over), PairState::Sent);
     }
 
@@ -689,7 +699,11 @@ mod tests {
 
         assert_eq!(code.len(), 9);
         assert_eq!(code.as_bytes()[4], b' ');
-        assert!(code.chars().filter(|c| *c != ' ').all(|c| c.is_ascii_digit()));
+        assert!(
+            code.chars()
+                .filter(|c| *c != ' ')
+                .all(|c| c.is_ascii_digit())
+        );
         assert_ne!(code_from_hash(b"one"), code_from_hash(b"two"));
     }
 

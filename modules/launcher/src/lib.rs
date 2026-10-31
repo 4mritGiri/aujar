@@ -7,6 +7,7 @@ mod icons;
 mod model;
 mod nepse;
 mod nexdesk;
+mod panels;
 mod ranking;
 mod recent;
 mod shell;
@@ -27,6 +28,7 @@ pub use icons::resolve_icon;
 pub use model::{LaunchSpec, Provider, ResultKind, SearchResult};
 pub use nepse::{NepseProvider, spawn_alert_watcher as spawn_nepse_alert_watcher};
 pub use nexdesk::NexDeskProvider;
+pub use panels::SettingsPanelsProvider;
 pub use ranking::{score, score_lowered, score_strict};
 pub use shell::ShellProvider;
 pub use sports::SportsProvider;
@@ -66,6 +68,9 @@ pub struct LauncherOptions {
     /// `rdp office`: start a saved NexDesk connection. Reads only the names (and address and
     /// user) of NexDesk's `.rdp` files, never its password vault.
     pub nexdesk: bool,
+    /// `wifi`, `bluetooth`, `display`...: open that page of GNOME Settings (only when
+    /// `gnome-control-center` is installed).
+    pub settings_panels: bool,
     pub file_roots: Vec<String>,
     pub file_depth: usize,
 }
@@ -88,6 +93,7 @@ impl Default for LauncherOptions {
             sports: true,
             windows: true,
             nexdesk: true,
+            settings_panels: true,
             file_roots: vec!["~".to_owned()],
             file_depth: 4,
         }
@@ -188,6 +194,10 @@ impl Launcher {
 
         if options.nexdesk {
             launcher.register(Box::new(NexDeskProvider::new()));
+        }
+
+        if options.settings_panels {
+            launcher.register(Box::new(SettingsPanelsProvider::new()));
         }
 
         launcher

@@ -89,6 +89,7 @@ fn launcher_options(settings: &aujar_config::Settings) -> aujar_launcher::Launch
         sports: settings.plugins.sports,
         windows: settings.plugins.windows,
         nexdesk: settings.plugins.nexdesk,
+        settings_panels: settings.plugins.settings_panels,
         file_roots: settings.files.roots.clone(),
         file_depth: settings.files.max_depth as usize,
     }

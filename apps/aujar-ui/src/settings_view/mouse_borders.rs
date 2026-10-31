@@ -318,9 +318,12 @@ impl SettingsView {
     }
 
     fn stop_pairing(&mut self) {
-        for handle in [self.mouse_borders.host.take(), self.mouse_borders.guest.take()]
-            .into_iter()
-            .flatten()
+        for handle in [
+            self.mouse_borders.host.take(),
+            self.mouse_borders.guest.take(),
+        ]
+        .into_iter()
+        .flatten()
         {
             handle.cancel();
         }
@@ -385,8 +388,16 @@ impl SettingsView {
 
     /// Called every tick: collect the outcome of a pairing that ended.
     fn poll_pairing(&mut self, cx: &mut Context<Self>) {
-        let host = self.mouse_borders.host.as_ref().map(|handle| handle.state());
-        let guest = self.mouse_borders.guest.as_ref().map(|handle| handle.state());
+        let host = self
+            .mouse_borders
+            .host
+            .as_ref()
+            .map(|handle| handle.state());
+        let guest = self
+            .mouse_borders
+            .guest
+            .as_ref()
+            .map(|handle| handle.state());
 
         if host.is_none() && guest.is_none() {
             return;
@@ -593,9 +604,8 @@ impl SettingsView {
         let enable = vec![
             {
                 // Like `toggle_row!`, and turning it on also sets up device access.
-                let control = self
-                    .switch("mb-enabled", mb.enabled)
-                    .on_click(cx.listener(|this, _event, _window, cx| {
+                let control = self.switch("mb-enabled", mb.enabled).on_click(cx.listener(
+                    |this, _event, _window, cx| {
                         let turning_on = !this.settings.mouse_borders.enabled;
 
                         this.mutate(cx, |settings| {
@@ -605,7 +615,8 @@ impl SettingsView {
                         if turning_on {
                             this.ensure_device_access(cx);
                         }
-                    }));
+                    },
+                ));
 
                 self.row(
                     "Share keyboard and mouse",
@@ -947,12 +958,10 @@ impl SettingsView {
                         .text_color(rgb(pal.text))
                         .child(code)
                 }))
-                .children((!detail.is_empty()).then(|| {
-                    div()
-                        .text_xs()
-                        .text_color(rgb(pal.text_dim))
-                        .child(detail)
-                }))
+                .children(
+                    (!detail.is_empty())
+                        .then(|| div().text_xs().text_color(rgb(pal.text_dim)).child(detail)),
+                )
                 .child(buttons)
                 .into_any_element(),
         )
@@ -1005,9 +1014,9 @@ impl SettingsView {
                         "Pair",
                         true,
                     )
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.pair_with(&device, cx)
-                    }))
+                    .on_click(
+                        cx.listener(move |this, _event, _window, cx| this.pair_with(&device, cx)),
+                    )
                     .into_any_element()
                 } else {
                     self.dim_text("Not accepting pairing").into_any_element()
@@ -1106,13 +1115,15 @@ impl SettingsView {
             .drag_over::<DraggedMachine>(move |style, _dragged, _window, _cx| {
                 style.border_color(rgb(accent)).bg(rgba(hover))
             })
-            .on_drop(cx.listener(move |this, dragged: &DraggedMachine, _window, cx| {
-                let name = dragged.name.clone();
+            .on_drop(
+                cx.listener(move |this, dragged: &DraggedMachine, _window, cx| {
+                    let name = dragged.name.clone();
 
-                this.mutate(cx, move |settings| {
-                    settings_edit::place_machine(&mut settings.mouse_borders, &name, index);
-                });
-            }));
+                    this.mutate(cx, move |settings| {
+                        settings_edit::place_machine(&mut settings.mouse_borders, &name, index);
+                    });
+                }),
+            );
 
         let Some(machine) = machine else {
             return cell.border_color(rgba(pal.divider)).into_any_element();
@@ -1174,13 +1185,11 @@ impl SettingsView {
                 .flex_col()
                 .gap_3()
                 .child(canvas)
-                .child(
-                    div().text_xs().text_color(rgb(pal.text_dim)).child(
-                        "Drag a machine to where it sits on your desk. Machines in the same row \
+                .child(div().text_xs().text_color(rgb(pal.text_dim)).child(
+                    "Drag a machine to where it sits on your desk. Machines in the same row \
                          switch left and right; machines in the same column switch up and down. \
                          Drop on another machine to swap places.",
-                    ),
-                )
+                ))
                 .into_any_element(),
         ];
 

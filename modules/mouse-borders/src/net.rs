@@ -97,7 +97,9 @@ fn masked_v6(ip: Ipv6Addr, prefix: u8) -> u128 {
 
 /// Run `attempt` again for a moment while the address is still in use. A pairing window that
 /// was just closed keeps its sockets until its thread notices, a fraction of a second later.
-pub(crate) fn retry_in_use<T>(mut attempt: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+pub(crate) fn retry_in_use<T>(
+    mut attempt: impl FnMut() -> std::io::Result<T>,
+) -> std::io::Result<T> {
     let mut tries = 0;
 
     loop {

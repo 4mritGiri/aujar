@@ -133,6 +133,8 @@ pub struct Appearance {
     pub show_icons: bool,
     /// Keyboard-hint bar at the bottom of the launcher.
     pub show_footer: bool,
+    /// Fade the launcher in when it opens and out when it closes.
+    pub animations: bool,
     /// Details panel on the right showing the selected result.
     pub show_preview: bool,
     /// Recent and frequently used items when the search box is empty.
@@ -165,6 +167,7 @@ impl Default for Appearance {
             max_results: 6,
             show_icons: true,
             show_footer: true,
+            animations: true,
             show_preview: true,
             show_recents: true,
             close_on_blur: true,
@@ -213,6 +216,8 @@ pub struct Plugins {
     /// `rdp office` starts a saved NexDesk connection. Reads only the names of NexDesk's
     /// `.rdp` files; NexDesk itself asks for the password.
     pub nexdesk: bool,
+    /// `wifi`, `bluetooth`, `display`... open that page of GNOME Settings.
+    pub settings_panels: bool,
 }
 
 impl Default for Plugins {
@@ -233,6 +238,7 @@ impl Default for Plugins {
             sports: true,
             windows: true,
             nexdesk: true,
+            settings_panels: true,
         }
     }
 }
