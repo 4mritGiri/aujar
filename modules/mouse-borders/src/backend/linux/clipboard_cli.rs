@@ -59,6 +59,23 @@ fn pick_type(types: &[&str]) -> Option<Pick> {
 
 pub struct CliClipboard {
     tool: Tool,
+    background: bool,
+}
+
+/// Whether reading the clipboard from the background is invisible in this session.
+///
+/// On Wayland the read tool (`wl-paste`) needs the compositor's data-control protocol. GNOME's
+/// compositor (Mutter) has none, so the tool maps a tiny window to get focus: every read flashes
+/// the screen, adds an "Unknown app" to the dash and takes focus from whatever you are typing in.
+/// X11, KDE and wlroots compositors are fine.
+pub(super) fn background_reads_are_invisible(
+    wayland: bool,
+    current_desktop: &str,
+    session_desktop: &str,
+) -> bool {
+    let gnome = |value: &str| value.to_ascii_lowercase().contains("gnome");
+
+    !wayland || !(gnome(current_desktop) || gnome(session_desktop))
 }
 
 impl CliClipboard {
@@ -72,7 +89,16 @@ impl CliClipboard {
 
         for (program, tool) in candidates {
             if on_path(program) {
-                return Ok(Self { tool: *tool });
+                let var = |name: &str| std::env::var(name).unwrap_or_default();
+
+                return Ok(Self {
+                    tool: *tool,
+                    background: background_reads_are_invisible(
+                        wayland,
+                        &var("XDG_CURRENT_DESKTOP"),
+                        &var("XDG_SESSION_DESKTOP"),
+                    ),
+                });
             }
         }
 
@@ -165,6 +191,10 @@ impl CliClipboard {
 
 #[async_trait]
 impl Clipboard for CliClipboard {
+    fn polls_in_background(&self) -> bool {
+        self.background
+    }
+
     async fn read(&self) -> Result<Option<ClipboardContent>> {
         let types = self.types().await.unwrap_or_default();
         let refs: Vec<&str> = types.iter().map(String::as_str).collect();
@@ -235,6 +265,23 @@ pub(super) fn on_path(program: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_reads_are_only_visible_on_gnome_wayland() {
+        // X11 is fine whatever the desktop.
+        assert!(background_reads_are_invisible(false, "GNOME", "gnome"));
+        assert!(background_reads_are_invisible(false, "", ""));
+
+        // GNOME on Wayland flashes a window per read (Ubuntu says "ubuntu:GNOME").
+        assert!(!background_reads_are_invisible(true, "GNOME", ""));
+        assert!(!background_reads_are_invisible(true, "ubuntu:GNOME", ""));
+        assert!(!background_reads_are_invisible(true, "", "gnome"));
+
+        // KDE and wlroots support data-control.
+        assert!(background_reads_are_invisible(true, "KDE", "plasma"));
+        assert!(background_reads_are_invisible(true, "sway", ""));
+        assert!(background_reads_are_invisible(true, "", ""));
+    }
 
     #[test]
     fn prefers_images_then_utf8_text() {

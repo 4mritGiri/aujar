@@ -79,6 +79,30 @@ async fn start_with_source(
     tweak: impl FnOnce(&mut MouseBorders),
     custom_source: Option<Box<dyn InputSource>>,
 ) -> Node {
+    start_full(
+        local,
+        row,
+        ports,
+        key,
+        tracks_pointer,
+        tweak,
+        custom_source,
+        MemoryClipboard::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_full(
+    local: &str,
+    row: &[&str],
+    ports: &BTreeMap<String, u16>,
+    key: &SecurityKey,
+    tracks_pointer: bool,
+    tweak: impl FnOnce(&mut MouseBorders),
+    custom_source: Option<Box<dyn InputSource>>,
+    clipboard: MemoryClipboard,
+) -> Node {
     let dir = tempfile::tempdir().unwrap();
 
     let mut settings = MouseBorders {
@@ -113,7 +137,6 @@ async fn start_with_source(
     let source: Box<dyn InputSource> = custom_source.unwrap_or_else(|| Box::new(source));
     let (sink, sink_log) = MemorySink::new();
     let desktop = MemoryDesktop::new(SCREEN, tracks_pointer);
-    let clipboard = MemoryClipboard::default();
     let locker = MemoryLocker::default();
 
     let handle = Engine::start(
@@ -591,6 +614,75 @@ async fn the_clipboard_follows_you_to_the_machine_you_enter() {
     // Copying on beta while it is controlled flows back to alpha right away.
     beta.clipboard
         .set(ClipboardContent::Text("from beta".into()));
+    eventually("clipboard back on alpha", || {
+        alpha.clipboard.get() == Some(ClipboardContent::Text("from beta".into()))
+    })
+    .await;
+
+    for node in [alpha, beta] {
+        node.handle.stop().await;
+    }
+}
+
+/// GNOME on Wayland: no background reads, so the clipboard is read when control moves.
+#[tokio::test]
+async fn the_clipboard_follows_you_without_background_reads() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let row = ["alpha", "beta"];
+    let alpha = start_full(
+        "alpha",
+        &row,
+        &ports,
+        &key,
+        true,
+        |_| {},
+        None,
+        MemoryClipboard::without_polling(),
+    )
+    .await;
+    let beta = start_full(
+        "beta",
+        &row,
+        &ports,
+        &key,
+        true,
+        |_| {},
+        None,
+        MemoryClipboard::without_polling(),
+    )
+    .await;
+    connected(&[&alpha, &beta], 1).await;
+
+    // Copied long before crossing: nobody was watching, so it is read at the crossing.
+    alpha
+        .clipboard
+        .set(ClipboardContent::Text("from alpha".into()));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(beta.clipboard.get(), None, "nothing moves before you cross");
+
+    push_right(&alpha, 500);
+    eventually("clipboard on beta", || {
+        beta.clipboard.get() == Some(ClipboardContent::Text("from alpha".into()))
+    })
+    .await;
+
+    // Copied on beta while it is controlled: with nothing watching it, it only travels
+    // when control goes back to alpha.
+    beta.clipboard
+        .set(ClipboardContent::Text("from beta".into()));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        alpha.clipboard.get(),
+        Some(ClipboardContent::Text("from alpha".into())),
+        "not sent while still controlling beta"
+    );
+
+    alpha
+        .handle
+        .request(Command::SwitchTo(Some(name("alpha"))))
+        .await
+        .unwrap();
     eventually("clipboard back on alpha", || {
         alpha.clipboard.get() == Some(ClipboardContent::Text("from beta".into()))
     })

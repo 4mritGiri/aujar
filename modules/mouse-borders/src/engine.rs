@@ -311,7 +311,11 @@ impl Engine {
             )));
         }
 
-        if let (true, Some(clipboard)) = (config.share_clipboard, clipboard.as_ref()) {
+        // Some sessions (GNOME on Wayland) show every clipboard read on screen, so there nothing
+        // watches: the clipboard is read when control moves instead (`refresh_local_clip`).
+        if let (true, Some(clipboard)) = (config.share_clipboard, clipboard.as_ref())
+            && clipboard.polls_in_background()
+        {
             tasks.push(tokio::spawn(clipboard_watcher(
                 Arc::clone(clipboard),
                 Arc::clone(&shared),
@@ -849,6 +853,11 @@ impl Actor {
                     relative: self.cfg.move_relatively,
                 },
             );
+
+            if transfer.from == local {
+                self.refresh_local_clip().await;
+            }
+
             self.push_clipboard(&transfer.to);
         }
 
@@ -1374,6 +1383,12 @@ impl Actor {
         self.audit(AuditEvent::ControlledBy { peer: None });
         self.log(format!("{from} released this machine"));
 
+        // Control goes back to `from`: where nothing watches the clipboard, this is the moment
+        // to look at what was copied here and hand it over.
+        if self.refresh_local_clip().await {
+            self.push_clipboard(from);
+        }
+
         if let Some(Some(target)) = self.pending_request.take() {
             match self.switch_to(Some(target)).await {
                 Ok(message) => self.log(message),
@@ -1421,6 +1436,31 @@ impl Actor {
         for target in targets {
             self.push_clipboard(&target);
         }
+    }
+
+    /// Where the clipboard is not watched in the background, read it now (control is moving
+    /// between machines). Returns whether it did; with a watcher `local_clip` is already current.
+    async fn refresh_local_clip(&mut self) -> bool {
+        if !self.cfg.share_clipboard {
+            return false;
+        }
+
+        let Some(clipboard) = self.clipboard.clone() else {
+            return false;
+        };
+
+        if clipboard.polls_in_background() {
+            return false;
+        }
+
+        if let Ok(Some(content)) = clipboard.read().await {
+            // A value a peer just sent us is already `local_clip`; do not treat it as news.
+            if self.applied_clip != Some(clipboard::fingerprint(&content)) {
+                self.local_clip = Some(content);
+            }
+        }
+
+        true
     }
 
     fn push_clipboard(&mut self, to: &MachineName) {

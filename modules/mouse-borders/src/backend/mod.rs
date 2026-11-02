@@ -205,6 +205,13 @@ pub trait Clipboard: Send + Sync {
         None
     }
 
+    /// Whether the engine may read the clipboard over and over from the background. `false` where
+    /// every read is visible to the user (GNOME on Wayland: the read tool flashes a window and
+    /// steals focus). The engine then reads it only when control moves between machines.
+    fn polls_in_background(&self) -> bool {
+        true
+    }
+
     async fn read(&self) -> Result<Option<ClipboardContent>>;
     async fn write(&self, content: &ClipboardContent) -> Result<()>;
 }
