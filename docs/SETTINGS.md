@@ -42,7 +42,9 @@ gains what is on the clipboard each time you open the launcher.
 PDFs get a first-page thumbnail in the preview pane (needs `pdftoppm` from poppler-utils; cached in
 `~/.cache/aujar/thumbs`).
 
-The Files button shows your recent files as a grid ("Suggestions": the ones you open most from Aujar; "Recents"); typing or a file type chip gives the detailed list, and the chip you chose appears as a token in the bar (Backspace removes it). Alt+Left / Alt+Right switch the chips under the search bar; hovering an icon-only button shows what
+Copied pictures and files copied in the file manager appear in the clipboard history as thumbnails (captured when the launcher opens; pictures are kept for this session only, in `~/.cache/aujar/clips`). The Files button shows your recent files as a grid ("Suggestions": the ones you open most from Aujar; "Recents"); typing or a file type chip gives the detailed list, and the chip you chose appears as a token in the bar (Backspace removes it). Videos, PDFs and documents get a picture in the preview and in the Files grid when the tools for it are
+installed: `ffmpegthumbnailer` or `ffmpeg` for videos, `pdftoppm` for PDFs, and the desktop's own
+`*.thumbnailer` programs for documents. Alt+Left / Alt+Right switch the chips under the search bar; hovering an icon-only button shows what
 it does.
 
 The "..." button in the search bar offers the grid/list switch for Applications, **Tips & shortcuts**

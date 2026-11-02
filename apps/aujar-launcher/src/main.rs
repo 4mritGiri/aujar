@@ -86,6 +86,13 @@ enum ColorAction {
         /// A hex color such as `#FF8800` or `f80`.
         value: String,
     },
+
+    /// Register the screen picker shortcut in GNOME Keyboard Shortcuts.
+    ShortcutInstall {
+        /// Modifier names followed by one key, e.g. SUPER+SHIFT+C.
+        #[arg(long, default_value = "SUPER+SHIFT+C")]
+        keys: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -363,7 +370,23 @@ async fn main() -> Result<()> {
 
         Command::Color { action } => match action {
             ColorAction::Pick => match send(&resolve_socket(), Request::PickColor).await? {
-                Response::Color(color) => println!("{}\n{}\n{}", color.hex, color.rgb, color.hsl),
+                Response::Color(color) => {
+                    let settings = aujar_config::Settings::load_or_default();
+                    let picked = aujar_color::Rgb::parse_hex(&color.hex)
+                        .unwrap_or(aujar_color::Rgb::new(0, 0, 0));
+                    let format = settings.color_picker.formats.iter().find(|format| {
+                        format.enabled
+                            && format
+                                .name
+                                .eq_ignore_ascii_case(&settings.color_picker.default_format)
+                    });
+                    let copied = format
+                        .map_or_else(|| picked.to_hex(), |format| picked.format(&format.pattern));
+                    if let Err(error) = copy_color_to_clipboard(&copied) {
+                        eprintln!("Could not copy color to clipboard: {error}");
+                    }
+                    println!("{}\n{}\n{}", color.hex, color.rgb, color.hsl);
+                }
                 Response::Error(message) => anyhow::bail!(message),
                 other => println!("{other:?}"),
             },
@@ -378,6 +401,9 @@ async fn main() -> Result<()> {
                     color.to_rgb_string(),
                     color.to_hsl_string()
                 );
+            }
+            ColorAction::ShortcutInstall { keys } => {
+                shortcut::install_color_picker(&keys)?;
             }
         },
 
@@ -453,6 +479,46 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn copy_color_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    #[cfg(target_os = "linux")]
+    let candidates: &[(&str, &[&str])] = &[
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--input"]),
+    ];
+    #[cfg(not(target_os = "linux"))]
+    let candidates: &[(&str, &[&str])] = &[];
+
+    for (program, args) in candidates {
+        let mut child = match Command::new(program)
+            .args(*args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(text.as_bytes())
+                .map_err(|error| error.to_string())?;
+        }
+        return child
+            .wait()
+            .map_err(|error| error.to_string())?
+            .success()
+            .then_some(())
+            .ok_or_else(|| format!("{program} exited unsuccessfully"));
+    }
+    Err("install wl-clipboard, xclip or xsel".to_owned())
 }
 
 async fn run_daemon(socket: PathBuf) -> Result<()> {

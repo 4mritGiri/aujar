@@ -14,6 +14,7 @@ description = "Aujar launcher UI (GPUI spike)"
 anyhow = "1"
 async-channel = "2"
 aujar-config = { workspace = true }
+aujar-color = { path = "../../modules/color", version = "0.1.1" }
 aujar-ipc = { workspace = true }
 aujar-mouse-borders = { path = "../../modules/mouse-borders", version = "0.1.1", default-features = false }
 # GPUI snapshot of Zed `main` (zed@5b055fa), published to crates.io by a GPUI contributor

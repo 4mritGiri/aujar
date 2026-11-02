@@ -495,11 +495,98 @@ impl Default for MouseBorders {
 #[serde(default)]
 pub struct Settings {
     pub appearance: Appearance,
+    pub color_picker: ColorPicker,
     pub plugins: Plugins,
     pub files: Files,
     pub web: Web,
     pub weather: Weather,
     pub mouse_borders: MouseBorders,
+}
+
+/// Preferences for the screen color picker and its editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColorPicker {
+    pub enabled: bool,
+    pub shortcut: String,
+    pub activation_behavior: ColorPickerActivation,
+    pub default_format: String,
+    pub show_color_name: bool,
+    pub formats: Vec<ColorFormat>,
+}
+
+impl Default for ColorPicker {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            shortcut: "SUPER+SHIFT+C".into(),
+            activation_behavior: ColorPickerActivation::OpenEditor,
+            default_format: "HEX".into(),
+            show_color_name: true,
+            formats: vec![
+                ColorFormat {
+                    name: "HEX".into(),
+                    pattern: "{hex}".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "RGB".into(),
+                    pattern: "rgb({r}, {g}, {b})".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "HSL".into(),
+                    pattern: "hsl({h}, {s}%, {l}%)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "HSV".into(),
+                    pattern: "hsv({h}, {s}%, {v}%)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "CMYK".into(),
+                    pattern: "cmyk({c}%, {m}%, {y}%, {k}%)".into(),
+                    enabled: true,
+                },
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorPickerActivation {
+    OpenEditor,
+    PickColorFirst,
+}
+
+impl ColorPickerActivation {
+    pub const ALL: [Self; 2] = [Self::OpenEditor, Self::PickColorFirst];
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::OpenEditor => "Open editor",
+            Self::PickColorFirst => "Pick a color first",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColorFormat {
+    pub name: String,
+    pub pattern: String,
+    pub enabled: bool,
+}
+
+impl Default for ColorFormat {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            pattern: "{hex}".into(),
+            enabled: true,
+        }
+    }
 }
 
 impl Settings {
@@ -548,6 +635,47 @@ impl Settings {
         self.appearance.opacity = self.appearance.opacity.clamp(60, 100);
         self.appearance.corner_radius = self.appearance.corner_radius.clamp(0, 28);
         self.files.max_depth = self.files.max_depth.clamp(1, 8);
+        // Migrate the original default before the shortcut was switched to Super+Shift+C.
+        if self
+            .color_picker
+            .shortcut
+            .eq_ignore_ascii_case("CTRL+SHIFT+C")
+        {
+            self.color_picker.shortcut = "SUPER+SHIFT+C".into();
+        }
+
+        self.color_picker.formats.truncate(24);
+        self.color_picker.formats.retain(|format| {
+            !format.name.trim().is_empty()
+                && format.name.len() <= 24
+                && !format.pattern.trim().is_empty()
+                && format.pattern.len() <= 120
+        });
+        if self.color_picker.formats.is_empty() {
+            self.color_picker.formats = ColorPicker::default().formats;
+        }
+        if !self
+            .color_picker
+            .formats
+            .iter()
+            .any(|format| format.enabled)
+        {
+            self.color_picker.formats[0].enabled = true;
+        }
+        if !self.color_picker.formats.iter().any(|format| {
+            format.enabled
+                && format
+                    .name
+                    .eq_ignore_ascii_case(&self.color_picker.default_format)
+        }) {
+            self.color_picker.default_format = self
+                .color_picker
+                .formats
+                .iter()
+                .find(|format| format.enabled)
+                .map(|format| format.name.clone())
+                .unwrap_or_else(|| self.color_picker.formats[0].name.clone());
+        }
 
         let mb = &mut self.mouse_borders;
         if mb.port == 0 {

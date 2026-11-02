@@ -4,9 +4,9 @@ mod settings;
 
 pub use history::{History, HistoryEntry};
 pub use settings::{
-    Accent, Appearance, EasyMouse, Engine, Files, LauncherPosition, Machine, MatrixMode,
-    MouseBorders, MouseBordersHotkeys, Plugins, Settings, SwitchKeys, Theme, Weather, Web,
-    WebShortcut,
+    Accent, Appearance, ColorFormat, ColorPicker, ColorPickerActivation, EasyMouse, Engine, Files,
+    LauncherPosition, Machine, MatrixMode, MouseBorders, MouseBordersHotkeys, Plugins, Settings,
+    SwitchKeys, Theme, Weather, Web, WebShortcut,
 };
 
 use serde::Deserialize;

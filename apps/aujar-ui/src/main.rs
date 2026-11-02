@@ -11,9 +11,11 @@
 //! events only (no IME / composition yet).
 
 mod assets;
+mod clips;
 mod model;
 mod settings_view;
 mod theme;
+mod thumbs;
 
 use anyhow::{Result, bail};
 use aujar_config::{History, LauncherPosition, Settings};
@@ -22,11 +24,11 @@ use aujar_ipc::{
     subscribe,
 };
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, AnyView, App, Bounds, ClipboardItem, Context,
-    ExternalDragPayload, FileDragPaths, FocusHandle, Focusable, FontWeight, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ScrollHandle, SharedString, TitlebarOptions,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowHandle,
-    WindowOptions, div, img, point, prelude::*, px, rgb, rgba, size, svg,
+    Animation, AnimationExt as _, AnyElement, AnyView, App, Bounds, ClipboardEntry, ClipboardItem,
+    Context, ExternalDragPayload, FileDragPaths, FocusHandle, Focusable, FontWeight, ImageFormat,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ScrollHandle, SharedString,
+    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowHandle, WindowOptions, div, img, point, prelude::*, px, rgb, rgba, size, svg,
 };
 use gpui_platform::application;
 use model::{
@@ -91,9 +93,11 @@ enum UiMessage {
     Clipboard(String),
     /// "Clear history" in the clipboard view.
     ClearClips,
+    /// "Remove from History" on one clipboard entry (by its text).
+    RemoveClip(String),
     /// Recently used files (file history) for the empty launcher.
     RecentFiles(Vec<SearchHit>),
-    /// A PDF thumbnail finished rendering; redraw the preview.
+    /// A thumbnail (PDF page, video frame, ...) was made; redraw the preview and the tiles.
     ThumbReady,
 }
 
@@ -108,7 +112,7 @@ enum UiRequest {
     OpenSettings,
     /// Ask the daemon for the file history (`kind:recent`).
     Recents,
-    /// Render the first page of a PDF into the thumbnail cache.
+    /// Make the picture for a PDF, video or document in the thumbnail cache.
     Thumbnail(PathBuf),
 }
 
@@ -184,7 +188,8 @@ struct Preview {
     /// First lines of a text file, or the full text of a clipboard entry.
     text: Option<String>,
     image: Option<PathBuf>,
-    /// A PDF whose thumbnail is not cached yet; the view asks the bridge to render it.
+    /// A PDF, video or document whose picture is not cached yet; the view asks the bridge to
+    /// make it.
     thumb_request: Option<PathBuf>,
 }
 
@@ -433,12 +438,76 @@ fn describe_files(hits: &mut [SearchHit]) {
     }
 }
 
-/// One clipboard history entry.
-#[derive(Debug, Clone)]
+/// A copied picture: the clipboard item itself (to copy it back) and the file it was saved as
+/// (to show it).
+#[derive(Clone)]
+struct ClipImage {
+    item: ClipboardItem,
+    file: PathBuf,
+    extension: &'static str,
+    size: u64,
+}
+
+/// One clipboard history entry. A picture has its path as `text`, so the same picture copied
+/// twice is one entry.
+#[derive(Clone)]
 struct ClipEntry {
     text: String,
     /// Unix time in seconds.
     copied_at: u64,
+    image: Option<ClipImage>,
+}
+
+/// What a history entry shows as.
+enum ClipView<'a> {
+    Text,
+    Image(&'a ClipImage),
+    /// Files copied in the file manager.
+    Files(Vec<PathBuf>),
+}
+
+fn clip_view(clip: &ClipEntry) -> ClipView<'_> {
+    if let Some(image) = &clip.image {
+        return ClipView::Image(image);
+    }
+
+    let files = clips::clip_files(&clip.text);
+
+    if files.is_empty() {
+        ClipView::Text
+    } else {
+        ClipView::Files(files)
+    }
+}
+
+/// Open a file or folder with the desktop's default program.
+fn open_path(path: &Path) {
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+
+        command.args(["/C", "start", ""]);
+        command
+    };
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut command = Command::new("xdg-open");
+
+    if let Ok(mut child) = command
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        // Reaped on a thread so no zombie is left behind.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 fn now_secs() -> u64 {
@@ -617,12 +686,13 @@ fn build_preview(hit: &SearchHit, clips: &[ClipEntry]) -> Preview {
                         .map(str::to_ascii_lowercase)
                         .unwrap_or_default();
 
-                    if extension == "pdf" {
+                    if thumbs::wanted(&extension) {
+                        // PDFs, videos and documents get a picture made (and cached) for them.
                         let png = thumb_prefix(&path).with_extension("png");
 
                         if png.is_file() {
                             preview.image = Some(png);
-                        } else if on_path("pdftoppm") {
+                        } else if thumbs::available(&extension) {
                             preview.thumb_request = Some(path.clone());
                         }
                     } else if IMAGE_EXTENSIONS.contains(&extension.as_str())
@@ -654,12 +724,43 @@ fn build_preview(hit: &SearchHit, clips: &[ClipEntry]) -> Preview {
                 .and_then(|index| index.parse::<usize>().ok())
                 .and_then(|index| clips.get(index));
 
-            if let Some(clip) = clip {
-                preview.rows.push((
-                    "Length",
-                    format!("{} characters", clip.text.chars().count()),
-                ));
-                preview.text = Some(first_chars(&clip.text, 700));
+            match clip.map(|clip| (clip, clip_view(clip))) {
+                // A copied picture: the picture, its type and size.
+                Some((_, ClipView::Image(image))) => {
+                    preview.badge = format!("{} image", clips::image_label(image.extension));
+                    preview.image = Some(image.file.clone());
+                    preview.rows.push(("Size", human_size(image.size)));
+                }
+                // Copied files: what the first of them looks like in the file manager.
+                Some((_, ClipView::Files(files))) => {
+                    let file = SearchHit {
+                        id: format!("files:open:{}", files[0].display()),
+                        title: files[0]
+                            .file_name()
+                            .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+                        subtitle: None,
+                        kind: if files[0].is_dir() { "folder" } else { "file" }.to_owned(),
+                        score: 0,
+                        icon: None,
+                        detail: None,
+                    };
+
+                    preview = build_preview(&file, &[]);
+
+                    if files.len() > 1 {
+                        preview
+                            .rows
+                            .insert(0, ("Copied", format!("{} items", files.len())));
+                    }
+                }
+                Some((clip, ClipView::Text)) => {
+                    preview.rows.push((
+                        "Length",
+                        format!("{} characters", clip.text.chars().count()),
+                    ));
+                    preview.text = Some(first_chars(&clip.text, 700));
+                }
+                None => {}
             }
         }
         "calculation" => {
@@ -728,8 +829,8 @@ static UI_SENDER: OnceLock<async_channel::Sender<UiMessage>> = OnceLock::new();
 /// True while a launcher window exists (the clipboard watcher pauses then: `wl-paste` can steal
 /// focus on GNOME/Wayland, which made the launcher close itself right after opening).
 static LAUNCHER_ALIVE: AtomicBool = AtomicBool::new(false);
-/// Until this time (ms since the epoch) focus loss is expected and must not close the launcher:
-/// set while the user drags the launcher around, and just after a background clipboard read.
+/// Until this time (ms since the epoch) focus loss may be caused by the compositor starting a
+/// window move. The launcher is never reactivated during this interval; that steals user input.
 static BLUR_IGNORE_UNTIL: AtomicU64 = AtomicU64::new(0);
 
 /// Diagnostics on stderr when `AUJAR_DEBUG` is set (run `AUJAR_DEBUG=1 aujar-ui`).
@@ -1631,6 +1732,10 @@ impl LauncherView {
 
         self.suggested = suggested;
 
+        if files_grid {
+            self.request_grid_thumbs(&hits);
+        }
+
         // Where each result sits among the list's children. In the list, a header precedes
         // each section; in the grid, one header precedes rows of `GRID_COLS` tiles.
         let mut row_index = Vec::with_capacity(sections.len());
@@ -1701,7 +1806,35 @@ impl LauncherView {
             .as_mut()
             .and_then(|preview| preview.thumb_request.take())
         {
-            let _ = self.requests.try_send(UiRequest::Thumbnail(path));
+            self.request_thumb(&path);
+        }
+    }
+
+    /// Ask for the picture of a file, unless it is already being made or failed before.
+    fn request_thumb(&self, path: &Path) {
+        if thumbs::begin(path) {
+            let _ = self
+                .requests
+                .try_send(UiRequest::Thumbnail(path.to_path_buf()));
+        }
+    }
+
+    /// Ask for the pictures of the Files grid's tiles (PDFs, videos, documents) that are not
+    /// cached yet. The pictures are made one at a time and the tiles redraw as they appear.
+    fn request_grid_thumbs(&self, hits: &[SearchHit]) {
+        for hit in hits.iter().filter(|hit| hit.kind == "file").take(30) {
+            let Some(path) = hit.id.strip_prefix("files:open:").map(Path::new) else {
+                continue;
+            };
+
+            let extension = thumbs::extension_of(path);
+
+            if thumbs::wanted(&extension)
+                && thumbs::available(&extension)
+                && !thumb_prefix(path).with_extension("png").is_file()
+            {
+                self.request_thumb(path);
+            }
         }
     }
 
@@ -1759,6 +1892,157 @@ impl LauncherView {
         self.install(hits, sections);
     }
 
+    /// The row of one history entry: text, a link, a picture, or files copied in the file
+    /// manager (with a thumbnail where there is one).
+    fn clip_hit(
+        &self,
+        index: usize,
+        clip: &ClipEntry,
+        now: u64,
+        now_stamp: Option<Stamp>,
+    ) -> SearchHit {
+        let age = Duration::from_secs(now.saturating_sub(clip.copied_at));
+        let copied = format!(
+            "Copied {}",
+            copied_text(now_stamp, local_stamp(clip.copied_at), age)
+        );
+
+        let mut hit = SearchHit {
+            id: format!("clip:{index}"),
+            title: String::new(),
+            subtitle: None,
+            kind: "clip".to_owned(),
+            score: 0,
+            icon: None,
+            detail: None,
+        };
+
+        match clip_view(clip) {
+            // "PNG image · 87.1 KB · Copied 11:56"
+            ClipView::Image(image) => {
+                hit.title = "Image".to_owned();
+                hit.subtitle = Some(format!(
+                    "{} image \u{b7} {} \u{b7} {copied}",
+                    clips::image_label(image.extension),
+                    human_size(image.size)
+                ));
+                hit.icon = Some(image.file.to_string_lossy().into_owned());
+                hit.detail = Some("image".to_owned());
+            }
+            // "EPUB publication · 1.2 MB · Copied 11:58"
+            ClipView::Files(files) => {
+                let first = &files[0];
+                let is_dir = first.is_dir();
+                let name = first.file_name().map_or_else(
+                    || first.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+
+                hit.title = match files.len() {
+                    1 => first_chars(&name, 90),
+                    more => format!("{} and {} more", first_chars(&name, 60), more - 1),
+                };
+
+                let kind = if files.len() == 1 {
+                    file_kind(first, is_dir)
+                } else {
+                    format!("{} items", files.len())
+                };
+
+                let size = (files.len() == 1 && !is_dir)
+                    .then(|| fs::metadata(first).ok())
+                    .flatten()
+                    .map(|meta| human_size(meta.len()));
+
+                hit.subtitle = Some(
+                    [Some(kind), size, Some(copied)]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" \u{b7} "),
+                );
+                hit.icon = self.file_picture(first);
+                hit.detail = Some("file".to_owned());
+            }
+            ClipView::Text => {
+                let first = clip.text.lines().next().unwrap_or_default().trim();
+                let is_url = is_web_url(first) && !first.contains(char::is_whitespace);
+
+                // "URL · en.wikipedia.org · Copied 4:17 PM", "Text · Copied 4:19 PM".
+                hit.subtitle = Some(match (is_url, url_host(first)) {
+                    (true, Some(host)) => format!("URL \u{b7} {host} \u{b7} {copied}"),
+                    (true, None) => format!("URL \u{b7} {copied}"),
+                    (false, _) => format!("Text \u{b7} {copied}"),
+                });
+                hit.title = first_chars(first, 90);
+            }
+        }
+
+        hit
+    }
+
+    /// A picture to show for a file: the file itself when it is a picture, else the cached
+    /// preview of a PDF, video or document (asking for it to be made when it is not there yet).
+    fn file_picture(&self, path: &Path) -> Option<String> {
+        if !self.settings.appearance.show_icons || path.is_dir() {
+            return None;
+        }
+
+        let name = path.file_name()?.to_string_lossy();
+
+        if is_image_name(&name) {
+            return Some(path.to_string_lossy().into_owned());
+        }
+
+        let extension = thumbs::extension_of(path);
+
+        if !thumbs::wanted(&extension) {
+            return None;
+        }
+
+        let png = thumb_prefix(path).with_extension("png");
+
+        if png.is_file() {
+            return Some(png.to_string_lossy().into_owned());
+        }
+
+        if thumbs::available(&extension) {
+            self.request_thumb(path);
+        }
+
+        None
+    }
+
+    /// What goes on the clipboard for a history row: the picture itself for a picture, else text.
+    fn clipboard_item_for(&self, hit: &SearchHit) -> ClipboardItem {
+        let image = hit
+            .id
+            .strip_prefix("clip:")
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| self.clips.get(index))
+            .and_then(|clip| clip.image.as_ref());
+
+        match image {
+            Some(image) => image.item.clone(),
+            None => ClipboardItem::new_string(self.copy_text(hit)),
+        }
+    }
+
+    /// The file a history row stands for: a saved picture, or the first of the copied files.
+    fn clip_path(&self, hit: &SearchHit) -> Option<PathBuf> {
+        let clip = hit
+            .id
+            .strip_prefix("clip:")
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| self.clips.get(index))?;
+
+        match clip_view(clip) {
+            ClipView::Image(image) => Some(image.file.clone()),
+            ClipView::Files(files) => files.into_iter().next(),
+            ClipView::Text => None,
+        }
+    }
+
     fn show_clips(&mut self, filter: &str) {
         let filter = filter.to_lowercase();
         let now = now_secs();
@@ -1770,32 +2054,7 @@ impl LauncherView {
             .enumerate()
             .filter(|(_, clip)| filter.is_empty() || clip.text.to_lowercase().contains(&filter))
             .take(20)
-            .map(|(index, clip)| {
-                let first = clip.text.lines().next().unwrap_or_default().trim();
-                let is_url = is_web_url(first) && !first.contains(char::is_whitespace);
-                let age = Duration::from_secs(now.saturating_sub(clip.copied_at));
-                let copied = format!(
-                    "Copied {}",
-                    copied_text(now_stamp, local_stamp(clip.copied_at), age)
-                );
-
-                // "URL · en.wikipedia.org · Copied 4:17 PM", "Text · Copied 4:19 PM".
-                let subtitle = match (is_url, url_host(first)) {
-                    (true, Some(host)) => format!("URL \u{b7} {host} \u{b7} {copied}"),
-                    (true, None) => format!("URL \u{b7} {copied}"),
-                    (false, _) => format!("Text \u{b7} {copied}"),
-                };
-
-                SearchHit {
-                    id: format!("clip:{index}"),
-                    title: first_chars(first, 90),
-                    subtitle: Some(subtitle),
-                    kind: "clip".to_owned(),
-                    score: 0,
-                    icon: None,
-                    detail: None,
-                }
-            })
+            .map(|(index, clip)| self.clip_hit(index, clip, now, now_stamp))
             .collect();
 
         if self.clips.is_empty() {
@@ -2118,11 +2377,27 @@ impl LauncherView {
             Action::Primary => self.launch_selected(false, window, cx),
             Action::Reveal => self.launch_selected(true, window, cx),
             Action::Copy => {
-                cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(&hit)));
+                cx.write_to_clipboard(self.clipboard_item_for(&hit));
                 self.close(window, cx);
             }
             Action::LookUp => self.look_up(cx),
             Action::WebSearch => self.open_web_search(window, cx),
+            Action::OpenLink => {
+                let text = self.copy_text(&hit);
+                let first = text.lines().next().unwrap_or_default().trim();
+
+                if is_web_url(first) {
+                    cx.open_url(first);
+                    self.close(window, cx);
+                }
+            }
+            Action::RemoveClip => self.remove_clip(&hit, cx),
+            Action::OpenClip => {
+                if let Some(path) = self.clip_path(&hit) {
+                    open_path(&path);
+                    self.close(window, cx);
+                }
+            }
         }
 
         cx.notify();
@@ -2321,7 +2596,7 @@ impl LauncherView {
                             self.selected_text().to_owned(),
                         ));
                     } else if let Some(hit) = self.results.get(self.selected) {
-                        cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(hit)));
+                        cx.write_to_clipboard(self.clipboard_item_for(hit));
                         self.close(window, cx);
                     }
                 }
@@ -2494,9 +2769,11 @@ impl LauncherView {
             "calculation" => {
                 cx.write_to_clipboard(ClipboardItem::new_string(hit.title.clone()));
             }
-            "clip" => {
-                cx.write_to_clipboard(ClipboardItem::new_string(self.copy_text(&hit)));
-            }
+            "clip" => match (reveal, self.clip_path(&hit)) {
+                // "Show in Folder" on a picture or copied files.
+                (true, Some(path)) => open_path(path.parent().unwrap_or(&path)),
+                _ => cx.write_to_clipboard(self.clipboard_item_for(&hit)),
+            },
             "web" => {
                 if let Some(url) = hit.id.strip_prefix("url:").filter(|url| is_web_url(url)) {
                     cx.open_url(url);
@@ -2637,6 +2914,7 @@ impl LauncherView {
                     let at = (f32::from(event.position.x), f32::from(event.position.y));
 
                     this.open_menu(index, Some(at), cx);
+                    cx.stop_propagation();
                 }),
             );
 
@@ -3953,6 +4231,7 @@ impl LauncherView {
                     let at = (f32::from(event.position.x), f32::from(event.position.y));
 
                     this.open_menu(index, Some(at), cx);
+                    cx.stop_propagation();
                 }),
             )
             .into_any_element()
@@ -3968,6 +4247,23 @@ impl LauncherView {
                     .flex_shrink_0()
                     .into_any_element();
             }
+        }
+
+        // A PDF, video or document whose picture has been made shows it.
+        let made = Some(hit)
+            .filter(|hit| self.settings.appearance.show_icons && hit.kind == "file")
+            .and_then(|hit| hit.id.strip_prefix("files:open:"))
+            .map(Path::new)
+            .filter(|path| thumbs::wanted(&thumbs::extension_of(path)))
+            .map(|path| thumb_prefix(path).with_extension("png"))
+            .filter(|png| png.is_file());
+
+        if let Some(png) = made {
+            return img(png)
+                .size(px(52.))
+                .rounded_md()
+                .flex_shrink_0()
+                .into_any_element();
         }
 
         self.leading(
@@ -4523,6 +4819,32 @@ impl LauncherView {
             .into_any_element()
     }
 
+    /// "Remove from History" on one clipboard entry, here and in the app.
+    fn remove_clip(&mut self, hit: &SearchHit, cx: &mut Context<Self>) {
+        let Some(index) = hit
+            .id
+            .strip_prefix("clip:")
+            .and_then(|index| index.parse::<usize>().ok())
+            .filter(|index| *index < self.clips.len())
+        else {
+            return;
+        };
+
+        let removed = self.clips.remove(index);
+
+        if let Some(sender) = UI_SENDER.get() {
+            let _ = sender.try_send(UiMessage::RemoveClip(removed.text));
+        }
+
+        // The list is rebuilt without it; the selection stays near where it was.
+        let keep = self.selected;
+
+        self.request_search();
+        self.selected = keep.min(self.results.len().saturating_sub(1));
+        self.refresh_preview();
+        cx.notify();
+    }
+
     /// "Clear history" in the clipboard view: forget every entry, here and in the app.
     fn clear_clips(&mut self, cx: &mut Context<Self>) {
         self.clips.clear();
@@ -5019,8 +5341,8 @@ fn open_launcher(
     // Best effort: whatever is on the clipboard now joins the history (on GNOME/Wayland the
     // background watcher cannot see the clipboard, so this is how entries get captured).
     if settings.plugins.clipboard {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            push_clip(clips, text);
+        if let Some(item) = cx.read_from_clipboard() {
+            capture_clip(clips, item);
         }
     }
 
@@ -5033,14 +5355,13 @@ fn open_launcher(
     DRAG_ACTIVE.store(false, Ordering::SeqCst);
     LAUNCHER_GENERATION.fetch_add(1, Ordering::SeqCst);
     LAUNCHER_ALIVE.store(true, Ordering::SeqCst);
-    // Opening can shuffle focus around, e.g. a clipboard poll that was in flight.
-    ignore_blur_for(Duration::from_millis(800));
-
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,
         window_background: background_for(&settings),
-        app_id: Some("aujar-launcher".into()),
+        // Match packaging/desktop/aujar.desktop so GNOME groups this surface under Aujar
+        // instead of showing an unassociated "Unknown app" dash entry.
+        app_id: Some("aujar".into()),
         ..Default::default()
     };
 
@@ -5077,28 +5398,44 @@ fn open_launcher(
         // compositors (especially Wayland) produce while a new window is being mapped.
         if close_on_blur {
             let opened = Instant::now();
-
             view.update(cx, |_view, cx| {
                 cx.observe_window_activation(window, move |this, window, cx| {
                     if window.is_window_active() {
-                        // Focus is back (drag finished, background read done): resume normal
-                        // click-away behaviour shortly after.
-                        ignore_blur_for(Duration::from_millis(300));
                         return;
                     }
 
-                    if opened.elapsed() <= Duration::from_millis(500)
-                        || DRAG_ACTIVE.load(Ordering::SeqCst)
-                    {
+                    if DRAG_ACTIVE.load(Ordering::SeqCst) {
                         return;
                     }
 
                     debug("window lost focus");
 
-                    if now_ms() < BLUR_IGNORE_UNTIL.load(Ordering::SeqCst) {
-                        debug("  ignored (expected focus loss)");
-                        // Expected focus loss (window drag / clipboard poll): take focus back.
-                        window.activate_window();
+                    let now = now_ms();
+                    let startup_grace = Duration::from_millis(500).saturating_sub(opened.elapsed());
+                    let move_grace = Duration::from_millis(
+                        BLUR_IGNORE_UNTIL.load(Ordering::SeqCst).saturating_sub(now),
+                    );
+                    let grace = startup_grace.max(move_grace);
+                    if !grace.is_zero() {
+                        debug("  delaying close during startup or compositor move");
+                        // Check again after the grace period. Ignore expected compositor focus
+                        // churn, but never reactivate the launcher over the app the user chose.
+                        let handle = window.window_handle();
+                        let generation = LAUNCHER_GENERATION.load(Ordering::SeqCst);
+                        cx.spawn(async move |_view, cx| {
+                            cx.background_executor().timer(grace).await;
+                            let _ = cx.update(|cx| {
+                                handle.update(cx, |_, window, _| {
+                                    if generation == LAUNCHER_GENERATION.load(Ordering::SeqCst)
+                                        && !window.is_window_active()
+                                        && !DRAG_ACTIVE.load(Ordering::SeqCst)
+                                    {
+                                        window.remove_window();
+                                    }
+                                })
+                            });
+                        })
+                        .detach();
                         return;
                     }
 
@@ -5130,7 +5467,7 @@ fn open_settings(cx: &mut App) -> Option<WindowHandle<SettingsView>> {
         window_decorations: Some(WindowDecorations::Client),
         window_background: background_for(&settings),
         window_min_size: Some(size(px(720.), px(520.))),
-        app_id: Some("aujar-settings".into()),
+        app_id: Some("aujar".into()),
         ..Default::default()
     };
 
@@ -5160,9 +5497,90 @@ fn push_clip(clips: &mut Vec<ClipEntry>, text: String) {
         ClipEntry {
             text,
             copied_at: now_secs(),
+            image: None,
         },
     );
-    clips.truncate(50);
+    trim_clips(clips);
+}
+
+/// Forget an entry's saved picture, if it has one.
+fn forget_clip(clip: &ClipEntry) {
+    if let Some(image) = &clip.image {
+        let _ = fs::remove_file(&image.file);
+    }
+}
+
+/// At most 50 entries, of which at most `clips::MAX_IMAGES` are pictures; the oldest go first.
+fn trim_clips(clips: &mut Vec<ClipEntry>) {
+    let mut images = 0;
+
+    for clip in std::mem::take(clips) {
+        let too_many_images = clip.image.is_some() && {
+            images += 1;
+            images > clips::MAX_IMAGES
+        };
+
+        if clips.len() >= 50 || too_many_images {
+            forget_clip(&clip);
+        } else {
+            clips.push(clip);
+        }
+    }
+}
+
+/// A picture on the clipboard joins the history, saved as a file for its thumbnail.
+fn push_clip_image(clips: &mut Vec<ClipEntry>, item: ClipboardItem) {
+    let picture = item.entries().iter().find_map(|entry| match entry {
+        ClipboardEntry::Image(image) => {
+            let extension = match image.format {
+                ImageFormat::Png => "png",
+                ImageFormat::Jpeg => "jpg",
+                ImageFormat::Webp => "webp",
+                ImageFormat::Gif => "gif",
+                ImageFormat::Bmp => "bmp",
+                _ => return None,
+            };
+
+            let big = image.bytes.is_empty() || image.bytes.len() > clips::MAX_IMAGE_BYTES;
+            let file = clips::image_path(&image.bytes, extension);
+
+            (!big && clips::save_image(&file, &image.bytes))
+                .then(|| (extension, file, image.bytes.len() as u64))
+        }
+        _ => None,
+    });
+
+    let Some((extension, file, size)) = picture else {
+        return;
+    };
+
+    let text = file.to_string_lossy().into_owned();
+
+    // The same picture copied again moves to the top; its file is the same one.
+    clips.retain(|existing| existing.text != text);
+    clips.insert(
+        0,
+        ClipEntry {
+            text,
+            copied_at: now_secs(),
+            image: Some(ClipImage {
+                item,
+                file,
+                extension,
+                size,
+            }),
+        },
+    );
+    trim_clips(clips);
+}
+
+/// Whatever is on the clipboard joins the history: text (or the paths of copied files), else a
+/// picture.
+fn capture_clip(clips: &mut Vec<ClipEntry>, item: ClipboardItem) {
+    match item.text().filter(|text| !text.trim().is_empty()) {
+        Some(text) => push_clip(clips, text),
+        None => push_clip_image(clips, item),
+    }
 }
 
 // ---- Window bookkeeping -----------------------------------------------------------------
@@ -5262,7 +5680,19 @@ fn handle_message(
             }
         }
         UiMessage::Clipboard(text) => push_clip(&mut state.clips, text),
-        UiMessage::ClearClips => state.clips.clear(),
+        UiMessage::ClearClips => {
+            state.clips.iter().for_each(forget_clip);
+            state.clips.clear();
+        }
+        UiMessage::RemoveClip(text) => state.clips.retain(|clip| {
+            let keep = clip.text != text;
+
+            if !keep {
+                forget_clip(clip);
+            }
+
+            keep
+        }),
         UiMessage::RecentFiles(files) => {
             if let Some(handle) = state.launcher.as_ref() {
                 let _ = handle.update(cx, |view, _, cx| {
@@ -5417,9 +5847,14 @@ async fn serve_requests(
             UiRequest::Thumbnail(path) => {
                 let tx = tx.clone();
 
-                // pdftoppm can take a moment; keep it off the async runtime's threads.
+                // pdftoppm, ffmpeg and the like take a moment; keep them off the async runtime's
+                // threads. `thumbs::make` makes one picture at a time.
                 tokio::task::spawn_blocking(move || {
-                    if generate_pdf_thumb(&path) {
+                    let made = thumbs::make(&path);
+
+                    thumbs::finish(&path, made);
+
+                    if made {
                         let _ = tx.send_blocking(UiMessage::ThumbReady);
                     }
                 });
@@ -5518,8 +5953,6 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
                 continue;
             }
 
-            ignore_blur_for(Duration::from_millis(1500));
-
             match Command::new(program).args(args).output() {
                 Ok(output) if output.status.success() => {
                     failures = 0;
@@ -5589,6 +6022,9 @@ fn main() {
 
     let (message_tx, message_rx) = async_channel::unbounded::<UiMessage>();
     let (request_tx, request_rx) = async_channel::unbounded::<UiRequest>();
+
+    // The history lives in memory only, so pictures saved by an earlier run belong to nobody.
+    clips::clear_saved();
 
     spawn_clipboard_watcher(message_tx.clone());
     spawn_bridge(socket_path(), message_tx, request_rx);
@@ -5696,10 +6132,12 @@ mod tests {
             ClipEntry {
                 text: "two".into(),
                 copied_at: 200,
+                image: None,
             },
             ClipEntry {
                 text: "one".into(),
                 copied_at: 100,
+                image: None,
             },
         ];
 

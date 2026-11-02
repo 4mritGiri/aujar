@@ -107,8 +107,59 @@ jobs:
           name: mwb-${{ matrix.platform }}-${{ matrix.arch }}
           path: dist/*
 
+  # NexDesk, the remote-access suite pinned as a submodule (integrations/nexdesk), built with its
+  # own packaging so `aujar nexdesk open` and `rdp <name>` have something to start. Its version
+  # is its own, not Aujar's, so the files carry NexDesk's version number.
+  nexdesk:
+    name: nexdesk (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: integrations/nexdesk -> target
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config clang libclang-dev cmake \
+            libpipewire-0.3-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxi-dev libfontconfig1-dev \
+            libvulkan-dev libssl-dev libzstd-dev
+
+      - name: Build and package the pinned NexDesk
+        working-directory: integrations/nexdesk
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p nexdesk -p nexdesk-rdp
+
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          OUT_DIR="$GITHUB_WORKSPACE/dist" packaging/make-deb.sh
+
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          name="nexdesk-${version}-linux-${{ matrix.arch }}"
+          mkdir "$name"
+          cp target/release/nexdesk target/release/nexdesk-rdp \
+             packaging/nexdesk.desktop packaging/nexdesk.svg \
+             LICENSE-MIT LICENSE-APACHE README.md "$name/"
+          tar -czf "$GITHUB_WORKSPACE/dist/${name}.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexdesk-${{ matrix.arch }}
+          path: dist/*
+
   release:
-    needs: [linux, mouse-borders]
+    needs: [linux, mouse-borders, nexdesk]
     runs-on: ubuntu-latest
     permissions:
       contents: write
