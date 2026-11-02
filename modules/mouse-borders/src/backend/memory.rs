@@ -185,20 +185,36 @@ impl Desktop for MemoryDesktop {
 }
 
 #[derive(Clone, Default)]
-pub struct MemoryClipboard(Arc<Mutex<Option<ClipboardContent>>>);
+pub struct MemoryClipboard {
+    content: Arc<Mutex<Option<ClipboardContent>>>,
+    /// Behaves like GNOME on Wayland: the engine may only read it when control moves.
+    quiet: bool,
+}
 
 impl MemoryClipboard {
+    /// A clipboard that must not be polled from the background.
+    pub fn without_polling() -> Self {
+        Self {
+            quiet: true,
+            ..Self::default()
+        }
+    }
+
     pub fn set(&self, content: ClipboardContent) {
-        *self.0.lock().unwrap() = Some(content);
+        *self.content.lock().unwrap() = Some(content);
     }
 
     pub fn get(&self) -> Option<ClipboardContent> {
-        self.0.lock().unwrap().clone()
+        self.content.lock().unwrap().clone()
     }
 }
 
 #[async_trait]
 impl Clipboard for MemoryClipboard {
+    fn polls_in_background(&self) -> bool {
+        !self.quiet
+    }
+
     async fn read(&self) -> Result<Option<ClipboardContent>> {
         Ok(self.get())
     }

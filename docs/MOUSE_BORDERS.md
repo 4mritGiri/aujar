@@ -126,7 +126,7 @@ works the same as `aujar mwb …` below. The agent keeps its settings in the sam
 |---|---|---|
 | Control up to 4 machines | ✅ | Any machine can be the one whose keyboard and mouse you use |
 | Move across screen edges | ✅ X11 · ⚠️ Wayland | Wayland cannot report the pointer position: use the shortcuts there ([details](#wayland)) |
-| Shared clipboard (text, images) | ✅ | Follows you when you cross over; needs `wl-clipboard` or `xclip` |
+| Shared clipboard (text, images) | ✅ | Follows you when you cross over; needs `wl-clipboard` or `xclip`. On GNOME Wayland it is read only when control moves (reading it in the background makes the screen flash), so a copy made on the controlled machine arrives when you come back |
 | File transfer, 100 MB limit | ✅ CLI | `aujar mwb send laptop file…`. Drag-and-drop and paste-a-file are 📅 |
 | Service mode (login screen, elevated windows) | ✅ | A least-privilege system service ([below](#service-mode)) |
 | Multi-machine input mode | ✅ | `Ctrl+Alt+M` |

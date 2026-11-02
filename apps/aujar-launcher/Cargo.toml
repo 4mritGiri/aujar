@@ -52,7 +52,7 @@ depends = "$auto"
 suggests = "nexdesk, ffmpegthumbnailer, poppler-utils, libgsf-bin, gnome-control-center"
 assets = [
     ["target/release/aujar", "usr/bin/", "755"],
-    ["../../target/release/aujar-ui", "usr/bin/", "755"],
+    ["target/release/aujar-ui", "usr/bin/", "755"],
     ["../../packaging/systemd/aujar.service", "usr/lib/systemd/user/", "644"],
     ["../../packaging/systemd/aujar-ui.service", "usr/lib/systemd/user/", "644"],
     ["../../packaging/desktop/aujar.desktop", "usr/share/applications/", "644"],
