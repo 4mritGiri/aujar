@@ -5909,13 +5909,49 @@ fn spawn_bridge(
     });
 }
 
+/// Whether polling the clipboard from the background is safe in this session.
+///
+/// X11 (`xclip`) is. On Wayland, `wl-paste` needs the compositor's data-control protocol. GNOME's
+/// compositor (Mutter) does not offer it, so `wl-paste` falls back to mapping a tiny window just to
+/// get focus and read the clipboard. Polling that every 1.5 s is what made the whole screen flash,
+/// an "Unknown app" appear and vanish in the dash, typed characters go missing and right-click
+/// menus close at once. It never fails either, so the "give up after 10 failures" logic below
+/// cannot save us. Skip the watcher there; `open_launcher` still captures the clipboard each
+/// time the launcher opens.
+fn background_clipboard_is_safe(
+    wayland: bool,
+    current_desktop: Option<&str>,
+    session_desktop: Option<&str>,
+) -> bool {
+    if !wayland {
+        return true;
+    }
+
+    let is_gnome = |value: Option<&str>| {
+        value.is_some_and(|value| value.to_ascii_lowercase().contains("gnome"))
+    };
+
+    !(is_gnome(current_desktop) || is_gnome(session_desktop))
+}
+
 /// Polls the system clipboard for the history (X11 via `xclip`, Wayland via `wl-paste`).
 /// GNOME's Wayland session does not allow background clipboard reads, so there the watcher
-/// gives up quietly and history only gets what is on the clipboard when the launcher opens.
+/// does not run at all and history only gets what is on the clipboard when the launcher opens.
 fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
-    std::thread::spawn(move || {
-        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let current_desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+    let session_desktop = std::env::var("XDG_SESSION_DESKTOP").ok();
 
+    if !background_clipboard_is_safe(
+        wayland,
+        current_desktop.as_deref(),
+        session_desktop.as_deref(),
+    ) {
+        debug("clipboard watcher off: GNOME Wayland cannot read the clipboard in the background");
+        return;
+    }
+
+    std::thread::spawn(move || {
         let (program, args): (&str, &[&str]) = if wayland {
             ("wl-paste", &["--no-newline", "--type", "text"])
         } else {
@@ -6058,6 +6094,23 @@ mod tests {
             hour,
             minute,
         })
+    }
+
+    #[test]
+    fn background_clipboard_is_off_on_gnome_wayland_only() {
+        // X11 is always fine, whatever the desktop.
+        assert!(background_clipboard_is_safe(false, Some("GNOME"), None));
+        assert!(background_clipboard_is_safe(false, None, None));
+
+        // GNOME on Wayland (Ubuntu says "ubuntu:GNOME") must not be polled.
+        assert!(!background_clipboard_is_safe(true, Some("GNOME"), None));
+        assert!(!background_clipboard_is_safe(true, Some("ubuntu:GNOME"), None));
+        assert!(!background_clipboard_is_safe(true, None, Some("gnome")));
+
+        // wlroots and KDE support data-control, so the watcher works there.
+        assert!(background_clipboard_is_safe(true, Some("KDE"), Some("plasma")));
+        assert!(background_clipboard_is_safe(true, Some("sway"), None));
+        assert!(background_clipboard_is_safe(true, None, None));
     }
 
     #[test]
