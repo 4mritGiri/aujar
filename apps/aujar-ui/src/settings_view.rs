@@ -25,6 +25,8 @@ use std::{fs, process::Command};
 /// What the inline text editor is changing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EditTarget {
+    ColorHex,
+    ColorFormat(Option<usize>),
     /// The NEPSE API key (kept in its own private file, never in settings.toml).
     NepseKey,
     /// A web shortcut as `keyword | Name | URL`: `Some(index)` edits one, `None` adds one.
@@ -41,6 +43,24 @@ struct Editing {
 /// `~/.config/aujar/nepse.key`, next to settings.toml. The launcher reads the same file.
 fn nepse_key_path() -> std::path::PathBuf {
     Settings::path().with_file_name("nepse.key")
+}
+
+fn color_history_path() -> std::path::PathBuf {
+    Settings::path().with_file_name("color-history.txt")
+}
+
+fn load_color_history() -> Vec<String> {
+    fs::read_to_string(color_history_path())
+        .unwrap_or_default()
+        .lines()
+        .filter_map(aujar_color::Rgb::parse_hex)
+        .map(aujar_color::Rgb::to_hex)
+        .fold(Vec::new(), |mut colors, color| {
+            if !colors.iter().any(|entry| entry == &color) && colors.len() < 20 {
+                colors.push(color);
+            }
+            colors
+        })
 }
 
 fn valid_nepse_key(key: &str) -> bool {
@@ -214,6 +234,7 @@ impl Render for Tip {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Appearance,
+    ColorPicker,
     Search,
     Web,
     MouseBorders,
@@ -225,8 +246,9 @@ enum Page {
 
 impl Page {
     /// The top group of the sidebar.
-    const MAIN: [Page; 5] = [
+    const MAIN: [Page; 6] = [
         Page::Appearance,
+        Page::ColorPicker,
         Page::Search,
         Page::Web,
         Page::MouseBorders,
@@ -235,8 +257,9 @@ impl Page {
     /// The collapsible "Data" group.
     const DATA: [Page; 2] = [Page::Files, Page::History];
     /// Every page, in sidebar order (used by search).
-    const ALL: [Page; 8] = [
+    const ALL: [Page; 9] = [
         Page::Appearance,
+        Page::ColorPicker,
         Page::Search,
         Page::Web,
         Page::MouseBorders,
@@ -249,6 +272,7 @@ impl Page {
     fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
+            Self::ColorPicker => "Color Picker",
             Self::Search => "Search plugins",
             Self::Web => "Web search",
             Self::MouseBorders => "Mouse Borders",
@@ -262,6 +286,7 @@ impl Page {
     fn blurb(self) -> &'static str {
         match self {
             Self::Appearance => "Colors, window style, and what the launcher shows",
+            Self::ColorPicker => "Pick colors from your screen, refine them, and copy a format",
             Self::Search => "Choose what the launcher can find and answer",
             Self::Web => "Where the \"search the web\" row and keyword shortcuts go",
             Self::MouseBorders => "Use one keyboard and mouse across your computers",
@@ -275,6 +300,7 @@ impl Page {
     fn icon(self) -> &'static str {
         match self {
             Self::Appearance => "icons/sliders.svg",
+            Self::ColorPicker => "icons/palette.svg",
             Self::Search => "icons/search.svg",
             Self::Web => "icons/globe.svg",
             Self::MouseBorders => "icons/mouse.svg",
@@ -294,6 +320,7 @@ impl Page {
                  hints preview recent frequent close click away move drag movable position \
                  launcher spotlight top center"
             }
+            Self::ColorPicker => "color picker eyedropper hex rgb hsl format history sample screen",
             Self::Search => {
                 "plugins applications apps files folders windows system clipboard calculator \
                  units currency dictionary weather stocks nepse nepal sports shell online \
@@ -370,11 +397,15 @@ pub struct SettingsView {
     editing: Option<Editing>,
     /// Whether a NEPSE key is available, and the line describing it.
     nepse_key: (bool, String),
+    color_hex: String,
+    color_history: Vec<String>,
+    color_picking: bool,
 }
 
 impl SettingsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let settings = Settings::load_or_default();
+        let color_history = load_color_history();
 
         Self::keep_mouse_borders_status_fresh(cx);
         Self::keep_nexdesk_status_fresh(cx);
@@ -396,6 +427,12 @@ impl SettingsView {
             search: None,
             editing: None,
             nepse_key: nepse_key_status(),
+            color_hex: color_history
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "#6C8CFF".to_owned()),
+            color_history,
+            color_picking: false,
         }
     }
 
@@ -643,6 +680,56 @@ impl SettingsView {
         };
 
         match edit.target {
+            EditTarget::ColorFormat(index) => {
+                let Some((name, pattern)) = edit.text.split_once('|') else {
+                    if let Some(editing) = self.editing.as_mut() {
+                        editing.error = Some("Use: format name | pattern with {r}, {g}, {b}, {hex}, {h}, {s}, {l}, {v}, {c}, {m}, {y}, {k}".to_owned());
+                    }
+                    cx.notify();
+                    return;
+                };
+                let name = name.trim();
+                let pattern = pattern.trim();
+                if name.is_empty() || pattern.is_empty() || name.len() > 24 || pattern.len() > 120 {
+                    if let Some(editing) = self.editing.as_mut() {
+                        editing.error = Some(
+                            "Name and pattern are required (up to 24 and 120 characters)."
+                                .to_owned(),
+                        );
+                    }
+                } else {
+                    let name = name.to_owned();
+                    let pattern = pattern.to_owned();
+                    self.editing = None;
+                    self.mutate(cx, move |settings| {
+                        let format = aujar_config::ColorFormat {
+                            name: name.clone(),
+                            pattern: pattern.clone(),
+                            enabled: true,
+                        };
+                        match index {
+                            Some(i) if i < settings.color_picker.formats.len() => {
+                                settings.color_picker.formats[i] = format
+                            }
+                            _ => settings.color_picker.formats.push(format),
+                        }
+                    });
+                }
+            }
+            EditTarget::ColorHex => match aujar_color::Rgb::parse_hex(edit.text.trim()) {
+                Some(color) => {
+                    self.color_hex = color.to_hex();
+                    self.remember_color(self.color_hex.clone());
+                    self.editing = None;
+                    self.status = Some("Color updated".to_owned());
+                }
+                None => {
+                    if let Some(editing) = self.editing.as_mut() {
+                        editing.error =
+                            Some("Enter a valid HEX value such as #FF8800 or #F80".to_owned());
+                    }
+                }
+            },
             EditTarget::NepseKey => match save_nepse_key(edit.text.trim()) {
                 Ok(()) => {
                     self.editing = None;
@@ -882,11 +969,11 @@ impl SettingsView {
             .into_any_element()
     }
 
-    fn switch(&self, id: &'static str, on: bool) -> Stateful<gpui::Div> {
+    fn switch(&self, id: impl Into<SharedString>, on: bool) -> Stateful<gpui::Div> {
         let pal = self.palette;
 
         div()
-            .id(id)
+            .id(id.into())
             .flex()
             .items_center()
             .w(px(40.))
@@ -1656,6 +1743,7 @@ impl Render for SettingsView {
 
         let content = match page {
             Page::Appearance => self.appearance_page(cx),
+            Page::ColorPicker => self.color_picker_page(cx),
             Page::Search => self.plugins_page(cx),
             Page::Web => self.web_page(cx),
             Page::MouseBorders => self.mouse_borders_page(cx),
@@ -1766,6 +1854,8 @@ impl Render for SettingsView {
             .when_some(menu, |this, menu| this.child(menu))
     }
 }
+
+mod color_picker;
 
 #[cfg(test)]
 mod editor_tests {

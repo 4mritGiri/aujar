@@ -47,6 +47,9 @@ section = "utils"
 maintainer-scripts = "debian"
 priority = "optional"
 depends = "$auto"
+# Everything optional: remote desktop connections (NexDesk, see docs/NEXDESK.md), video and PDF
+# previews, document previews, and the GNOME Settings pages behind `wifi`, `bluetooth`, ...
+suggests = "nexdesk, ffmpegthumbnailer, poppler-utils, libgsf-bin, gnome-control-center"
 assets = [
     ["target/release/aujar", "usr/bin/", "755"],
     ["../../target/release/aujar-ui", "usr/bin/", "755"],

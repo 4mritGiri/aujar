@@ -1,0 +1,147 @@
+name: NexDesk integration
+
+# Aujar does not link NexDesk: it starts it as a separate program. This checks the parts that
+# can go wrong between the two repositories: the submodule pin, building the pinned NexDesk, the
+# options Aujar passes to it, and Aujar finding it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".gitmodules"
+      - "integrations/**"
+      - "modules/nexdesk/**"
+      - "modules/launcher/src/nexdesk.rs"
+      - "crates/aujar-daemon/src/unix/nexdesk.rs"
+      - "apps/aujar-launcher/src/nexdesk.rs"
+      - "scripts/*nexdesk*"
+      - ".github/workflows/nexdesk.yml"
+  pull_request:
+    paths:
+      - ".gitmodules"
+      - "integrations/**"
+      - "modules/nexdesk/**"
+      - "modules/launcher/src/nexdesk.rs"
+      - "crates/aujar-daemon/src/unix/nexdesk.rs"
+      - "apps/aujar-launcher/src/nexdesk.rs"
+      - "scripts/*nexdesk*"
+      - ".github/workflows/nexdesk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexdesk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  pin:
+    name: submodule pin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: The submodule is registered, initialised and at the recorded commit
+        run: |
+          set -euo pipefail
+
+          git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | grep -q ' integrations/nexdesk$' \
+            || { echo "::error::integrations/nexdesk is not in .gitmodules (run scripts/add-nexdesk-submodule.sh)"; exit 1; }
+
+          status=$(git submodule status -- integrations/nexdesk)
+          echo "$status"
+
+          # ' ' = at the recorded commit; '-' = not initialised; '+' = another commit; 'U' = conflict.
+          case "${status:0:1}" in
+            ' ') ;;
+            *) echo "::error::the submodule is not at the commit recorded in this repository"; exit 1 ;;
+          esac
+
+      - name: The pinned commit is on a NexDesk branch (it has been pushed)
+        run: |
+          set -euo pipefail
+          cd integrations/nexdesk
+          git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*' || true
+          if ! git branch -r --contains HEAD | grep -q .; then
+            echo "::error::the pinned NexDesk commit $(git rev-parse --short HEAD) is on no branch of its repository; push it first"
+            exit 1
+          fi
+
+  scripts:
+    name: shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck scripts/add-nexdesk-submodule.sh scripts/build-nexdesk.sh
+
+  build:
+    name: build and smoke-test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            integrations/nexdesk -> target
+
+      # The libraries NexDesk's own CI installs.
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config clang libclang-dev cmake \
+            libpipewire-0.3-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxi-dev libfontconfig1-dev \
+            libvulkan-dev libssl-dev libzstd-dev
+
+      - name: Build the pinned NexDesk
+        run: scripts/build-nexdesk.sh
+
+      - name: NexDesk understands the options Aujar passes
+        run: |
+          set -euo pipefail
+          help=$(integrations/nexdesk/target/release/nexdesk --help)
+          echo "$help"
+          echo "$help" | grep -q -- '--connect'
+          # An unknown option is an error, not silently ignored.
+          if integrations/nexdesk/target/release/nexdesk --definitely-not-an-option 2>/dev/null; then
+            echo "::error::nexdesk accepted an unknown option"; exit 1
+          fi
+
+      - name: NexDesk tests that need no display
+        working-directory: integrations/nexdesk
+        run: cargo test --locked -p nexdesk-core -p nexdesk-crypto -p nexdesk-network
+
+      - name: Aujar finds it
+        run: |
+          set -euo pipefail
+
+          cargo build --locked -p aujar-launcher-app
+
+          export AUJAR_NEXDESK_BIN="$PWD/integrations/nexdesk/target/release/nexdesk"
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          export XDG_CONFIG_HOME="$(mktemp -d)"
+
+          target/debug/aujar daemon > daemon.log 2>&1 &
+          daemon=$!
+          trap 'kill $daemon 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 50); do
+            [ -S "$XDG_RUNTIME_DIR/aujar.sock" ] && break
+            sleep 0.2
+          done
+
+          target/debug/aujar nexdesk status | tee status.txt
+          grep -q '^installed:  .*nexdesk' status.txt
+          target/debug/aujar modules | grep -q nexdesk
+          cat daemon.log

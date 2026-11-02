@@ -6,3 +6,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+  # Proposes a pull request when NexDesk (integrations/nexdesk) has new commits.
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule: { interval: weekly }

@@ -209,6 +209,12 @@ pub enum Action {
     LookUp,
     /// Search the web for the query.
     WebSearch,
+    /// Open the link in a clipboard entry in the browser.
+    OpenLink,
+    /// Forget a clipboard entry.
+    RemoveClip,
+    /// Open a copied picture or file with its default program.
+    OpenClip,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +230,13 @@ fn item(action: Action, label: impl Into<String>, shortcut: &'static str) -> Men
         label: label.into(),
         shortcut,
     }
+}
+
+/// Whether a clipboard entry is a web link (its subtitle starts "URL \u{b7} host \u{b7} Copied ...").
+fn is_link_clip(hit: &SearchHit) -> bool {
+    hit.subtitle
+        .as_deref()
+        .is_some_and(|subtitle| subtitle.starts_with("URL"))
 }
 
 /// The right-click menu for a result. `can_look_up` says whether a dictionary word is available.
@@ -245,7 +258,22 @@ pub fn menu_items(hit: &SearchHit, can_look_up: bool) -> Vec<MenuItem> {
         "web" => items.push(item(Action::Copy, "Copy Link", "Ctrl+C")),
         "calculation" => items.push(item(Action::Copy, "Copy Answer", "Ctrl+C")),
         "definition" => items.push(item(Action::Copy, "Copy Definition", "Ctrl+C")),
-        "weather" | "stock" | "sports" | "clip" => items.push(item(Action::Copy, "Copy", "Ctrl+C")),
+        "weather" | "stock" | "sports" => items.push(item(Action::Copy, "Copy", "Ctrl+C")),
+        // Enter already copies; a link can also be opened, and any entry can be forgotten.
+        "clip" => {
+            match hit.detail.as_deref() {
+                // A copied picture, or files copied in the file manager.
+                Some("image") => items.push(item(Action::OpenClip, "Open", "")),
+                Some("file") => {
+                    items.push(item(Action::OpenClip, "Open", ""));
+                    items.push(item(Action::Reveal, "Show in Folder", ""));
+                }
+                _ if is_link_clip(hit) => items.push(item(Action::OpenLink, "Open Link", "")),
+                _ => {}
+            }
+
+            items.push(item(Action::RemoveClip, "Remove from History", ""));
+        }
         "application" | "system" | "command" | "action" | "window" => {}
         _ => items.push(item(Action::Copy, "Copy", "Ctrl+C")),
     }
@@ -448,6 +476,72 @@ mod tests {
 
         assert_eq!(app.len(), 2);
         assert_eq!(app[0].action, Action::Primary);
+
+        // A clipboard entry: Enter copies, so the menu offers to open a link and to remove it.
+        let mut text_clip = hit("clip", "clip:0");
+        text_clip.subtitle = Some("Text \u{b7} Copied 4:19 PM".to_owned());
+        let actions: Vec<Action> = menu_items(&text_clip, false)
+            .iter()
+            .map(|item| item.action)
+            .collect();
+
+        assert_eq!(
+            actions,
+            [Action::Primary, Action::RemoveClip, Action::WebSearch]
+        );
+
+        // A copied picture and copied files (the row says which in its detail).
+        let mut picture = hit("clip", "clip:2");
+        picture.detail = Some("image".to_owned());
+        let actions: Vec<Action> = menu_items(&picture, false)
+            .iter()
+            .map(|item| item.action)
+            .collect();
+
+        assert_eq!(
+            actions,
+            [
+                Action::Primary,
+                Action::OpenClip,
+                Action::RemoveClip,
+                Action::WebSearch
+            ]
+        );
+
+        let mut files = hit("clip", "clip:3");
+        files.detail = Some("file".to_owned());
+        let actions: Vec<Action> = menu_items(&files, false)
+            .iter()
+            .map(|item| item.action)
+            .collect();
+
+        assert_eq!(
+            actions,
+            [
+                Action::Primary,
+                Action::OpenClip,
+                Action::Reveal,
+                Action::RemoveClip,
+                Action::WebSearch
+            ]
+        );
+
+        let mut link_clip = hit("clip", "clip:1");
+        link_clip.subtitle = Some("URL \u{b7} example.com \u{b7} Copied 4:17 PM".to_owned());
+        let actions: Vec<Action> = menu_items(&link_clip, false)
+            .iter()
+            .map(|item| item.action)
+            .collect();
+
+        assert_eq!(
+            actions,
+            [
+                Action::Primary,
+                Action::OpenLink,
+                Action::RemoveClip,
+                Action::WebSearch
+            ]
+        );
         assert!(menu_items(&hit("loading", "loading:x"), true).is_empty());
         assert!(menu_items(&hit("notice", "notice:x"), true).is_empty());
     }

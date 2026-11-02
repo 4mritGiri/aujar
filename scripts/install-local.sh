@@ -15,6 +15,8 @@ install -Dm755 target/release/aujar-ui "$HOME/.local/bin/aujar-ui"
 # not make GNOME Shell rescan its applications and redraw the dash.
 install -C -Dm644 packaging/desktop/dev.aujar.Aujar.desktop \
     "$HOME/.local/share/applications/dev.aujar.Aujar.desktop"
+install -C -Dm644 packaging/desktop/aujar.desktop \
+    "$HOME/.local/share/applications/aujar.desktop"
 
 mkdir -p "$HOME/.config/systemd/user"
 sed 's#^ExecStart=.*#ExecStart=%h/.local/bin/aujar daemon#' packaging/systemd/aujar.service \
@@ -27,6 +29,14 @@ sed 's#^ExecStart=.*#ExecStart=%h/.local/bin/aujar-ui#' packaging/systemd/aujar-
 "$HOME/.local/bin/aujar" completions bash | install -Dm644 /dev/stdin "$HOME/.local/share/bash-completion/completions/aujar"
 "$HOME/.local/bin/aujar" completions zsh  | install -Dm644 /dev/stdin "$HOME/.local/share/zsh/site-functions/_aujar"
 "$HOME/.local/bin/aujar" completions fish | install -Dm644 /dev/stdin "$HOME/.config/fish/completions/aujar.fish"
+
+# Register the default color picker shortcut when GNOME's shortcut schema is available.
+# Keep installation usable on other desktop environments; the Settings button reports the
+# same backend limitation there.
+if command -v gsettings >/dev/null 2>&1; then
+    "$HOME/.local/bin/aujar" color shortcut-install --keys SUPER+SHIFT+C \
+        || echo "Could not register Super+Shift+C; assign it in your desktop's keyboard settings."
+fi
 
 systemctl --user daemon-reload
 systemctl --user enable aujar.service aujar-ui.service

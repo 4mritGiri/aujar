@@ -776,6 +776,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-channel",
+ "aujar-color",
  "aujar-config",
  "aujar-ipc",
  "aujar-mouse-borders",

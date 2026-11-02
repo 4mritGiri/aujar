@@ -15,8 +15,11 @@ The Linux desktop package installs:
 | `config/policy.example.toml` | `/usr/share/doc/aujar/policy.example.toml` |
 | `LICENSE` | `/usr/share/licenses/aujar/` (or `/usr/share/doc/aujar/`) |
 
-NexDesk (optional) is built and packaged separately from `integrations/nexdesk`; install `nexdesk` and
-`nexdesk-rdp` together, beside `aujar`, so `aujar nexdesk open` finds them (see [NEXDESK](NEXDESK.md)).
+NexDesk (optional) is built and packaged by its own scripts from `integrations/nexdesk`; install
+`nexdesk` and `nexdesk-rdp` together, beside `aujar`, so `aujar nexdesk open` finds them. Each Aujar
+release also carries the pinned NexDesk as a `.deb` and a `.tar.gz` (`nexdesk-<version>-linux-<arch>`).
+The Aujar packages only *suggest* it, together with the tools for previews and settings pages
+(`ffmpegthumbnailer`, `poppler`, `libgsf`, `gnome-control-center`); see [NEXDESK](NEXDESK.md).
 
 The GPUI launcher UI (`apps/aujar-ui`) is still a spike and is **not** packaged yet.
 
@@ -42,6 +45,7 @@ Release assets and `SHA256SUMS` are attached to each GitHub release:
 | Deliverable | Linux | macOS | Windows |
 |---|---|---|---|
 | Aujar desktop (`aujar`) | `.deb`, `.rpm`, `.tar.gz` (`x86_64`, `aarch64`) | — | — |
+| NexDesk, pinned (`nexdesk`, `nexdesk-rdp`) | `.deb`, `.tar.gz` (`x86_64`, `aarch64`) | — | — |
 | Mouse Borders (`aujar-mwb`) | `.tar.gz` (`x86_64`, `aarch64`) | `.tar.gz` (Intel, Apple Silicon) | `.zip` (`x86_64`) |
 
 The desktop launcher/daemon is intentionally Linux-only; macOS and Windows releases contain

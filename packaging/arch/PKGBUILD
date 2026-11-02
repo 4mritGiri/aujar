@@ -8,6 +8,11 @@ url="https://github.com/4mritGiri/aujar"
 license=('Apache-2.0')
 depends=('gcc-libs' 'glibc')
 makedepends=('cargo')
+optdepends=('nexdesk: remote desktop manager behind `rdp <name>` and `aujar nexdesk` (see docs/NEXDESK.md)'
+            'ffmpegthumbnailer: video previews'
+            'poppler: PDF previews'
+            'libgsf: Office document previews'
+            'gnome-control-center: the settings pages behind `wifi`, `bluetooth`, ...')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 install=aujar.install
 sha256sums=('SKIP') # Replace before publishing.
@@ -67,6 +72,8 @@ package() {
     "$pkgdir/usr/lib/modules-load.d/aujar-mouse-borders.conf"
 
   # Desktop entries
+  install -Dm644 packaging/desktop/aujar.desktop \
+    "$pkgdir/usr/share/applications/aujar.desktop"
   install -Dm644 packaging/desktop/dev.aujar.Aujar.desktop \
     "$pkgdir/usr/share/applications/dev.aujar.Aujar.desktop"
 

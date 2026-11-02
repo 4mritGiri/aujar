@@ -104,3 +104,30 @@ not itself open sockets; `network` is declared because the program it starts doe
 - The Aujar daemon runs as a user service: the NexDesk manager inherits its environment, so
   `DISPLAY` / `WAYLAND_DISPLAY` must be available to it (as for any application launched from the
   launcher).
+
+## Packaging, CI and releases
+
+NexDesk keeps its own packaging (`integrations/nexdesk/packaging/`: a `.deb` builder, a desktop
+entry, an icon) and its own CI and release workflows. Aujar reuses them instead of copying them.
+
+- **Packages.** The `.deb` of Aujar *suggests* `nexdesk` (the name of NexDesk's own `.deb`), plus
+  `ffmpegthumbnailer`, `poppler-utils`, `libgsf-bin` and `gnome-control-center` for video, PDF and
+  document previews and the settings pages; the Arch `PKGBUILD` lists the same as `optdepends`.
+  Nothing is pulled in unless you ask for it.
+- **Releases.** Each Aujar release builds the NexDesk commit that the submodule pins, on `x86_64`
+  and `aarch64`, with NexDesk's `packaging/make-deb.sh`, and attaches `nexdesk_<version>_<arch>.deb`
+  and `nexdesk-<version>-linux-<arch>.tar.gz` (the two programs, the desktop entry, the icon and the
+  licences). NexDesk's version is its own, so these files carry it, not Aujar's.
+- **Building it yourself.** `scripts/build-nexdesk.sh` builds it; `--install` copies it to
+  `~/.local/bin`, `--deb` also writes NexDesk's `.deb` to `./dist`.
+- **CI** (`.github/workflows/nexdesk.yml`, run when anything NexDesk-related changes). It checks
+  that the submodule is registered and at the recorded commit, and that this commit has been pushed
+  to a NexDesk branch (an unpushed pin breaks everyone's clone). It builds the pinned NexDesk, checks
+  that `nexdesk --help` knows `--connect` and that unknown options are refused, runs NexDesk's tests
+  that need no display, then starts an Aujar daemon with `AUJAR_NEXDESK_BIN` pointing at the build and
+  checks `aujar nexdesk status` and `aujar modules`. It also runs `shellcheck` on the two scripts.
+- **Updating the pin.** Dependabot opens a weekly pull request when NexDesk has new commits
+  (`gitsubmodule` in `.github/dependabot.yml`); the CI above runs on it. By hand:
+  `git -C integrations/nexdesk fetch && git -C integrations/nexdesk checkout <tag-or-commit>`,
+  then commit the changed `integrations/nexdesk`.
+
