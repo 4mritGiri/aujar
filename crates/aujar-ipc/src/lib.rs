@@ -56,6 +56,11 @@ pub enum LauncherCommand {
     Toggle,
     /// Open the settings window.
     Settings,
+    /// The color picker shortcut: pick from the screen, or open the editor first, as set up in
+    /// the color picker settings.
+    ColorPicker,
+    /// Open the color editor with the color history.
+    ColorEditor,
 }
 
 /// Messages pushed by the daemon on a subscribed connection.
@@ -345,6 +350,13 @@ mod tests {
             Request::PickColor.required_capability(),
             Some(Capability::ScreenCapture)
         );
+    }
+
+    #[test]
+    fn the_color_shortcut_and_editor_read_nothing_from_the_screen() {
+        for command in [LauncherCommand::ColorPicker, LauncherCommand::ColorEditor] {
+            assert_eq!(Request::Launcher(command).required_capability(), None);
+        }
     }
 
     #[test]

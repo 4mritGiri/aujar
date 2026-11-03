@@ -95,62 +95,6 @@ impl Rgb {
 
         format!("hsl({h}, {s}%, {l}%)")
     }
-
-    /// Render a color format template. Supported tokens include `{hex}`, `{r}`, `{g}`,
-    /// `{b}`, `{h}`, `{s}`, `{l}`, `{v}`, `{c}`, `{m}`, `{y}`, and `{k}`.
-    pub fn format(self, template: &str) -> String {
-        let r = f64::from(self.r) / 255.0;
-        let g = f64::from(self.g) / 255.0;
-        let b = f64::from(self.b) / 255.0;
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let delta = max - min;
-        let hue = if delta == 0.0 {
-            0.0
-        } else if max == r {
-            ((g - b) / delta).rem_euclid(6.0) * 60.0
-        } else if max == g {
-            ((b - r) / delta + 2.0) * 60.0
-        } else {
-            ((r - g) / delta + 4.0) * 60.0
-        };
-        let saturation = if max == 0.0 { 0.0 } else { delta / max };
-        let key = 1.0 - max;
-        let (cyan, magenta, yellow) = if key >= 1.0 {
-            (0.0, 0.0, 0.0)
-        } else {
-            (
-                (1.0 - r - key) / (1.0 - key),
-                (1.0 - g - key) / (1.0 - key),
-                (1.0 - b - key) / (1.0 - key),
-            )
-        };
-        let (hsl_h, hsl_s, hsl_l) = self.to_hsl();
-        let replacements = [
-            ("{hex}", self.to_hex()),
-            ("{r}", self.r.to_string()),
-            ("{g}", self.g.to_string()),
-            ("{b}", self.b.to_string()),
-            ("{h}", format!("{}", hue.round() as u16 % 360)),
-            ("{s}", format!("{}", (saturation * 100.0).round() as u8)),
-            ("{l}", hsl_l.to_string()),
-            ("{v}", format!("{}", (max * 100.0).round() as u8)),
-            ("{c}", format!("{}", (cyan * 100.0).round() as u8)),
-            ("{m}", format!("{}", (magenta * 100.0).round() as u8)),
-            ("{y}", format!("{}", (yellow * 100.0).round() as u8)),
-            ("{k}", format!("{}", (key * 100.0).round() as u8)),
-        ];
-        let mut output = template.to_owned();
-        for (token, replacement) in replacements {
-            output = output.replace(token, &replacement);
-        }
-        // HSL uses saturation on its own scale; HSV and custom formats use HSV saturation.
-        if template.starts_with("hsl") {
-            output = output.replace("{s}", &hsl_s.to_string());
-        }
-        let _ = hsl_h;
-        output
-    }
 }
 
 #[cfg(test)]

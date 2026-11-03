@@ -25,7 +25,6 @@ use std::{fs, process::Command};
 /// What the inline text editor is changing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EditTarget {
-    ColorHex,
     ColorFormat(Option<usize>),
     /// The NEPSE API key (kept in its own private file, never in settings.toml).
     NepseKey,
@@ -43,24 +42,6 @@ struct Editing {
 /// `~/.config/aujar/nepse.key`, next to settings.toml. The launcher reads the same file.
 fn nepse_key_path() -> std::path::PathBuf {
     Settings::path().with_file_name("nepse.key")
-}
-
-fn color_history_path() -> std::path::PathBuf {
-    Settings::path().with_file_name("color-history.txt")
-}
-
-fn load_color_history() -> Vec<String> {
-    fs::read_to_string(color_history_path())
-        .unwrap_or_default()
-        .lines()
-        .filter_map(aujar_color::Rgb::parse_hex)
-        .map(aujar_color::Rgb::to_hex)
-        .fold(Vec::new(), |mut colors, color| {
-            if !colors.iter().any(|entry| entry == &color) && colors.len() < 20 {
-                colors.push(color);
-            }
-            colors
-        })
 }
 
 fn valid_nepse_key(key: &str) -> bool {
@@ -397,15 +378,16 @@ pub struct SettingsView {
     editing: Option<Editing>,
     /// Whether a NEPSE key is available, and the line describing it.
     nepse_key: (bool, String),
+    /// The color the format previews are shown with.
     color_hex: String,
-    color_history: Vec<String>,
-    color_picking: bool,
 }
 
 impl SettingsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let settings = Settings::load_or_default();
-        let color_history = load_color_history();
+        let color_hex = crate::color_picker::load_history()
+            .first()
+            .map_or_else(|| "#6C8CFF".to_owned(), |color| color.to_hex());
 
         Self::keep_mouse_borders_status_fresh(cx);
         Self::keep_nexdesk_status_fresh(cx);
@@ -427,12 +409,7 @@ impl SettingsView {
             search: None,
             editing: None,
             nepse_key: nepse_key_status(),
-            color_hex: color_history
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "#6C8CFF".to_owned()),
-            color_history,
-            color_picking: false,
+            color_hex,
         }
     }
 
@@ -716,20 +693,6 @@ impl SettingsView {
                     });
                 }
             }
-            EditTarget::ColorHex => match aujar_color::Rgb::parse_hex(edit.text.trim()) {
-                Some(color) => {
-                    self.color_hex = color.to_hex();
-                    self.remember_color(self.color_hex.clone());
-                    self.editing = None;
-                    self.status = Some("Color updated".to_owned());
-                }
-                None => {
-                    if let Some(editing) = self.editing.as_mut() {
-                        editing.error =
-                            Some("Enter a valid HEX value such as #FF8800 or #F80".to_owned());
-                    }
-                }
-            },
             EditTarget::NepseKey => match save_nepse_key(edit.text.trim()) {
                 Ok(()) => {
                     self.editing = None;

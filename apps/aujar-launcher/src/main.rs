@@ -78,8 +78,12 @@ enum ShortcutAction {
 
 #[derive(Debug, Subcommand)]
 enum ColorAction {
-    /// Pick a color from the screen with the desktop's color picker.
+    /// Start the color picker: the same as the color picker shortcut. Without the Aujar UI
+    /// running it falls back to the desktop's own picker and prints the color.
     Pick,
+
+    /// Open the color editor with the color history.
+    Editor,
 
     /// Show a hex color in every supported format.
     Convert {
@@ -369,27 +373,56 @@ async fn main() -> Result<()> {
         },
 
         Command::Color { action } => match action {
-            ColorAction::Pick => match send(&resolve_socket(), Request::PickColor).await? {
-                Response::Color(color) => {
-                    let settings = aujar_config::Settings::load_or_default();
-                    let picked = aujar_color::Rgb::parse_hex(&color.hex)
-                        .unwrap_or(aujar_color::Rgb::new(0, 0, 0));
-                    let format = settings.color_picker.formats.iter().find(|format| {
-                        format.enabled
-                            && format
-                                .name
-                                .eq_ignore_ascii_case(&settings.color_picker.default_format)
-                    });
-                    let copied = format
-                        .map_or_else(|| picked.to_hex(), |format| picked.format(&format.pattern));
-                    if let Err(error) = copy_color_to_clipboard(&copied) {
-                        eprintln!("Could not copy color to clipboard: {error}");
-                    }
-                    println!("{}\n{}\n{}", color.hex, color.rgb, color.hsl);
+            ColorAction::Editor => {
+                match send(
+                    &resolve_socket(),
+                    Request::Launcher(LauncherCommand::ColorEditor),
+                )
+                .await?
+                {
+                    Response::Delivered { subscribers: 0 } => anyhow::bail!(
+                        "the Aujar UI is not running (try `systemctl --user start aujar-ui.service`)"
+                    ),
+                    Response::Error(message) => anyhow::bail!(message),
+                    _ => {}
                 }
-                Response::Error(message) => anyhow::bail!(message),
-                other => println!("{other:?}"),
-            },
+            }
+            ColorAction::Pick => {
+                // The UI shows the picker. Only when nothing is listening, use the desktop's own.
+                let delivered = send(
+                    &resolve_socket(),
+                    Request::Launcher(LauncherCommand::ColorPicker),
+                )
+                .await;
+
+                if matches!(delivered, Ok(Response::Delivered { subscribers }) if subscribers > 0) {
+                    return Ok(());
+                }
+
+                match send(&resolve_socket(), Request::PickColor).await? {
+                    Response::Color(color) => {
+                        let settings = aujar_config::Settings::load_or_default();
+                        let picked = aujar_color::Rgb::parse_hex(&color.hex)
+                            .unwrap_or(aujar_color::Rgb::new(0, 0, 0));
+                        let format = settings.color_picker.formats.iter().find(|format| {
+                            format.enabled
+                                && format
+                                    .name
+                                    .eq_ignore_ascii_case(&settings.color_picker.default_format)
+                        });
+                        let copied = format.map_or_else(
+                            || picked.to_hex(),
+                            |format| picked.format(&format.pattern),
+                        );
+                        if let Err(error) = copy_color_to_clipboard(&copied) {
+                            eprintln!("Could not copy color to clipboard: {error}");
+                        }
+                        println!("{}\n{}\n{}", color.hex, color.rgb, color.hsl);
+                    }
+                    Response::Error(message) => anyhow::bail!(message),
+                    other => println!("{other:?}"),
+                }
+            }
             ColorAction::Convert { value } => {
                 let color = aujar_color::Rgb::parse_hex(&value).ok_or_else(|| {
                     anyhow::anyhow!("`{value}` is not a hex color (try #FF8800 or f80)")

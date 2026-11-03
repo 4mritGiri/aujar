@@ -526,27 +526,72 @@ impl Default for ColorPicker {
             formats: vec![
                 ColorFormat {
                     name: "HEX".into(),
-                    pattern: "{hex}".into(),
+                    pattern: "%ReX%GrX%BlX".into(),
                     enabled: true,
                 },
                 ColorFormat {
                     name: "RGB".into(),
-                    pattern: "rgb({r}, {g}, {b})".into(),
+                    pattern: "rgb(%Re, %Gr, %Bl)".into(),
                     enabled: true,
                 },
                 ColorFormat {
                     name: "HSL".into(),
-                    pattern: "hsl({h}, {s}%, {l}%)".into(),
+                    pattern: "hsl(%Hu, %Sl%, %Ll%)".into(),
                     enabled: true,
                 },
                 ColorFormat {
                     name: "HSV".into(),
-                    pattern: "hsv({h}, {s}%, {v}%)".into(),
+                    pattern: "hsv(%Hu, %Sb%, %Va%)".into(),
                     enabled: true,
                 },
                 ColorFormat {
                     name: "CMYK".into(),
-                    pattern: "cmyk({c}%, {m}%, {y}%, {k}%)".into(),
+                    pattern: "cmyk(%Cy%, %Ma%, %Ye%, %Bk%)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "HSB".into(),
+                    pattern: "hsb(%Hu, %Sb%, %Br%)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "HSI".into(),
+                    pattern: "hsi(%Hu, %Si%, %In%)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "HWB".into(),
+                    pattern: "hwb(%Hu, %Wh%, %Bn%)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "NCol".into(),
+                    pattern: "%Hn, %Wh%, %Bn%".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "CIEXYZ".into(),
+                    pattern: "XYZ(%Xv, %Yv, %Zv)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "CIELAB".into(),
+                    pattern: "CIELab(%Lc, %Ca, %Cb)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "VEC4".into(),
+                    pattern: "(%Ref, %Grf, %Blf, 1f)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "Decimal".into(),
+                    pattern: "%Dv".into(),
+                    enabled: true,
+                },
+                ColorFormat {
+                    name: "HEX Int".into(),
+                    pattern: "0xFF%ReX%GrX%BlX".into(),
                     enabled: true,
                 },
             ],
@@ -583,7 +628,7 @@ impl Default for ColorFormat {
     fn default() -> Self {
         Self {
             name: String::new(),
-            pattern: "{hex}".into(),
+            pattern: "%ReX%GrX%BlX".into(),
             enabled: true,
         }
     }
@@ -689,6 +734,26 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_older_color_picker_section_keeps_its_formats() {
+        let settings: Settings = toml::from_str(
+            r##"
+            [color_picker]
+            default_format = "HEX"
+
+            [[color_picker.formats]]
+            name = "HEX"
+            pattern = "{hex}"
+            enabled = true
+            "##,
+        )
+        .unwrap();
+        let settings = settings.sanitized();
+
+        assert_eq!(settings.color_picker.formats.len(), 1);
+        assert_eq!(settings.color_picker.formats[0].pattern, "{hex}");
+    }
 
     #[test]
     fn empty_file_gives_defaults() {
