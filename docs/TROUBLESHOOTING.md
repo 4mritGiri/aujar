@@ -78,6 +78,13 @@ Undo with `systemctl --user stop app-dev.aujar.Aujar.service`, delete that file,
 **Workaround that works:** `aujar shortcut install`, or bind `aujar launcher toggle` manually with
 the absolute path `aujar doctor` prints. Neither needs the portal.
 
+## The color picker shortcut opens the editor, not the picker
+
+That is the activation behavior in Settings, Color Picker. "Open editor" opens the editor first
+(use its "Pick a color" button); "Pick a color first" starts the desktop's color picker right away,
+and the editor opens with the color after you pick. Aujar uses the desktop's own picker, so it
+never takes a screenshot of your screen.
+
 ## `aujar color pick` seems to hang
 
 It waits for you: the desktop shows a picker overlay (crosshair); click a pixel to choose it, or

@@ -49,7 +49,7 @@ the current target's machine-readable feature support report.
 | Workspace manager | Workspaces | `modules/workspace` | 🚧 stub (not in workspace) | 📅 | 📅 | 📅 | ⚠️ | Save/restore app layouts |
 | Always on top | Always On Top | `modules/window` | 📅 | 📅 (`_NET_WM_STATE_ABOVE`) | ⚠️ (Hyprland pin / Sway sticky) | 📅 (KWin) | ⚠️ (extension) | ❌ on generic Wayland |
 | Clipboard history | Advanced Paste / Win+V | `modules/clipboard` | 🚧 in-memory store | 📅 | 📅 (`wlr-data-control`) | 📅 (`ext-data-control`) | ⚠️ (no data-control; needs extension) | Sensitive-app exclusion planned |
-| Color picker | Color Picker | `modules/color` | 🚧 CLI + IPC: portal screen pick, hex/rgb/hsl conversion; overlay UI and history 📅 | 🚧 (portal) | 🚧 (portal) | 🚧 (portal) | 🚧 (portal) | `xdg-desktop-portal` Screenshot |
+| Color picker | Color Picker | `modules/color`, `apps/aujar-ui` | 🚧 Desktop color picker (portal) plus a PowerToys-style editor: history, shade bar, fine-tuning, copy per format, export; PowerToys format tokens | 🚧 (portal) | 🚧 (portal) | 🚧 (portal) | 🚧 (portal) | `xdg-desktop-portal` Screenshot |
 | Screen ruler | Screen Ruler | `modules/ruler` | 🚧 stub | 📅 | 📅 (portal screencast) | 📅 | 📅 | Requires screen-capture permission |
 | Global hotkeys | (all modules) | `aujar-hotkeys` | 🚧 native portal route fails on GNOME 50 (app id required); `aujar shortcut install` (GNOME) and manual binding work ([HOTKEYS](HOTKEYS.md)) | 📅 (XGrabKey) | 📅 (portal GlobalShortcuts) | 📅 (portal) | 📅 (portal) | |
 | Quick preview | Peek | — | 📅 | 📅 | 📅 | 📅 | 📅 | |

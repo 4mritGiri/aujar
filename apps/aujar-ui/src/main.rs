@@ -12,6 +12,8 @@
 
 mod assets;
 mod clips;
+mod color_editor;
+mod color_picker;
 mod model;
 mod settings_view;
 mod theme;
@@ -99,6 +101,12 @@ enum UiMessage {
     RecentFiles(Vec<SearchHit>),
     /// A thumbnail (PDF page, video frame, ...) was made; redraw the preview and the tiles.
     ThumbReady,
+    /// Start picking a color from the screen with the desktop's own picker.
+    ColorPick,
+    /// A color was picked: copy it, remember it and show it in the editor.
+    ColorPicked(aujar_color::Rgb),
+    /// Open the color editor.
+    ColorEditor,
 }
 
 /// UI thread -> bridge thread.
@@ -5589,6 +5597,7 @@ fn capture_clip(clips: &mut Vec<ClipEntry>, item: ClipboardItem) {
 struct UiState {
     launcher: Option<WindowHandle<LauncherView>>,
     settings: Option<WindowHandle<SettingsView>>,
+    color_editor: Option<WindowHandle<color_editor::ColorEditorView>>,
     /// Clipboard history, newest first (memory only).
     clips: Vec<ClipEntry>,
 }
@@ -5616,6 +5625,14 @@ fn handle_message(
         state.settings = None;
     }
 
+    if state
+        .color_editor
+        .as_ref()
+        .is_some_and(|handle| handle.update(cx, |_, _, _| ()).is_err())
+    {
+        state.color_editor = None;
+    }
+
     match message {
         UiMessage::Launcher(LauncherCommand::Settings) | UiMessage::OpenSettings => {
             // Replace any existing settings window: it re-reads the file and comes to front.
@@ -5625,6 +5642,25 @@ fn handle_message(
 
             state.settings = open_settings(cx);
         }
+        UiMessage::Launcher(LauncherCommand::ColorPicker) => {
+            let settings = Settings::load_or_default();
+
+            if settings.color_picker.enabled {
+                match settings.color_picker.activation_behavior {
+                    aujar_config::ColorPickerActivation::PickColorFirst => {
+                        color_picker::start_pick(cx)
+                    }
+                    aujar_config::ColorPickerActivation::OpenEditor => {
+                        color_picker::open_editor(cx, state)
+                    }
+                }
+            }
+        }
+        UiMessage::Launcher(LauncherCommand::ColorEditor) | UiMessage::ColorEditor => {
+            color_picker::open_editor(cx, state)
+        }
+        UiMessage::ColorPick => color_picker::start_pick(cx),
+        UiMessage::ColorPicked(color) => color_picker::picked(cx, state, color),
         UiMessage::Launcher(command) => {
             let is_open = state.launcher.is_some();
             debug(&format!(
@@ -6104,11 +6140,19 @@ mod tests {
 
         // GNOME on Wayland (Ubuntu says "ubuntu:GNOME") must not be polled.
         assert!(!background_clipboard_is_safe(true, Some("GNOME"), None));
-        assert!(!background_clipboard_is_safe(true, Some("ubuntu:GNOME"), None));
+        assert!(!background_clipboard_is_safe(
+            true,
+            Some("ubuntu:GNOME"),
+            None
+        ));
         assert!(!background_clipboard_is_safe(true, None, Some("gnome")));
 
         // wlroots and KDE support data-control, so the watcher works there.
-        assert!(background_clipboard_is_safe(true, Some("KDE"), Some("plasma")));
+        assert!(background_clipboard_is_safe(
+            true,
+            Some("KDE"),
+            Some("plasma")
+        ));
         assert!(background_clipboard_is_safe(true, Some("sway"), None));
         assert!(background_clipboard_is_safe(true, None, None));
     }

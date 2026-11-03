@@ -1,4 +1,5 @@
 mod convert;
+mod formats;
 mod picker;
 
 pub use convert::Rgb;

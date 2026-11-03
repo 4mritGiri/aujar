@@ -28,7 +28,7 @@ One request per connection, one response, then the daemon closes it.
 | `Rename{...}` | `Rename{...}` | `filesystem` |
 | `Status` | `Status{subscribers, hotkeys}` | — |
 | `PickColor` | `Color{hex, rgb, hsl}` (waits until the user picks or cancels) | `screen_capture` |
-| `Launcher("Show"\|"Hide"\|"Toggle")` | `Delivered{subscribers}` | — |
+| `Launcher("Show"\|"Hide"\|"Toggle"\|"Settings"\|"ColorPicker"\|"ColorEditor")` | `Delivered{subscribers}` | — |
 | `Subscribe` | `Subscribed`, then events | — |
 | `MouseBorders(Status\|GenerateKey\|ShowKey\|SetKey\|Reload)` | `MouseBorders(Status\|Key\|NoKey\|Done)` | — |
 | `MouseBorders(Switch\|SetEasyMouse\|LockAll\|Reconnect\|MultiMachineInput)` | `MouseBorders(Done{message})` | `control_input` |
@@ -48,6 +48,7 @@ Any request can instead return `Error("message")`, including when policy denies 
 | Event | Meaning |
 |---|---|
 | `Launcher(Show\|Hide\|Toggle)` | A trigger (keyboard shortcut, CLI) wants the launcher UI shown/hidden |
+| `Launcher(ColorPicker\|ColorEditor)` | The color picker shortcut (starts the desktop color picker or the editor, as set up in settings), or the color editor |
 | `Shutdown` | Daemon is exiting; the stream ends after this event |
 
 Limits: at most 16 concurrent subscribers; a subscriber that falls more than 64 events behind

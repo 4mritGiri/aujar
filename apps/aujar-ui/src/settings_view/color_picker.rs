@@ -2,222 +2,35 @@
 
 use super::SettingsView;
 use aujar_color::Rgb;
-use aujar_ipc::{Request, Response};
-use gpui::{AnyElement, ClipboardItem, Context, SharedString, div, prelude::*, px, rgb, rgba};
-use std::time::Duration;
+use gpui::{AnyElement, ClipboardItem, Context, SharedString, div, prelude::*, rgba};
 
 impl SettingsView {
     pub(super) fn color_picker_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let color = Rgb::parse_hex(&self.color_hex).unwrap_or(Rgb::new(108, 140, 255));
-        let hex = color.to_hex();
-        let rgb_text = color.to_rgb_string();
-        let hsl_text = color.to_hsl_string();
         let pal = self.palette;
         let picker_settings = self.settings.color_picker.clone();
-        let default_format_name = picker_settings.default_format.clone();
-        let formats_for_pick = picker_settings.formats.clone();
 
         let sample = self
-            .pill(
-                "color-pick-screen".into(),
-                if self.color_picking {
-                    "Picking…"
-                } else {
-                    "Pick from screen"
-                },
-                true,
-            )
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                if this.color_picking || !this.settings.color_picker.enabled {
-                    return;
+            .pill("color-pick-screen".into(), "Pick from screen", true)
+            .on_click(cx.listener(|this, _event, _window, _cx| {
+                if this.settings.color_picker.enabled {
+                    crate::color_picker::send_to_ui(crate::UiMessage::ColorPick);
                 }
-                let formats_for_pick = formats_for_pick.clone();
-                let default_format_name = default_format_name.clone();
-                this.color_picking = true;
-                this.status = Some("Move to a pixel and select it in the desktop picker".into());
-                cx.notify();
-                cx.spawn(async move |this, cx| {
-                    let result = cx
-                        .background_executor()
-                        .spawn(async {
-                            let runtime = tokio::runtime::Builder::new_current_thread()
-                                .enable_all()
-                                .build();
-                            match runtime {
-                                Ok(runtime) => runtime.block_on(async {
-                                    tokio::time::timeout(
-                                        Duration::from_secs(125),
-                                        aujar_ipc::send(crate::socket_path(), Request::PickColor),
-                                    )
-                                    .await
-                                    .map_err(|_| "Color picker timed out".to_owned())?
-                                    .map_err(|e| e.to_string())
-                                }),
-                                Err(e) => Err(e.to_string()),
-                            }
-                        })
-                        .await;
-                    let _ = this.update(cx, |this, cx| {
-                        this.color_picking = false;
-                        match result {
-                            Ok(Response::Color(color)) => {
-                                this.color_hex = color.hex;
-                                let picked = this.color_hex.clone();
-                                this.remember_color(picked);
-                                let selected =
-                                    Rgb::parse_hex(&this.color_hex).unwrap_or(Rgb::new(0, 0, 0));
-                                let output = formats_for_pick
-                                    .iter()
-                                    .find(|format| {
-                                        format.enabled
-                                            && format
-                                                .name
-                                                .eq_ignore_ascii_case(&default_format_name)
-                                    })
-                                    .map(|format| format_color(format, selected))
-                                    .unwrap_or_else(|| this.color_hex.clone());
-                                cx.write_to_clipboard(ClipboardItem::new_string(output));
-                                this.status = Some("Color added to recent colors".into());
-                            }
-                            Ok(Response::Error(message)) => this.status = Some(message),
-                            Ok(other) => {
-                                this.status = Some(format!("Unexpected response: {other:?}"))
-                            }
-                            Err(error) => {
-                                this.status = Some(format!("Could not pick color: {error}"))
-                            }
-                        }
-                        cx.notify();
-                    });
-                })
-                .detach();
             }));
-
-        let preview = div()
-            .flex()
-            .items_center()
-            .gap_4()
-            .px_5()
-            .py_4()
-            .child(
-                div()
-                    .w(px(72.))
-                    .h(px(72.))
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(rgba(pal.border))
-                    .bg(rgb((u32::from(color.r) << 16)
-                        | (u32::from(color.g) << 8)
-                        | u32::from(color.b))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xl()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(hex.clone()),
-                    )
-                    .child(div().text_sm().text_color(rgb(pal.text_dim)).child(
-                        if picker_settings.show_color_name {
-                            color_name(color)
-                        } else {
-                            "Selected color"
-                        },
-                    )),
-            );
-
-        let copy_row = |this: &Self, label: &'static str, text: String, cx: &mut Context<Self>| {
-            let copy_text = text.clone();
-            let control = this
-                .pill(SharedString::from(format!("copy-{label}")), "Copy", false)
-                .on_click(cx.listener(move |_this, _event, _window, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
-                }));
-            this.row(label, &text, control)
-        };
-
-        let mut history = Vec::new();
-        for (index, item) in self.color_history.iter().enumerate() {
-            if let Some(c) = Rgb::parse_hex(item) {
-                let value = item.clone();
-                history.push(
-                    div()
-                        .id(SharedString::from(format!("color-history-{index}")))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_2()
-                        .py_2()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .child(
-                            div()
-                                .size(px(26.))
-                                .rounded_full()
-                                .bg(rgb((u32::from(c.r) << 16)
-                                    | (u32::from(c.g) << 8)
-                                    | u32::from(c.b))),
-                        )
-                        .child(div().text_sm().child(item.clone()))
-                        .on_click(cx.listener(move |this, _event, _window, cx| {
-                            this.color_hex = value.clone();
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                );
-            }
-        }
-        let history_controls = self
+        let editor = self
+            .pill("color-open-editor".into(), "Open editor", false)
+            .on_click(cx.listener(|this, _event, _window, _cx| {
+                if this.settings.color_picker.enabled {
+                    crate::color_picker::send_to_ui(crate::UiMessage::ColorEditor);
+                }
+            }));
+        let clear_history = self
             .pill("clear-color-history".into(), "Clear history", false)
             .on_click(cx.listener(|this, _event, _window, cx| {
-                this.color_history.clear();
-                this.color_hex = "#6C8CFF".to_owned();
-                let _ = std::fs::remove_file(super::color_history_path());
+                let _ = std::fs::remove_file(crate::color_picker::history_path());
                 this.status = Some("Color history cleared".to_owned());
                 cx.notify();
             }));
-
-        let mut rows = vec![self.row(
-            "Screen eyedropper",
-            "Uses your desktop's secure color picker",
-            sample,
-        )];
-        let edit_hex = self
-            .pill("edit-color-hex".into(), &hex, false)
-            .on_click(cx.listener(|this, _event, _window, cx| {
-                this.start_edit(super::EditTarget::ColorHex, this.color_hex.clone(), cx)
-            }));
-        let copy_hex_text = hex.clone();
-        let copy_hex = self
-            .pill("copy-hex".into(), "Copy", false)
-            .on_click(cx.listener(move |_this, _event, _window, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(copy_hex_text.clone()));
-            }));
-        rows.push(
-            self.row(
-                "HEX",
-                "Click the value to edit it",
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(edit_hex)
-                    .child(copy_hex),
-            ),
-        );
-        if self
-            .editing
-            .as_ref()
-            .is_some_and(|e| e.target == super::EditTarget::ColorHex)
-        {
-            rows.extend(self.editor_row("Enter a HEX color such as #FF8800 or #F80", false, cx));
-        }
-        rows.push(copy_row(self, "RGB", rgb_text, cx));
-        rows.push(copy_row(self, "HSL", hsl_text, cx));
 
         let activation = self.choices(
             aujar_config::ColorPickerActivation::ALL
@@ -294,6 +107,24 @@ impl SettingsView {
                 activation,
             ),
         ];
+        let picker_rows = vec![
+            self.row(
+                "Pick from screen",
+                "Uses your desktop's color picker, then opens the editor",
+                sample,
+            ),
+            self.row(
+                "Color editor",
+                "History, every format, fine-tuning and export",
+                editor,
+            ),
+            self.row(
+                "History",
+                "Up to 20 colors, saved on this device",
+                clear_history,
+            ),
+        ];
+
         let formats_available = self.choices(
             picker_settings
                 .formats
@@ -436,7 +267,7 @@ impl SettingsView {
                 .as_ref()
                 .is_some_and(|edit| edit.target == super::EditTarget::ColorFormat(Some(index)))
             {
-                format_rows.extend(self.editor_row("Format: name | pattern. Tokens: {hex}, {r}, {g}, {b}, {h}, {s}, {l}, {v}, {c}, {m}, {y}, {k}", false, cx));
+                format_rows.extend(self.editor_row("Format: name | pattern. Tokens: %Re %Gr %Bl (add X for hex: %ReX), %Hu %Sl %Ll %Sb %Va %Cy %Ma %Ye %Bk %Wh %Bn %Na ...", false, cx));
             }
         }
         let add_format = self
@@ -444,7 +275,7 @@ impl SettingsView {
             .on_click(cx.listener(|this, _event, _window, cx| {
                 this.start_edit(
                     super::EditTarget::ColorFormat(None),
-                    "New format | {hex}".into(),
+                    "New format | %ReX%GrX%BlX".into(),
                     cx,
                 );
             }));
@@ -452,7 +283,7 @@ impl SettingsView {
             0,
             self.row(
                 "Color formats",
-                "Enable, edit, remove, or reorder formats",
+                "Enable, edit, remove or reorder. Patterns use PowerToys tokens such as %ReX%GrX%BlX",
                 add_format,
             ),
         );
@@ -461,52 +292,14 @@ impl SettingsView {
             .as_ref()
             .is_some_and(|edit| edit.target == super::EditTarget::ColorFormat(None))
         {
-            format_rows.extend(self.editor_row("Format: name | pattern. Tokens: {hex}, {r}, {g}, {b}, {h}, {s}, {l}, {v}, {c}, {m}, {y}, {k}", false, cx));
+            format_rows.extend(self.editor_row("Format: name | pattern. Tokens: %Re %Gr %Bl (add X for hex: %ReX), %Hu %Sl %Ll %Sb %Va %Cy %Ma %Ye %Bk %Wh %Bn %Na ...", false, cx));
         }
 
-        let history = if history.is_empty() {
-            vec![
-                div()
-                    .px_4()
-                    .py_3()
-                    .text_sm()
-                    .text_color(rgb(pal.text_dim))
-                    .child("Picked colors will appear here.")
-                    .into_any_element(),
-            ]
-        } else {
-            history
-        };
         vec![
             self.section("Shortcut", settings_rows),
+            self.section("Picker", picker_rows),
             self.section("Color formats", format_rows),
-            self.section("Selected color", vec![preview.into_any_element()]),
-            self.section("Color values", rows),
-            self.section(
-                "Recent colors",
-                vec![
-                    self.row(
-                        "History",
-                        "Up to 20 colors, saved on this device",
-                        history_controls,
-                    ),
-                    self.card(history).into_any_element(),
-                ],
-            ),
         ]
-    }
-
-    pub(super) fn remember_color(&mut self, value: String) {
-        self.color_history
-            .retain(|entry| !entry.eq_ignore_ascii_case(&value));
-        self.color_history.insert(0, value);
-        self.color_history.truncate(20);
-        let contents = self.color_history.join("\n");
-        let path = super::color_history_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(path, contents);
     }
 }
 
@@ -538,54 +331,4 @@ fn install_gnome_color_shortcut(shortcut: &str) -> Result<(), String> {
 
 fn format_color(format: &aujar_config::ColorFormat, color: Rgb) -> String {
     color.format(&format.pattern)
-}
-
-fn color_name(color: Rgb) -> &'static str {
-    let (h, s, l) = color.to_hsl();
-    if s < 8 {
-        return if l < 18 {
-            "Black"
-        } else if l > 88 {
-            "White"
-        } else {
-            "Gray"
-        };
-    }
-    let hue_name = match h {
-        15..=44 => "Orange",
-        45..=74 => "Yellow",
-        75..=104 => "Lime",
-        105..=149 => "Green",
-        150..=179 => "Mint",
-        180..=204 => "Cyan",
-        205..=224 => "Azure",
-        225..=254 => "Blue",
-        255..=284 => "Violet",
-        285..=314 => "Magenta",
-        315..=344 => "Rose",
-        _ => "Red",
-    };
-    if l < 24 {
-        match hue_name {
-            "Orange" | "Yellow" | "Lime" => "Dark Brown",
-            "Green" | "Mint" => "Dark Green",
-            "Cyan" | "Azure" => "Dark Teal",
-            "Blue" => "Dark Blue",
-            "Violet" | "Magenta" => "Dark Purple",
-            "Rose" | "Red" => "Dark Red",
-            _ => "Dark Gray",
-        }
-    } else if l > 82 {
-        match hue_name {
-            "Orange" | "Yellow" => "Light Yellow",
-            "Lime" | "Green" => "Light Green",
-            "Mint" | "Cyan" => "Light Cyan",
-            "Azure" | "Blue" => "Light Blue",
-            "Violet" | "Magenta" => "Light Purple",
-            "Rose" | "Red" => "Light Pink",
-            _ => "Light Gray",
-        }
-    } else {
-        hue_name
-    }
 }
