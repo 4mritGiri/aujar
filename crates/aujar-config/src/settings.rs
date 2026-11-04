@@ -580,6 +580,11 @@ impl Default for ColorPicker {
                     enabled: true,
                 },
                 ColorFormat {
+                    name: "OKLCH".into(),
+                    pattern: "oklch(%Lo% %Co %Ho)".into(),
+                    enabled: true,
+                },
+                ColorFormat {
                     name: "VEC4".into(),
                     pattern: "(%Ref, %Grf, %Blf, 1f)".into(),
                     enabled: true,

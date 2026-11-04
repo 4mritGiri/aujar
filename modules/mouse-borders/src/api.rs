@@ -92,6 +92,15 @@ pub struct MouseBordersPeer {
     pub last_error: Option<String>,
 }
 
+/// One screen edge and the machine the pointer reaches by crossing it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MouseBordersLink {
+    pub from: String,
+    /// `left`, `right`, `top` or `bottom`.
+    pub edge: String,
+    pub to: String,
+}
+
 /// Service state in a form independent of the module crate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MouseBordersStatus {
@@ -109,7 +118,44 @@ pub struct MouseBordersStatus {
     pub edge_switching_unavailable: Option<String>,
     pub capture_unavailable: Option<String>,
     pub peers: Vec<MouseBordersPeer>,
+    /// This machine's number for Ctrl+Alt+number (counting from 0).
+    #[serde(default)]
+    pub local_slot: Option<u8>,
+    /// Which machine each screen edge leads to.
+    #[serde(default)]
+    pub layout: Vec<MouseBordersLink>,
     pub log: Vec<String>,
+}
+
+impl MouseBordersStatus {
+    /// While another machine has the keyboard and mouse: how to get back, by pointer and by
+    /// shortcut. `None` when this machine has them.
+    pub fn way_home(&self) -> Option<String> {
+        if self.focus == self.local {
+            return None;
+        }
+
+        let by_pointer: Vec<String> = self
+            .layout
+            .iter()
+            .filter(|link| link.from == self.focus)
+            .map(|link| format!("past the {} edge to {}", link.edge, link.to))
+            .collect();
+        let by_shortcut = self
+            .local_slot
+            .map(|slot| format!("press Ctrl+Alt+{}", u16::from(slot) + 1));
+
+        let mut ways = Vec::new();
+
+        if !by_pointer.is_empty() {
+            ways.push(format!("push the pointer {}", by_pointer.join(", or ")));
+        }
+
+        ways.extend(by_shortcut);
+
+        (!ways.is_empty())
+            .then(|| format!("To come back from {}: {}.", self.focus, ways.join(", or ")))
+    }
 }
 
 /// Carry out a request against the running service. The error is a message for the user.
@@ -242,6 +288,16 @@ pub fn status(report: ServiceReport) -> MouseBordersStatus {
                 last_error: peer.last_error,
             })
             .collect(),
+        local_slot: engine.local_slot,
+        layout: engine
+            .layout
+            .into_iter()
+            .map(|link| MouseBordersLink {
+                from: link.from,
+                edge: link.edge,
+                to: link.to,
+            })
+            .collect(),
         log: engine.log.into_iter().collect(),
     }
 }
@@ -249,6 +305,58 @@ pub fn status(report: ServiceReport) -> MouseBordersStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn two_machines() -> MouseBordersStatus {
+        let mut status = status(ServiceReport {
+            state: ServiceState::Running,
+            engine: None,
+        });
+
+        status.local = "desk".into();
+        status.focus = "desk".into();
+        status.local_slot = Some(0);
+        status.layout = vec![
+            MouseBordersLink {
+                from: "desk".into(),
+                edge: "right".into(),
+                to: "laptop".into(),
+            },
+            MouseBordersLink {
+                from: "laptop".into(),
+                edge: "left".into(),
+                to: "desk".into(),
+            },
+        ];
+
+        status
+    }
+
+    #[test]
+    fn the_way_home_is_named_only_while_away() {
+        let mut status = two_machines();
+
+        assert_eq!(status.way_home(), None);
+
+        status.focus = "laptop".into();
+
+        assert_eq!(
+            status.way_home().as_deref(),
+            Some(
+                "To come back from laptop: push the pointer past the left edge to desk, \
+                 or press Ctrl+Alt+1."
+            )
+        );
+
+        // Without a layout or a slot there is less to say, but never nothing wrong.
+        status.layout.clear();
+        assert_eq!(
+            status.way_home().as_deref(),
+            Some("To come back from laptop: press Ctrl+Alt+1.")
+        );
+
+        status.local_slot = None;
+        assert_eq!(status.way_home(), None);
+    }
 
     #[test]
     fn every_service_state_has_a_stable_name_and_helpful_detail() {

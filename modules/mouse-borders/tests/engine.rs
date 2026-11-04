@@ -624,6 +624,54 @@ async fn the_clipboard_follows_you_to_the_machine_you_enter() {
     }
 }
 
+/// Both laptops' own mouse and keyboard can take control of the other one.
+#[tokio::test]
+async fn pushing_the_controlled_machines_own_mouse_to_its_edge_takes_over() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let row = ["alpha", "beta"];
+    let alpha = start("alpha", &row, &ports, &key, true, |_| {}).await;
+    let beta = start("beta", &row, &ports, &key, true, |_| {}).await;
+    connected(&[&alpha, &beta], 1).await;
+
+    // Alpha controls beta (the shortcut, or crossing the edge).
+    alpha
+        .handle
+        .request(Command::SwitchTo(Some(name("beta"))))
+        .await
+        .unwrap();
+    eventually("beta controlled", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+
+    // Beta's own mouse pushes against its far edge: nothing is there, nothing happens.
+    beta.desktop.set_pointer(Position { x: 1919, y: 500 });
+    beta.source
+        .send(CapturedInput::PointerMotion { dx: 5, dy: 0 });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        beta.handle.status().controlled_by.as_deref(),
+        Some("alpha"),
+        "no machine beyond that edge"
+    );
+
+    // Its left edge is where alpha sits in the row: beta takes over alpha.
+    beta.desktop.set_pointer(Position { x: 0, y: 500 });
+    beta.source
+        .send(CapturedInput::PointerMotion { dx: -5, dy: 0 });
+
+    eventually("beta controls alpha", || {
+        alpha.handle.status().controlled_by.as_deref() == Some("beta")
+    })
+    .await;
+    assert!(beta.handle.status().controlled_by.is_none());
+
+    for node in [alpha, beta] {
+        node.handle.stop().await;
+    }
+}
+
 /// GNOME on Wayland: no background reads, so the clipboard is read when control moves.
 #[tokio::test]
 async fn the_clipboard_follows_you_without_background_reads() {

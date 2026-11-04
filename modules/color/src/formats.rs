@@ -7,6 +7,8 @@ use crate::Rgb;
 /// A color shown in every model a format can ask for.
 struct Values {
     rgb: Rgb,
+    /// `0..=255`, 255 for a picked color.
+    alpha: u8,
     /// Degrees, `0.0..360.0`.
     hue: f64,
     hsl_s: f64,
@@ -20,10 +22,12 @@ struct Values {
     cmyk: [f64; 4],
     xyz: [f64; 3],
     lab: [f64; 3],
+    /// OKLCH: lightness `0..1`, chroma `0..~0.4`, hue in degrees.
+    ok: [f64; 3],
 }
 
 impl Values {
-    fn new(rgb: Rgb) -> Self {
+    fn new(rgb: Rgb, alpha: u8) -> Self {
         let (r, g, b) = rgb.unit();
         let (hue, hsv_s, hsv_v) = rgb.to_hsv();
         let (_, hsl_s, hsl_l) = rgb.to_hsl_f64();
@@ -47,8 +51,12 @@ impl Values {
         let xyz = to_xyz(r, g, b);
         let lab = to_lab(xyz);
 
+        let (ok_l, ok_c, ok_h) = rgb.to_oklch();
+
         Self {
             rgb,
+            alpha,
+            ok: [ok_l, ok_c, ok_h],
             hue,
             hsl_s,
             hsl_l,
@@ -89,6 +97,9 @@ impl Values {
             "Xv" => decimals(self.xyz[0]),
             "Yv" => decimals(self.xyz[1]),
             "Zv" => decimals(self.xyz[2]),
+            "Lo" => percent(self.ok[0]),
+            "Co" => decimals(self.ok[1]),
+            "Ho" => whole(self.ok[2].round() % 360.0),
             "Dv" => {
                 (u32::from(self.rgb.r) << 16 | u32::from(self.rgb.g) << 8 | u32::from(self.rgb.b))
                     .to_string()
@@ -136,7 +147,7 @@ impl Rgb {
     }
 
     /// Hue in degrees, saturation and lightness in `0.0..=1.0`.
-    fn to_hsl_f64(self) -> (f64, f64, f64) {
+    pub fn to_hsl_f64(self) -> (f64, f64, f64) {
         let (r, g, b) = self.unit();
         let max = r.max(g).max(b);
         let min = r.min(g).min(b);
@@ -174,7 +185,7 @@ impl Rgb {
     }
 
     /// Hue in degrees (any value, wrapped), saturation and lightness in `0.0..=1.0`.
-    fn from_hsl(hue: f64, saturation: f64, lightness: f64) -> Self {
+    pub fn from_hsl(hue: f64, saturation: f64, lightness: f64) -> Self {
         let lightness = lightness.clamp(0.0, 1.0);
         let saturation = saturation.clamp(0.0, 1.0);
         let value = lightness + saturation * lightness.min(1.0 - lightness);
@@ -203,6 +214,63 @@ impl Rgb {
         };
 
         (shades(0.96), shades(0.06))
+    }
+
+    /// OKLCH: lightness `0.0..=1.0`, chroma (`0.0` gray up to about `0.4`) and hue in degrees.
+    pub fn to_oklch(self) -> (f64, f64, f64) {
+        let (r, g, b) = self.unit();
+        let [lightness, a, b] = to_oklab(linear(r), linear(g), linear(b));
+        let chroma = a.hypot(b);
+        let hue = if chroma < 1e-4 {
+            0.0
+        } else {
+            b.atan2(a).to_degrees().rem_euclid(360.0)
+        };
+
+        (lightness, chroma, hue)
+    }
+
+    /// A color from OKLCH. A chroma the sRGB screen cannot show is lowered (lightness and hue
+    /// stay), so the result is always the closest color you can display.
+    pub fn from_oklch(lightness: f64, chroma: f64, hue: f64) -> Self {
+        let lightness = lightness.clamp(0.0, 1.0);
+        let chroma = chroma.max(0.0);
+
+        let at = |chroma: f64| {
+            let radians = hue.to_radians();
+
+            from_oklab(lightness, chroma * radians.cos(), chroma * radians.sin())
+        };
+        let inside = |[r, g, b]: [f64; 3]| {
+            let eps = 1e-6;
+
+            [r, g, b].iter().all(|c| (-eps..=1.0 + eps).contains(c))
+        };
+
+        let linear_rgb = if inside(at(chroma)) {
+            at(chroma)
+        } else {
+            // The most chroma this lightness and hue can have on screen, by bisection.
+            let (mut low, mut high) = (0.0, chroma);
+
+            for _ in 0..32 {
+                let middle = (low + high) / 2.0;
+
+                if inside(at(middle)) {
+                    low = middle;
+                } else {
+                    high = middle;
+                }
+            }
+
+            at(low)
+        };
+
+        Self::from_unit(
+            encode(linear_rgb[0]),
+            encode(linear_rgb[1]),
+            encode(linear_rgb[2]),
+        )
     }
 
     /// A high-level name such as "Light Green", "Green" or "Dark Green".
@@ -264,11 +332,16 @@ impl Rgb {
     /// PowerToys syntax: `%Re %Gr %Bl %Al` (red, green, blue, alpha; add `b h H x X f F` for the
     /// number style, e.g. `%ReX` is two uppercase hex digits), `%Cy %Ma %Ye %Bk`, `%Hu`, `%Si`,
     /// `%Sl`, `%Sb`, `%Br`, `%In`, `%Hn`, `%Ll`, `%Lc`, `%Va`, `%Wh`, `%Bn`, `%Ca`, `%Cb`, `%Xv`,
-    /// `%Yv`, `%Zv`, `%Dv` and `%Na`. Anything else is copied as written, so `hsl(%Hu, %Sl%, %Ll%)`
+    /// `%Yv`, `%Zv`, `%Dv`, `%Na` and the OKLCH values `%Lo %Co %Ho`. Anything else is copied as written, so `hsl(%Hu, %Sl%, %Ll%)`
     /// works. The older `{hex}`, `{r}`, `{g}`, `{b}`, `{h}`, `{s}`, `{l}`, `{v}`, `{c}`, `{m}`,
     /// `{y}` and `{k}` tokens still work too.
     pub fn format(self, template: &str) -> String {
-        let values = Values::new(self);
+        self.format_with_alpha(template, 255)
+    }
+
+    /// Like [`Rgb::format`] for a color that is not fully opaque: `%Al` is `alpha` (`0..=255`).
+    pub fn format_with_alpha(self, template: &str, alpha: u8) -> String {
+        let values = Values::new(self, alpha);
 
         legacy_tokens(self, &powertoys_tokens(&values, template))
     }
@@ -286,7 +359,7 @@ fn powertoys_tokens(values: &Values, template: &str) -> String {
                 "Re" => Some(values.rgb.r),
                 "Gr" => Some(values.rgb.g),
                 "Bl" => Some(values.rgb.b),
-                "Al" => Some(255),
+                "Al" => Some(values.alpha),
                 _ => None,
             };
 
@@ -339,7 +412,7 @@ fn legacy_tokens(color: Rgb, template: &str) -> String {
         return template.to_owned();
     }
 
-    let values = Values::new(color);
+    let values = Values::new(color, 255);
     let (_, hsl_s, _) = color.to_hsl();
     let saturation = if template.starts_with("hsl") {
         hsl_s.to_string()
@@ -393,6 +466,52 @@ fn natural_hue(hue: f64) -> String {
     let letter = ["R", "Y", "G", "C", "B", "M"][sector.min(5)];
 
     format!("{letter}{}", whole((hue % 60.0) / 60.0 * 100.0))
+}
+
+/// sRGB channel (`0..=1`) to linear light.
+fn linear(c: f64) -> f64 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Linear light to an sRGB channel.
+fn encode(c: f64) -> f64 {
+    let c = c.clamp(0.0, 1.0);
+
+    if c <= 0.003_130_8 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Linear sRGB to OKLab (Björn Ottosson's matrices).
+fn to_oklab(r: f64, g: f64, b: f64) -> [f64; 3] {
+    let l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b).cbrt();
+    let m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b).cbrt();
+    let s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b).cbrt();
+
+    [
+        0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+        1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+        0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+    ]
+}
+
+/// OKLab to linear sRGB (not clamped).
+fn from_oklab(lightness: f64, a: f64, b: f64) -> [f64; 3] {
+    let l = (lightness + 0.3963377774 * a + 0.2158037573 * b).powi(3);
+    let m = (lightness - 0.1055613458 * a - 0.0638541728 * b).powi(3);
+    let s = (lightness - 0.0894841775 * a - 1.2914855480 * b).powi(3);
+
+    [
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    ]
 }
 
 /// sRGB (D65) to CIE XYZ, scaled so white is `Y = 100`.
@@ -501,6 +620,66 @@ mod tests {
             format("cmyk({c}%, {m}%, {y}%, {k}%)"),
             "cmyk(0%, 47%, 100%, 0%)"
         );
+    }
+
+    #[test]
+    fn oklch_matches_known_values() {
+        let (l, c, h) = Rgb::new(0x56, 0x00, 0xD8).to_oklch();
+
+        // A deep violet: L about 45%, chroma about 0.26, hue about 286.
+        assert!((l - 0.44).abs() < 0.02, "{l}");
+        assert!((c - 0.26).abs() < 0.03, "{c}");
+        assert!((h - 286.0).abs() < 3.0, "{h}");
+
+        assert!(Rgb::new(255, 255, 255).to_oklch().1 < 1e-3);
+        assert!((Rgb::new(255, 255, 255).to_oklch().0 - 1.0).abs() < 1e-3);
+        assert!(Rgb::new(0, 0, 0).to_oklch().0.abs() < 1e-6);
+    }
+
+    #[test]
+    fn oklch_round_trips_every_color_we_try() {
+        for color in [
+            Rgb::new(0, 0, 0),
+            Rgb::new(255, 255, 255),
+            Rgb::new(255, 136, 0),
+            Rgb::new(12, 200, 99),
+            Rgb::new(108, 140, 255),
+            Rgb::new(86, 0, 216),
+            Rgb::new(128, 128, 128),
+            Rgb::new(1, 2, 3),
+        ] {
+            let (l, c, h) = color.to_oklch();
+
+            assert_eq!(Rgb::from_oklch(l, c, h), color, "{color:?}");
+        }
+    }
+
+    #[test]
+    fn too_much_chroma_is_lowered_not_wrapped() {
+        // No sRGB color has this much chroma at this lightness: we get the most there is, with
+        // the same hue, never garbage.
+        let vivid = Rgb::from_oklch(0.5, 0.4, 150.0);
+        let (l, c, h) = vivid.to_oklch();
+
+        assert!((l - 0.5).abs() < 0.02, "{l}");
+        assert!(c > 0.1 && c < 0.4, "{c}");
+        assert!((h - 150.0).abs() < 6.0, "{h}");
+
+        assert_eq!(Rgb::from_oklch(0.0, 0.3, 40.0), Rgb::new(0, 0, 0));
+        assert_eq!(Rgb::from_oklch(1.0, 0.3, 40.0), Rgb::new(255, 255, 255));
+    }
+
+    #[test]
+    fn oklch_format_tokens_and_alpha() {
+        let color = Rgb::new(0x56, 0x00, 0xD8);
+
+        assert!(
+            color
+                .format("oklch(%Lo% %Co %Ho)")
+                .starts_with("oklch(45% 0.2")
+        );
+        assert_eq!(color.format_with_alpha("%ReX%GrX%BlX%AlX", 128), "5600D880");
+        assert_eq!(color.format("%ReX%GrX%BlX%AlX"), "5600D8FF");
     }
 
     #[test]

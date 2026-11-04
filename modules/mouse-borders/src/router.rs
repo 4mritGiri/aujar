@@ -248,6 +248,34 @@ impl Router {
         })
     }
 
+    /// Where this machine's own pointer would go if it pushed against an edge now, without
+    /// going there. A machine that another one controls uses this to ask for control instead of
+    /// moving it (see `Engine::take_over_at_local_edge`).
+    pub fn local_edge_target(
+        &mut self,
+        position: Position,
+        delta: (i32, i32),
+        modifiers: Modifiers,
+        now: Instant,
+    ) -> Option<MachineName> {
+        if self.focus != Focus::Local {
+            return None;
+        }
+
+        let screen = self.screens[&self.local];
+        let position = bounds(screen).clamp(position);
+
+        self.local_position = position;
+
+        let edge = self.crossing(position, delta, screen, modifiers, now)?;
+        let to = self.target(&self.local, edge)?;
+
+        // The same pause as after a real switch, so one push asks once.
+        self.last_switch = Some(now);
+
+        Some(to)
+    }
+
     /// The pointer moved by `delta` while a remote machine has focus. Returns `None` when
     /// this machine has focus.
     pub fn on_remote_motion(
@@ -865,6 +893,83 @@ mod tests {
         let back = router.jump(&name("c"), later(now, 600)).unwrap();
 
         assert_eq!(back.entry, pos(1060, 590));
+    }
+
+    #[test]
+    fn after_a_shortcut_jump_the_pointer_still_crosses_back_at_the_edge() {
+        let mut router = trio();
+        let now = Instant::now();
+
+        // Ctrl+Alt+2: straight to `b`, in the middle of its screen.
+        let jumped = router.jump(&name("b"), now).unwrap();
+        assert_eq!(jumped.entry, pos(1280, 720));
+
+        // Moving left across the screen stays on `b` until the edge ...
+        let mut at = later(now, 300);
+        for _ in 0..12 {
+            at = later(at, 20);
+            let step = router
+                .on_remote_motion((-100, 0), Modifiers::default(), at)
+                .unwrap();
+
+            assert!(
+                matches!(step, RemoteStep::Moved { .. }),
+                "left too early: {step:?}"
+            );
+        }
+
+        // ... and the next push past the left edge returns to `a`.
+        let step = router
+            .on_remote_motion((-100, 0), Modifiers::default(), later(at, 20))
+            .unwrap();
+
+        let RemoteStep::Switched(transfer) = step else {
+            panic!("expected a switch back, got {step:?}");
+        };
+
+        assert_eq!((transfer.from, transfer.to), (name("b"), name("a")));
+        assert_eq!(router.focus(), &Focus::Local);
+    }
+
+    #[test]
+    fn an_edge_push_names_the_neighbour_without_moving_there() {
+        let mut router = trio();
+        let now = Instant::now();
+
+        // `a` is first in the row: its right edge leads to `b`, its left edge to nothing.
+        assert_eq!(
+            router.local_edge_target(pos(0, 700), (-5, 0), Modifiers::default(), now),
+            None
+        );
+        assert_eq!(
+            router.local_edge_target(pos(1919, 700), (5, 0), Modifiers::default(), now),
+            Some(name("b"))
+        );
+
+        // Nothing moved: this machine still has focus.
+        assert_eq!(router.focus(), &Focus::Local);
+
+        // A second push right away is the same push: the pause applies.
+        assert_eq!(
+            router.local_edge_target(pos(1919, 700), (5, 0), Modifiers::default(), now),
+            None
+        );
+    }
+
+    #[test]
+    fn the_far_side_of_the_layout_is_a_wall_without_a_neighbour() {
+        let mut router = trio();
+        let now = Instant::now();
+
+        // `c` is the last machine: pushing right past its edge has nowhere to go.
+        router.jump(&name("c"), now).unwrap();
+
+        let step = router
+            .on_remote_motion((5000, 0), Modifiers::default(), later(now, 500))
+            .unwrap();
+
+        assert!(matches!(step, RemoteStep::Moved { .. }), "{step:?}");
+        assert_eq!(router.focus(), &Focus::Remote(name("c")));
     }
 
     #[test]

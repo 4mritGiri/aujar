@@ -19,6 +19,15 @@ pub struct PeerStatus {
     pub last_error: Option<String>,
 }
 
+/// One edge of a machine's screen and the machine the pointer reaches by crossing it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutLink {
+    pub from: String,
+    /// `left`, `right`, `top` or `bottom`.
+    pub edge: String,
+    pub to: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {
     pub running: bool,
@@ -36,6 +45,10 @@ pub struct Status {
     /// controlled).
     pub capture_unavailable: Option<String>,
     pub peers: Vec<PeerStatus>,
+    /// This machine's number for the Ctrl+Alt+number shortcut (counting from 0).
+    pub local_slot: Option<u8>,
+    /// Which machine each screen edge leads to, from the layout.
+    pub layout: Vec<LayoutLink>,
     pub log: VecDeque<String>,
 }
 
@@ -52,6 +65,8 @@ impl Status {
             edge_switching_unavailable: None,
             capture_unavailable: None,
             peers: Vec::new(),
+            local_slot: None,
+            layout: Vec::new(),
             log: VecDeque::new(),
         }
     }

@@ -34,14 +34,14 @@ use crate::{
     config::EngineConfig,
     error::{Error, Result},
     keys::{HotkeyAction, KeyboardTracker},
-    layout::MachineName,
+    layout::{Edge, MachineName},
     link::{self, PeerLink},
     protocol::{
         ClipboardPacket, Features, FileMessage, Hello, InputEvent, Message, PROTOCOL_VERSION,
     },
     router::{Focus, RemoteStep, Router, Transfer},
     secure::SecurityKey,
-    status::{PeerStatus, Status},
+    status::{LayoutLink, PeerStatus, Status},
     transfer::{Outgoing, Receiver},
 };
 
@@ -715,6 +715,34 @@ impl Actor {
             })
             .collect();
 
+        self.status.local_slot = self.cfg.layout.shortcut_number_of(&self.cfg.local);
+        self.status.layout = self
+            .cfg
+            .layout
+            .machines()
+            .into_iter()
+            .flat_map(|machine| {
+                [
+                    (Edge::Left, "left"),
+                    (Edge::Right, "right"),
+                    (Edge::Top, "top"),
+                    (Edge::Bottom, "bottom"),
+                ]
+                .into_iter()
+                .filter_map(|(edge, label)| {
+                    self.cfg
+                        .layout
+                        .neighbor(machine, edge)
+                        .map(|to| LayoutLink {
+                            from: machine.to_string(),
+                            edge: label.to_owned(),
+                            to: to.to_string(),
+                        })
+                })
+                .collect::<Vec<_>>()
+            })
+            .collect();
+
         self.status_tx.send_replace(self.status.clone());
     }
 
@@ -896,20 +924,27 @@ impl Actor {
                     self.check_local_edge((dx, dy), now).await;
                 }
             }
-            Focus::Local => {}
+            // Another machine controls this one, and this machine's own mouse still works.
+            Focus::Local => {
+                if let CapturedInput::PointerMotion { dx, dy } = input {
+                    self.take_over_at_local_edge((dx, dy), now).await;
+                }
+            }
         }
     }
 
-    async fn check_local_edge(&mut self, delta: (i32, i32), now: Instant) {
+    /// The real pointer position, when switching at screen edges is on and works on this
+    /// machine.
+    fn edge_pointer(&mut self) -> Option<Position> {
         if !self.cfg.easy_mouse_enabled()
             || self.router.policy().easy_mouse == aujar_config::EasyMouse::Disabled
             || self.status.edge_switching_unavailable.is_some()
         {
-            return;
+            return None;
         }
 
-        let position = match self.desktop.pointer() {
-            Ok(position) => position,
+        match self.desktop.pointer() {
+            Ok(position) => Some(position),
             Err(error) => {
                 self.status.edge_switching_unavailable = Some(error.reason());
                 self.log(format!(
@@ -918,14 +953,46 @@ impl Actor {
                     error.reason()
                 ));
 
-                return;
+                None
             }
-        };
+        }
+    }
 
+    async fn check_local_edge(&mut self, delta: (i32, i32), now: Instant) {
+        let Some(position) = self.edge_pointer() else {
+            return;
+        };
         let modifiers = self.keyboard.modifiers();
 
         if let Some(transfer) = self.router.on_local_motion(position, delta, modifiers, now) {
             let _ = self.perform_transfer(transfer).await;
+        }
+    }
+
+    /// Another machine controls this one. Pushing this machine's own mouse against an edge that
+    /// leads to another machine asks the controller to let go, and then this machine takes
+    /// control of the one beyond the edge (the controller, in a row of two). So either laptop's
+    /// mouse and keyboard can take over the other.
+    async fn take_over_at_local_edge(&mut self, delta: (i32, i32), now: Instant) {
+        // One request at a time: the controller has not answered the last one yet.
+        if self.pending_request.is_some() {
+            return;
+        }
+
+        let Some(position) = self.edge_pointer() else {
+            return;
+        };
+        let modifiers = self.keyboard.modifiers();
+        let Some(target) = self
+            .router
+            .local_edge_target(position, delta, modifiers, now)
+        else {
+            return;
+        };
+
+        match self.switch_to(Some(target)).await {
+            Ok(message) => self.log(message),
+            Err(error) => self.log(format!("{error}")),
         }
     }
 
