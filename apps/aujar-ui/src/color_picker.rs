@@ -68,13 +68,28 @@ pub(crate) fn remember(color: Rgb) -> Vec<Rgb> {
 
 /// The color in the format picked as the default in settings (HEX when there is none).
 pub(crate) fn default_text(settings: &Settings, color: Rgb) -> String {
+    default_text_with_alpha(settings, color, 255)
+}
+
+/// Like [`default_text`] for a color that is not fully opaque (`alpha` is `0..=255`): formats
+/// with `%Al` carry it, and the HEX fallback gets two more digits.
+pub(crate) fn default_text_with_alpha(settings: &Settings, color: Rgb, alpha: u8) -> String {
     let picker = &settings.color_picker;
 
     picker
         .formats
         .iter()
         .find(|format| format.enabled && format.name.eq_ignore_ascii_case(&picker.default_format))
-        .map_or_else(|| color.to_hex(), |format| color.format(&format.pattern))
+        .map_or_else(
+            || {
+                if alpha == 255 {
+                    color.to_hex()
+                } else {
+                    format!("{}{alpha:02X}", color.to_hex())
+                }
+            },
+            |format| color.format_with_alpha(&format.pattern, alpha),
+        )
 }
 
 /// Tell the UI thread something (the windows talk to it through messages).
@@ -171,7 +186,7 @@ mod tests {
                     ![
                         "%Re", "%Gr", "%Bl", "%Hu", "%Sl", "%Ll", "%Sb", "%Va", "%Br", "%Cy",
                         "%Ma", "%Ye", "%Bk", "%Si", "%In", "%Hn", "%Wh", "%Bn", "%Xv", "%Yv",
-                        "%Zv", "%Lc", "%Ca", "%Cb", "%Dv"
+                        "%Zv", "%Lc", "%Ca", "%Cb", "%Dv", "%Lo", "%Co", "%Ho", "%Al"
                     ]
                     .iter()
                     .any(|token| text.contains(token)),
@@ -201,6 +216,31 @@ mod tests {
         }];
 
         assert_eq!(default_text(&settings, Rgb::new(255, 136, 0)), "#FF8800");
+    }
+
+    #[test]
+    fn alpha_reaches_the_formats_that_ask_for_it() {
+        let mut settings = Settings::default();
+
+        settings.color_picker.formats = vec![aujar_config::ColorFormat {
+            name: "HEX".into(),
+            pattern: "%ReX%GrX%BlX%AlX".into(),
+            enabled: true,
+        }];
+
+        assert_eq!(
+            default_text_with_alpha(&settings, Rgb::new(255, 136, 0), 128),
+            "FF880080"
+        );
+        assert_eq!(default_text(&settings, Rgb::new(255, 136, 0)), "FF8800FF");
+
+        // With no matching format the HEX fallback carries the alpha.
+        settings.color_picker.default_format = "Nope".into();
+
+        assert_eq!(
+            default_text_with_alpha(&settings, Rgb::new(255, 136, 0), 128),
+            "#FF880080"
+        );
     }
 
     #[test]

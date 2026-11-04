@@ -736,8 +736,11 @@ impl SettingsView {
                     (
                         format!("Running as {}", status.local),
                         format!(
-                            "{connected} of {} other machines connected. Keyboard and mouse are on {holder}.",
-                            status.peers.len()
+                            "{connected} of {} other machines connected. Keyboard and mouse are on {holder}.{}",
+                            status.peers.len(),
+                            status
+                                .way_home()
+                                .map_or_else(String::new, |way| format!(" {way}"))
                         ),
                         pal.positive,
                     )

@@ -160,6 +160,13 @@ away when you press them on the machine you are sitting at.
 
 **Always a way home:** `Ctrl+Alt+<your machine's slot>` takes the keyboard and mouse back, and
 if the machine you are controlling disconnects, input returns to you immediately.
+`aujar mwb status` (and the Mouse Borders page in Settings) shows the screen layout, which way
+each edge leads, and, while another machine has the keyboard, how to come back from it.
+
+**Both machines can control each other.** While another machine controls this one, this
+machine's own mouse still works. Push it against the screen edge that leads to the other
+machine and this machine takes control of it (in a row of two, you swap places). This needs
+edge switching to work on the controlled machine, so on Wayland use the shortcut instead.
 
 ## Command line
 
@@ -291,7 +298,10 @@ Wayland compositors deliberately do not let applications read the pointer positi
 edge switching needs. On Wayland:
 
 * Keyboard shortcuts (`Ctrl+Alt+1…4`) and every command work as usual.
-* Switching at screen edges is reported as unavailable in `aujar mwb status`.
+* Switching at screen edges is reported as unavailable in `aujar mwb status`. That includes taking
+  control back by pushing a controlled machine's own mouse against its edge: use the shortcut.
+  Coming back from a machine you control with the mouse *does* work, because the machine you sit
+  at follows the pointer itself.
 * The screen size cannot be queried: set `screen = "1920x1080"` (the DRM outputs are used as a
   best guess otherwise, assuming monitors sit side by side).
 * The absolute pointer placement uses a virtual tablet; on some multi-monitor compositors it

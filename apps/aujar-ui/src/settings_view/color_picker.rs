@@ -267,7 +267,7 @@ impl SettingsView {
                 .as_ref()
                 .is_some_and(|edit| edit.target == super::EditTarget::ColorFormat(Some(index)))
             {
-                format_rows.extend(self.editor_row("Format: name | pattern. Tokens: %Re %Gr %Bl (add X for hex: %ReX), %Hu %Sl %Ll %Sb %Va %Cy %Ma %Ye %Bk %Wh %Bn %Na ...", false, cx));
+                format_rows.extend(self.editor_row("Format: name | pattern. Tokens: %Re %Gr %Bl (add X for hex: %ReX), %Hu %Sl %Ll %Sb %Va %Cy %Ma %Ye %Bk %Wh %Bn %Lo %Co %Ho (OKLCH) %Na ...", false, cx));
             }
         }
         let add_format = self

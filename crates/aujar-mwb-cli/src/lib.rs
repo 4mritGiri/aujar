@@ -500,6 +500,52 @@ fn audit_tail(lines: usize) -> Result<()> {
     Ok(())
 }
 
+/// Which way each machine's pointer goes, and how to get back from where the keyboard is.
+fn format_layout(status: &MouseBordersStatus) -> String {
+    let mut out = String::new();
+
+    if status.layout.is_empty() {
+        return out;
+    }
+
+    let _ = writeln!(
+        out,
+        "\nScreen layout (push the pointer past an edge to go that way):"
+    );
+
+    let mut machines: Vec<&str> = Vec::new();
+
+    for link in &status.layout {
+        if !machines.contains(&link.from.as_str()) {
+            machines.push(&link.from);
+        }
+    }
+
+    for machine in machines {
+        let ways = status
+            .layout
+            .iter()
+            .filter(|link| link.from == machine)
+            .map(|link| format!("{} -> {}", link.edge, link.to))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let you = if machine == status.local {
+            " (this machine)"
+        } else {
+            ""
+        };
+
+        let _ = writeln!(out, "  {machine}{you}: {ways}");
+    }
+
+    // On another machine: the way home, by pointer and by shortcut.
+    if let Some(way) = status.way_home() {
+        let _ = writeln!(out, "{way}");
+    }
+
+    out
+}
+
 /// Human-readable status.
 pub fn format_status(status: &MouseBordersStatus) -> String {
     let mut out = String::new();
@@ -528,6 +574,8 @@ pub fn format_status(status: &MouseBordersStatus) -> String {
             if status.multi_machine_input {
                 let _ = writeln!(out, "Multi-machine input: ON (input goes to every machine)");
             }
+
+            out.push_str(&format_layout(status));
         }
         state => {
             let label = match state {
@@ -605,7 +653,7 @@ pub fn format_status(status: &MouseBordersStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aujar_mouse_borders::api::MouseBordersPeer;
+    use aujar_mouse_borders::api::{MouseBordersLink, MouseBordersPeer};
 
     fn running() -> MouseBordersStatus {
         MouseBordersStatus {
@@ -619,6 +667,19 @@ mod tests {
             listening: Some("0.0.0.0:15101".into()),
             edge_switching_unavailable: None,
             capture_unavailable: None,
+            local_slot: Some(0),
+            layout: vec![
+                MouseBordersLink {
+                    from: "desk".into(),
+                    edge: "right".into(),
+                    to: "laptop".into(),
+                },
+                MouseBordersLink {
+                    from: "laptop".into(),
+                    edge: "left".into(),
+                    to: "desk".into(),
+                },
+            ],
             peers: vec![
                 MouseBordersPeer {
                     name: "laptop".into(),
@@ -665,6 +726,35 @@ mod tests {
         assert!(text.contains("are on: laptop"));
         assert!(text.contains("Controlled by: laptop"));
         assert!(text.contains("Multi-machine input: ON"));
+    }
+
+    #[test]
+    fn status_shows_the_layout_and_the_way_home() {
+        let mut status = running();
+
+        // The keyboard is on the laptop, which sits to the right of this machine.
+        status.focus = "laptop".into();
+
+        let text = format_status(&status);
+
+        assert!(text.contains("Screen layout"), "{text}");
+        assert!(
+            text.contains("desk (this machine): right -> laptop"),
+            "{text}"
+        );
+        assert!(text.contains("laptop: left -> desk"), "{text}");
+        assert!(
+            text.contains(
+                "To come back from laptop: push the pointer past the left edge to desk, or press Ctrl+Alt+1."
+            ),
+            "{text}"
+        );
+
+        // On this machine there is no way home to explain.
+        let home = format_status(&running());
+
+        assert!(home.contains("Screen layout"));
+        assert!(!home.contains("To come back"));
     }
 
     #[test]
