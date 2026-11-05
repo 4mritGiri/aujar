@@ -10,7 +10,8 @@ use aujar_core::{Position, Size};
 use tokio::sync::mpsc;
 
 use super::{
-    CapturedInput, Clipboard, ClipboardContent, Desktop, InputSink, InputSource, ScreenLocker,
+    CapturedInput, Clipboard, ClipboardContent, Desktop, EdgeControl, EdgeEvent, EdgeWatcher,
+    InputSink, InputSource, ScreenLocker,
 };
 use crate::{
     error::{Error, Result},
@@ -242,5 +243,74 @@ impl ScreenLocker for MemoryLocker {
         *self.0.lock().unwrap() += 1;
 
         Ok(())
+    }
+}
+
+/// An [`EdgeWatcher`] driven by hand, for tests: what the desktop would report goes in through
+/// the [`EdgeHandle`], and what the engine asked of it can be read back.
+pub struct MemoryEdges {
+    inbound: mpsc::UnboundedReceiver<EdgeEvent>,
+    controls: Arc<Mutex<Vec<EdgeControl>>>,
+}
+
+#[derive(Clone)]
+pub struct EdgeHandle {
+    inbound: mpsc::UnboundedSender<EdgeEvent>,
+    controls: Arc<Mutex<Vec<EdgeControl>>>,
+}
+
+impl MemoryEdges {
+    pub fn new() -> (Self, EdgeHandle) {
+        let (inbound_tx, inbound) = mpsc::unbounded_channel();
+        let controls = Arc::new(Mutex::new(Vec::new()));
+
+        (
+            Self {
+                inbound,
+                controls: Arc::clone(&controls),
+            },
+            EdgeHandle {
+                inbound: inbound_tx,
+                controls,
+            },
+        )
+    }
+}
+
+impl EdgeHandle {
+    /// The desktop reports something.
+    pub fn send(&self, event: EdgeEvent) {
+        let _ = self.inbound.send(event);
+    }
+
+    /// Everything the engine told the watcher so far.
+    pub fn controls(&self) -> Vec<EdgeControl> {
+        self.controls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl EdgeWatcher for MemoryEdges {
+    async fn run(
+        mut self: Box<Self>,
+        events: mpsc::Sender<EdgeEvent>,
+        mut control: mpsc::UnboundedReceiver<EdgeControl>,
+    ) {
+        loop {
+            tokio::select! {
+                event = self.inbound.recv() => match event {
+                    Some(event) => {
+                        if events.send(event).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                },
+                message = control.recv() => match message {
+                    Some(message) => self.controls.lock().unwrap().push(message),
+                    None => break,
+                },
+            }
+        }
     }
 }

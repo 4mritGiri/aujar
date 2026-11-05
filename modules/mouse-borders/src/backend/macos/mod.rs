@@ -69,6 +69,7 @@ pub fn backends(config: &EngineConfig) -> Backends {
     });
 
     Backends {
+        edges: None,
         source,
         sink: Box::new(QuartzSink::new()),
         desktop: Box::new(MacDesktop::new()),

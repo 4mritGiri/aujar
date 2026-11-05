@@ -166,7 +166,8 @@ each edge leads, and, while another machine has the keyboard, how to come back f
 **Both machines can control each other.** While another machine controls this one, this
 machine's own mouse still works. Push it against the screen edge that leads to the other
 machine and this machine takes control of it (in a row of two, you swap places). This needs
-edge switching to work on the controlled machine, so on Wayland use the shortcut instead.
+edge switching to work on the controlled machine (X11, or Wayland with the input-capture
+portal); otherwise use the shortcut.
 
 ## Command line
 
@@ -295,13 +296,21 @@ contents, keystrokes, file contents or the key. It is private to your user, rota
 ## Wayland
 
 Wayland compositors deliberately do not let applications read the pointer position, which
-edge switching needs. On Wayland:
+edge switching needs. Aujar gets around that with the desktop's **input-capture portal**
+(`org.freedesktop.portal.InputCapture`, in GNOME 45 and later and in KDE Plasma 6): it asks the
+desktop to put an invisible barrier along each screen edge that leads to a connected machine,
+and the desktop tells Aujar when the pointer runs into one. On Wayland:
 
 * Keyboard shortcuts (`Ctrl+Alt+1…4`) and every command work as usual.
-* Switching at screen edges is reported as unavailable in `aujar mwb status`. That includes taking
-  control back by pushing a controlled machine's own mouse against its edge: use the shortcut.
-  Coming back from a machine you control with the mouse *does* work, because the machine you sit
-  at follows the pointer itself.
+* With the portal, moving the pointer past the edge switches machines, and pushing the mouse of a
+  machine you control against the edge that leads back takes control back, as on X11. **The
+  desktop asks once per session whether Aujar may capture input: allow it.** Edges that lead
+  nowhere, or to a machine that is not connected, are plain screen edges.
+* Without the portal (an older desktop, a refused question, or `edge_portal = false` in the
+  `[mouse_borders]` section of `settings.toml`), switching at screen edges is reported as
+  unavailable in `aujar mwb status`, with the reason, and the shortcuts are the way to switch.
+  Coming back from a machine you control with the mouse works either way, because the machine
+  you sit at follows the pointer itself.
 * The screen size cannot be queried: set `screen = "1920x1080"` (the DRM outputs are used as a
   best guess otherwise, assuming monitors sit side by side).
 * The absolute pointer placement uses a virtual tablet; on some multi-monitor compositors it

@@ -248,6 +248,36 @@ impl Router {
         })
     }
 
+    /// Where a pointer that ran into `edge` of this machine's screen, `along` the way from the
+    /// start of the edge to its end (`0.0..=1.0`), is, and which way it was pushing: what
+    /// [`Router::on_local_motion`] wants to know. For desktops that report the edge hit instead
+    /// of the pointer position (Wayland).
+    pub fn edge_push(&self, edge: Edge, along: f64) -> (Position, (i32, i32)) {
+        let screen = self.screens[&self.local];
+        let along = along.clamp(0.0, 1.0);
+        let x = (along * f64::from(max_x(screen))).round() as i32;
+        let y = (along * f64::from(max_y(screen))).round() as i32;
+
+        match edge {
+            Edge::Left => (Position { x: 0, y }, (-1, 0)),
+            Edge::Right => (
+                Position {
+                    x: max_x(screen),
+                    y,
+                },
+                (1, 0),
+            ),
+            Edge::Top => (Position { x, y: 0 }, (0, -1)),
+            Edge::Bottom => (
+                Position {
+                    x,
+                    y: max_y(screen),
+                },
+                (0, 1),
+            ),
+        }
+    }
+
     /// Where this machine's own pointer would go if it pushed against an edge now, without
     /// going there. A machine that another one controls uses this to ask for control instead of
     /// moving it (see `Engine::take_over_at_local_edge`).
@@ -954,6 +984,39 @@ mod tests {
             router.local_edge_target(pos(1919, 700), (5, 0), Modifiers::default(), now),
             None
         );
+    }
+
+    #[test]
+    fn an_edge_hit_becomes_a_push_against_that_edge() {
+        let router = trio();
+
+        // `a` is 1920x1080: halfway down its right edge.
+        assert_eq!(router.edge_push(Edge::Right, 0.5), (pos(1919, 540), (1, 0)));
+        assert_eq!(router.edge_push(Edge::Left, 0.0), (pos(0, 0), (-1, 0)));
+        assert_eq!(router.edge_push(Edge::Top, 1.0), (pos(1919, 0), (0, -1)));
+        assert_eq!(
+            router.edge_push(Edge::Bottom, 0.25),
+            (pos(480, 1079), (0, 1))
+        );
+
+        // Out-of-range fractions stay on the edge.
+        assert_eq!(
+            router.edge_push(Edge::Right, 7.0),
+            (pos(1919, 1079), (1, 0))
+        );
+    }
+
+    #[test]
+    fn a_pushed_edge_switches_like_the_real_pointer_would() {
+        let mut router = trio();
+        let now = Instant::now();
+
+        let (position, delta) = router.edge_push(Edge::Right, 0.5);
+        let transfer = router
+            .on_local_motion(position, delta, Modifiers::default(), now)
+            .expect("a's right edge leads to b");
+
+        assert_eq!(transfer.to, name("b"));
     }
 
     #[test]

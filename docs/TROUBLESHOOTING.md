@@ -85,6 +85,13 @@ That is the activation behavior in Settings, Color Picker. "Open editor" opens t
 and the editor opens with the color after you pick. Aujar uses the desktop's own picker, so it
 never takes a screenshot of your screen.
 
+## A key repeats by itself, or clicks stop working, after switching machines
+
+This was caused by taking over the keyboard while `Ctrl+Alt+<number>` (or another key or mouse
+button) was still held: the desktop never saw the key go up. Update to a build with the fix
+(the takeover now waits until everything is let go). If you are stuck right now, press and release
+`Ctrl`, `Alt` and the key that repeats once; that clears it.
+
 ## `aujar color pick` seems to hang
 
 It waits for you: the desktop shows a picker overlay (crosshair); click a pixel to choose it, or

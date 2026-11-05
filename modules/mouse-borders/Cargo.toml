@@ -9,7 +9,7 @@ description = "Share one keyboard and mouse, clipboard and files between Linux m
 [features]
 default = ["linux-backend"]
 # evdev/uinput input capture and injection, X11 pointer tracking, clipboard via wl-clipboard/xclip.
-linux-backend = ["dep:evdev", "dep:x11rb"]
+linux-backend = ["dep:evdev", "dep:x11rb", "dep:ashpd", "dep:reis", "dep:futures-util"]
 
 [dependencies]
 async-trait.workspace = true
@@ -57,6 +57,11 @@ windows-sys = { version = "0.59", features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = { version = "0.13", features = ["tokio"], optional = true }
 x11rb = { version = "0.13", features = ["xfixes"], optional = true }
+# Wayland: the desktop's input-capture portal tells us when the pointer reaches a screen edge
+# (the pointer position itself cannot be read), and libei is the connection that portal needs.
+ashpd = { workspace = true, features = ["input_capture"], optional = true }
+reis = { version = "0.7", features = ["tokio"], optional = true }
+futures-util = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

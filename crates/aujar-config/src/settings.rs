@@ -437,6 +437,10 @@ pub struct MouseBorders {
     pub block_corners: bool,
     /// Hide the local pointer while another machine is controlled (X11 only).
     pub hide_mouse_at_edge: bool,
+    /// On Wayland, use the desktop's input-capture portal to notice the pointer reaching a
+    /// screen edge (the only way to switch machines by moving the mouse there). The desktop asks
+    /// once per session whether Aujar may do this; turn it off to avoid that question.
+    pub edge_portal: bool,
     /// Send relative motion instead of absolute positions: for machines with different
     /// resolutions or several monitors.
     pub move_relatively: bool,
@@ -476,6 +480,7 @@ impl Default for MouseBorders {
             easy_mouse: EasyMouse::Enabled,
             block_corners: false,
             hide_mouse_at_edge: false,
+            edge_portal: true,
             move_relatively: false,
             same_subnet_only: true,
             share_clipboard: true,

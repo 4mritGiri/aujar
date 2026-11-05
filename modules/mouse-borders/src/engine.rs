@@ -6,7 +6,7 @@
 //! events.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
     path::PathBuf,
     sync::{
@@ -27,12 +27,13 @@ use tokio::{
 use crate::{
     audit::{AuditEvent, AuditSink, FileAudit, NullAudit},
     backend::{
-        Backends, CapturedInput, Clipboard, ClipboardContent, Desktop, Injector, InputSource,
-        ScreenLocker,
+        Backends, CapturedInput, Clipboard, ClipboardContent, Desktop, EdgeControl, EdgeEvent,
+        EdgeHit, Injector, InputSource, ScreenLocker,
     },
     clipboard::{self, Assembler},
     config::EngineConfig,
     error::{Error, Result},
+    input::Button,
     keys::{HotkeyAction, KeyboardTracker},
     layout::{Edge, MachineName},
     link::{self, PeerLink},
@@ -52,6 +53,10 @@ const ACTIVE_WINDOW: Duration = Duration::from_secs(60);
 const NUDGE_INTERVAL: Duration = Duration::from_secs(10);
 
 const GRAB_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How long a switch waits for held keys and mouse buttons to be let go before it grabs the
+/// input anyway (see `Engine::acquire_grab`).
+const GRAB_RELEASE_WAIT: Duration = Duration::from_secs(2);
 
 const MAX_OUTGOING_TRANSFERS: usize = 32;
 
@@ -106,6 +111,8 @@ pub(crate) enum Event {
         error: String,
     },
     ClipboardChanged(ClipboardContent),
+    /// The desktop reports the pointer running into a screen edge (Wayland).
+    Edge(EdgeEvent),
     Command {
         command: Command,
         reply: oneshot::Sender<Result<String>>,
@@ -221,6 +228,7 @@ impl Engine {
     ) -> Result<EngineHandle> {
         let config = Arc::new(config);
         let Backends {
+            edges,
             source,
             sink,
             desktop,
@@ -324,6 +332,25 @@ impl Engine {
             )));
         }
 
+        // Where the pointer position cannot be read (Wayland), the desktop tells us when the
+        // pointer runs into an edge instead.
+        let edge_control = edges.map(|watcher| {
+            let (edge_tx, mut edge_rx) = mpsc::channel::<EdgeEvent>(32);
+            let (control_tx, control_rx) = mpsc::unbounded_channel::<EdgeControl>();
+            let relay = events_tx.clone();
+
+            tasks.push(tokio::spawn(watcher.run(edge_tx, control_rx)));
+            tasks.push(tokio::spawn(async move {
+                while let Some(event) = edge_rx.recv().await {
+                    if relay.send(Event::Edge(event)).await.is_err() {
+                        break;
+                    }
+                }
+            }));
+
+            control_tx
+        });
+
         tasks.push(tokio::spawn(ticker(events_tx.clone(), shutdown_rx.clone())));
 
         let mut status = Status::stopped();
@@ -359,6 +386,11 @@ impl Engine {
             grab: grab_tx,
             peers: BTreeMap::new(),
             keyboard: KeyboardTracker::default(),
+            held_buttons: BTreeSet::new(),
+            grab_wait: None,
+            edge_control,
+            edge_watch_ready: false,
+            watched_edges: Vec::new(),
             controlled_by: None,
             broadcast_from: None,
             broadcasting: false,
@@ -547,6 +579,18 @@ struct Actor {
     grab: mpsc::Sender<GrabRequest>,
     peers: BTreeMap<MachineName, PeerState>,
     keyboard: KeyboardTracker,
+    /// Mouse buttons that are physically down.
+    held_buttons: BTreeSet<Button>,
+    /// Set while a switch waits for held keys and buttons to be let go before the input is
+    /// grabbed: the time after which it stops waiting.
+    grab_wait: Option<Instant>,
+    /// Where the desktop reports the pointer running into an edge instead of the engine reading
+    /// the pointer position (Wayland): the way to talk to it.
+    edge_control: Option<mpsc::UnboundedSender<EdgeControl>>,
+    /// The desktop's edge reports work, so the pointer position is not needed.
+    edge_watch_ready: bool,
+    /// The edges the desktop was last asked to report.
+    watched_edges: Vec<Edge>,
     /// The machine whose keyboard and mouse currently drive this one.
     controlled_by: Option<MachineName>,
     /// A peer in multi-machine input mode whose input we apply.
@@ -632,6 +676,7 @@ impl Actor {
                     "cannot capture input: {reason}. This machine can still be controlled."
                 ));
             }
+            Event::Edge(event) => self.on_edge_event(event).await,
             Event::PeerUp(up) => self.on_peer_up(up).await,
             Event::Peer {
                 name,
@@ -674,6 +719,8 @@ impl Actor {
             Event::Note(note) => self.log(note),
             Event::Tick => self.on_tick().await,
         }
+
+        self.update_edge_watch();
     }
 
     // ---- publishing ------------------------------------------------------------------
@@ -808,15 +855,39 @@ impl Actor {
             .map_err(|_| Error::Other("the input task stopped".into()))?
     }
 
+    /// Whether any key or mouse button is physically down.
+    fn input_is_held(&self) -> bool {
+        !self.keyboard.held().is_empty() || !self.held_buttons.is_empty()
+    }
+
+    /// Start capturing the local input for another machine.
+    ///
+    /// Grabbing a device hides everything that happens on it from the desktop. A key or button
+    /// that is down at that moment would go up unseen, and the desktop (libinput) would think it
+    /// is held for good: a stuck Ctrl+Alt, a key that repeats on its own, a click that never
+    /// registers. Letting the virtual keyboard "release" them does not help, because the
+    /// desktop tracks keys per device. So with something held the grab waits until it is let
+    /// go (`wait_for_release`), which is what happens with every Ctrl+Alt+number shortcut.
     async fn acquire_grab(&mut self) -> Result<()> {
-        if self.grabbed {
+        if self.grabbed || self.grab_wait.is_some() {
             return Ok(());
         }
 
+        if self.input_is_held() {
+            self.grab_wait = Some(Instant::now() + GRAB_RELEASE_WAIT);
+
+            return Ok(());
+        }
+
+        self.grab_now().await
+    }
+
+    async fn grab_now(&mut self) -> Result<()> {
         self.set_grab(true).await?;
         self.grabbed = true;
 
-        // The desktop saw these keys go down; it must also see them go up.
+        // Only after a wait that ran out, with a key still down: tell the desktop at least what
+        // a virtual keyboard can.
         let held = self.keyboard.held();
         let _ = self.injector.release_keys(&held);
 
@@ -829,7 +900,51 @@ impl Actor {
         Ok(())
     }
 
+    /// A switch is waiting for held keys and buttons to be let go. Returns `true` when the
+    /// event is not to be passed on: the desktop is still handling the input itself, or this
+    /// was the release that ended the wait, which it has already seen.
+    async fn wait_for_release(&mut self, now: Instant) -> bool {
+        let Some(deadline) = self.grab_wait else {
+            return false;
+        };
+
+        if self.router.focus() == &Focus::Local {
+            // Control came back before the grab: nothing to wait for.
+            self.grab_wait = None;
+
+            return false;
+        }
+
+        let held = self.input_is_held();
+
+        if held && now < deadline {
+            return true;
+        }
+
+        self.grab_wait = None;
+
+        if let Err(error) = self.grab_now().await {
+            // Like a switch that cannot capture: stay on this machine.
+            self.log(format!("cannot capture input: {}", error.reason()));
+
+            let local = self.cfg.local.clone();
+
+            if let Focus::Remote(machine) = self.router.focus().clone() {
+                self.send(&machine, Message::Leave);
+            }
+
+            self.router.jump(&local, now);
+            self.publish();
+
+            return true;
+        }
+
+        !held
+    }
+
     async fn release_grab(&mut self) -> Result<()> {
+        self.grab_wait = None;
+
         if !self.grabbed {
             return Ok(());
         }
@@ -905,6 +1020,14 @@ impl Actor {
 
         self.last_local_input = Some(now);
 
+        if let CapturedInput::Button { button, pressed } = input {
+            if pressed {
+                self.held_buttons.insert(button);
+            } else {
+                self.held_buttons.remove(&button);
+            }
+        }
+
         if let CapturedInput::Key { key, pressed } = input {
             self.keyboard.update(key, pressed);
 
@@ -914,6 +1037,20 @@ impl Actor {
 
                 return;
             }
+        }
+
+        if self.grab_wait.is_some() && self.wait_for_release(now).await {
+            // The desktop still has the keyboard and the buttons, but the pointer and the wheel
+            // can already move the other machine (they hold no state that could get stuck).
+            if matches!(
+                input,
+                CapturedInput::PointerMotion { .. } | CapturedInput::Wheel { .. }
+            ) && let Focus::Remote(machine) = self.router.focus().clone()
+            {
+                self.forward(&machine, input, now).await;
+            }
+
+            return;
         }
 
         match self.router.focus().clone() {
@@ -936,6 +1073,11 @@ impl Actor {
     /// The real pointer position, when switching at screen edges is on and works on this
     /// machine.
     fn edge_pointer(&mut self) -> Option<Position> {
+        // The desktop reports the edges itself (`on_edge_hit`): there is no pointer to read.
+        if self.edge_watch_ready {
+            return None;
+        }
+
         if !self.cfg.easy_mouse_enabled()
             || self.router.policy().easy_mouse == aujar_config::EasyMouse::Disabled
             || self.status.edge_switching_unavailable.is_some()
@@ -962,6 +1104,13 @@ impl Actor {
         let Some(position) = self.edge_pointer() else {
             return;
         };
+
+        self.switch_at_local_edge(position, delta, now).await;
+    }
+
+    /// The local pointer is at `position`, pushing by `delta`: switch machines if that leads to
+    /// one.
+    async fn switch_at_local_edge(&mut self, position: Position, delta: (i32, i32), now: Instant) {
         let modifiers = self.keyboard.modifiers();
 
         if let Some(transfer) = self.router.on_local_motion(position, delta, modifiers, now) {
@@ -982,6 +1131,15 @@ impl Actor {
         let Some(position) = self.edge_pointer() else {
             return;
         };
+
+        self.ask_for_control_at(position, delta, now).await;
+    }
+
+    async fn ask_for_control_at(&mut self, position: Position, delta: (i32, i32), now: Instant) {
+        if self.pending_request.is_some() {
+            return;
+        }
+
         let modifiers = self.keyboard.modifiers();
         let Some(target) = self
             .router
@@ -993,6 +1151,88 @@ impl Actor {
         match self.switch_to(Some(target)).await {
             Ok(message) => self.log(message),
             Err(error) => self.log(format!("{error}")),
+        }
+    }
+
+    // ---- screen edges reported by the desktop (Wayland) ----------------------------------
+
+    async fn on_edge_event(&mut self, event: EdgeEvent) {
+        match event {
+            EdgeEvent::Ready => {
+                self.edge_watch_ready = true;
+                self.status.edge_switching_unavailable = None;
+                self.watched_edges.clear();
+                self.log(
+                    "switching at screen edges works through the desktop's input-capture portal",
+                );
+                self.publish();
+            }
+            EdgeEvent::Unavailable(reason) => {
+                self.edge_watch_ready = false;
+                self.status.edge_switching_unavailable = Some(
+                    match self.status.edge_switching_unavailable.take() {
+                        Some(before) => format!(
+                            "{before}. The desktop's input-capture portal does not help either: {reason}"
+                        ),
+                        None => reason.clone(),
+                    },
+                );
+                self.log(format!(
+                    "screen edges are not reported by the desktop: {reason}. Keyboard shortcuts still work."
+                ));
+                self.publish();
+            }
+            EdgeEvent::Note(note) => self.log(note),
+            EdgeEvent::Hit(hit) => self.on_edge_hit(hit, Instant::now()).await,
+        }
+    }
+
+    /// The pointer ran into a screen edge that leads to a connected machine.
+    async fn on_edge_hit(&mut self, hit: EdgeHit, now: Instant) {
+        // Give the pointer back to the desktop at once. When this switches machines, our own
+        // grab of the devices takes over; when it does not (a modifier is missing, a corner,
+        // the pause after a switch), the pointer must not stay captured.
+        if let Some(control) = &self.edge_control {
+            let _ = control.send(EdgeControl::Release(hit.clone()));
+        }
+
+        if self.router.focus() != &Focus::Local {
+            return;
+        }
+
+        let (position, delta) = self.router.edge_push(hit.edge, hit.along);
+
+        if self.controlled_by.is_none() {
+            self.switch_at_local_edge(position, delta, now).await;
+        } else {
+            self.ask_for_control_at(position, delta, now).await;
+        }
+    }
+
+    /// Tell the desktop which edges lead to a connected machine, so only those are reported:
+    /// the others must behave like any screen edge.
+    fn update_edge_watch(&mut self) {
+        if self.edge_control.is_none() || !self.edge_watch_ready {
+            return;
+        }
+
+        let local = self.cfg.local.clone();
+        let edges: Vec<Edge> = [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom]
+            .into_iter()
+            .filter(|edge| {
+                self.router
+                    .layout()
+                    .neighbor(&local, *edge)
+                    .is_some_and(|to| self.router.is_online(to))
+            })
+            .collect();
+
+        if edges != self.watched_edges {
+            self.watched_edges = edges.clone();
+
+            if let Some(control) = &self.edge_control {
+                let _ = control.send(EdgeControl::Watch(edges));
+            }
         }
     }
 

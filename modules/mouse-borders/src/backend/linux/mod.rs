@@ -8,6 +8,7 @@ mod clipboard_cli;
 mod drm;
 mod evdev_source;
 mod logind;
+mod portal_edges;
 mod uinput_sink;
 mod x11;
 
@@ -18,6 +19,7 @@ use aujar_core::{Position, Size};
 pub use clipboard_cli::CliClipboard;
 pub use evdev_source::EvdevSource;
 pub use logind::LogindLocker;
+pub use portal_edges::PortalEdges;
 pub use uinput_sink::{UinputSink, VIRTUAL_PREFIX};
 pub use x11::X11Desktop;
 
@@ -25,11 +27,11 @@ use super::{
     Backends, Clipboard, Desktop, InputSink, InputSource,
     unavailable::{UnavailableSink, UnavailableSource},
 };
-use crate::input::Button;
 use crate::{
     config::EngineConfig,
     error::{Error, Result},
 };
+use crate::{input::Button, layout::Edge};
 
 /// Linux `BTN_*` codes for the mouse buttons we forward.
 const BTN_LEFT: u16 = 0x110;
@@ -187,7 +189,17 @@ pub fn backends_for(config: &EngineConfig, session: Session) -> Backends {
         },
     };
 
+    // Wayland cannot tell us where the pointer is, but the desktop can tell us when it reaches an
+    // edge (see `portal_edges`). Only worth asking when some edge leads to another machine.
+    let edges: Option<Box<dyn super::EdgeWatcher>> = (session == Session::Wayland
+        && config.edge_portal
+        && [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom]
+            .into_iter()
+            .any(|edge| config.layout.neighbor(&config.local, edge).is_some()))
+    .then(|| Box::new(PortalEdges) as Box<dyn super::EdgeWatcher>);
+
     Backends {
+        edges,
         source,
         sink,
         desktop,
