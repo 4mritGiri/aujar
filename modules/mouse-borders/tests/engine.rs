@@ -8,9 +8,10 @@ use aujar_config::{Machine, MouseBorders};
 use aujar_core::{Position, Size};
 use aujar_mouse_borders::{
     backend::{
-        Backends, CapturedInput, ClipboardContent, InputSource,
+        Backends, CapturedInput, ClipboardContent, EdgeControl, EdgeEvent, EdgeHit, EdgeWatcher,
+        InputSource,
         memory::{
-            MemoryClipboard, MemoryDesktop, MemoryLocker, MemorySink, MemorySource,
+            MemoryClipboard, MemoryDesktop, MemoryEdges, MemoryLocker, MemorySink, MemorySource,
             MemorySourceHandle, SinkEvent, SinkLog,
         },
     },
@@ -19,7 +20,7 @@ use aujar_mouse_borders::{
     error::{Error, Result as MbResult},
     input::Button,
     keys::{KEY_LEFTALT, KEY_LEFTCTRL, KEY_LEFTSHIFT, char_code},
-    layout::MachineName,
+    layout::{Edge, MachineName},
     secure::SecurityKey,
 };
 
@@ -88,6 +89,7 @@ async fn start_with_source(
         tweak,
         custom_source,
         MemoryClipboard::default(),
+        None,
     )
     .await
 }
@@ -102,6 +104,7 @@ async fn start_full(
     tweak: impl FnOnce(&mut MouseBorders),
     custom_source: Option<Box<dyn InputSource>>,
     clipboard: MemoryClipboard,
+    edges: Option<Box<dyn EdgeWatcher>>,
 ) -> Node {
     let dir = tempfile::tempdir().unwrap();
 
@@ -143,6 +146,7 @@ async fn start_full(
         config,
         key.clone(),
         Backends {
+            edges,
             source,
             sink: Box::new(sink),
             desktop: Box::new(desktop.clone()),
@@ -365,8 +369,10 @@ async fn pushing_past_the_edge_hands_over_input_and_back() {
     beta.handle.stop().await;
 }
 
+/// Grabbing the keyboard while a key is down would hide its release from the desktop for good
+/// (a stuck modifier, a key that repeats). So the grab waits until it is let go.
 #[tokio::test]
-async fn keys_held_while_crossing_are_released_locally() {
+async fn keys_held_while_crossing_are_let_go_before_the_input_is_grabbed() {
     let key = SecurityKey::generate().unwrap();
     let ports = ports(&["alpha", "beta"]);
     let alpha = start("alpha", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
@@ -380,14 +386,151 @@ async fn keys_held_while_crossing_are_released_locally() {
     });
     push_right(&alpha, 100);
 
+    eventually("beta controlled", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // The desktop still sees the real keyboard, and nothing was faked for it.
+    assert!(!alpha.source.is_grabbed(), "shift is still down");
+    assert!(
+        !alpha
+            .sink
+            .snapshot()
+            .contains(&SinkEvent::Key(KEY_LEFTSHIFT, false))
+    );
+
+    // Shift is let go: the desktop saw that itself, and now the input is taken.
+    alpha.source.send(CapturedInput::Key {
+        key: KEY_LEFTSHIFT,
+        pressed: false,
+    });
     eventually("grab", || alpha.source.is_grabbed()).await;
-    eventually("alpha's desktop to see shift released", || {
+    assert!(
+        !alpha
+            .sink
+            .snapshot()
+            .contains(&SinkEvent::Key(KEY_LEFTSHIFT, false))
+    );
+
+    alpha.handle.stop().await;
+    beta.handle.stop().await;
+}
+
+/// The same for the shortcut: Ctrl+Alt+2 is still down when it fires.
+#[tokio::test]
+async fn a_shortcut_takes_the_input_once_its_keys_are_up() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let alpha = start("alpha", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    let beta = start("beta", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    connected(&[&alpha, &beta], 1).await;
+
+    let two = char_code('2').unwrap();
+
+    for (code, pressed) in [(KEY_LEFTCTRL, true), (KEY_LEFTALT, true), (two, true)] {
+        alpha.source.send(CapturedInput::Key { key: code, pressed });
+    }
+
+    eventually("beta controlled", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!alpha.source.is_grabbed());
+
+    // Letting go one key at a time: still not grabbed until the last one is up.
+    for (code, pressed) in [(two, false), (KEY_LEFTALT, false)] {
+        alpha.source.send(CapturedInput::Key { key: code, pressed });
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!alpha.source.is_grabbed(), "ctrl is still down");
+
+    alpha.source.send(CapturedInput::Key {
+        key: KEY_LEFTCTRL,
+        pressed: false,
+    });
+    eventually("grab", || alpha.source.is_grabbed()).await;
+
+    // From here on the keyboard goes to beta.
+    alpha.source.send(CapturedInput::Key {
+        key: 0x04,
+        pressed: true,
+    });
+    eventually("a key on beta", || {
+        beta.sink.snapshot().contains(&SinkEvent::Key(0x04, true))
+    })
+    .await;
+
+    alpha.handle.stop().await;
+    beta.handle.stop().await;
+}
+
+/// A key that never comes up (or a lost release) must not stop control from moving for ever.
+#[tokio::test]
+async fn a_key_that_stays_down_does_not_block_control_for_ever() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let alpha = start("alpha", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    let beta = start("beta", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    connected(&[&alpha, &beta], 1).await;
+
+    alpha.source.send(CapturedInput::Key {
+        key: KEY_LEFTSHIFT,
+        pressed: true,
+    });
+    push_right(&alpha, 100);
+    eventually("beta controlled", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+
+    // After the wait the next input takes the grab (and does what it can for the held key).
+    tokio::time::sleep(Duration::from_millis(2300)).await;
+    alpha
+        .source
+        .send(CapturedInput::PointerMotion { dx: 1, dy: 0 });
+
+    eventually("grab after the wait", || alpha.source.is_grabbed()).await;
+    eventually("the held key is released as well as it can be", || {
         alpha
             .sink
             .snapshot()
             .contains(&SinkEvent::Key(KEY_LEFTSHIFT, false))
     })
     .await;
+
+    alpha.handle.stop().await;
+    beta.handle.stop().await;
+}
+
+/// A mouse button that is down is the same: the click would never register afterwards.
+#[tokio::test]
+async fn a_button_held_while_crossing_is_let_go_before_the_input_is_grabbed() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let alpha = start("alpha", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    let beta = start("beta", &["alpha", "beta"], &ports, &key, true, |_| {}).await;
+    connected(&[&alpha, &beta], 1).await;
+
+    alpha.source.send(CapturedInput::Button {
+        button: Button::Left,
+        pressed: true,
+    });
+    push_right(&alpha, 100);
+    eventually("beta controlled", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!alpha.source.is_grabbed(), "the button is still down");
+
+    alpha.source.send(CapturedInput::Button {
+        button: Button::Left,
+        pressed: false,
+    });
+    eventually("grab", || alpha.source.is_grabbed()).await;
 
     alpha.handle.stop().await;
     beta.handle.stop().await;
@@ -409,7 +552,7 @@ async fn shortcuts_jump_between_machines() {
         gamma.handle.status().controlled_by.as_deref() == Some("alpha")
     })
     .await;
-    assert!(alpha.source.is_grabbed());
+    eventually("alpha grabbed", || alpha.source.is_grabbed()).await;
     assert_eq!(beta.handle.status().controlled_by, None);
 
     // Ctrl+Alt+1 brings it home.
@@ -452,7 +595,7 @@ async fn a_controlled_machine_can_take_over_with_its_own_shortcut() {
         gamma.handle.status().controlled_by.as_deref() == Some("beta")
     })
     .await;
-    assert!(beta.source.is_grabbed());
+    eventually("beta grabbed", || beta.source.is_grabbed()).await;
     assert!(!alpha.source.is_grabbed(), "alpha must have let go");
     assert_eq!(alpha.handle.status().focus, "alpha");
 
@@ -551,7 +694,28 @@ async fn easy_mouse_can_be_turned_off_and_modifiers_required() {
         pressed: true,
     });
     push_right(&alpha, 500);
-    eventually("switch with ctrl", || alpha.source.is_grabbed()).await;
+    eventually("switch with ctrl", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+
+    // Ctrl is still down, so the keyboard stays with this desktop for now, but the pointer and
+    // the wheel already work on the other machine.
+    assert!(!alpha.source.is_grabbed());
+    alpha.source.send(CapturedInput::Wheel {
+        horizontal: 0,
+        vertical: 120,
+    });
+    eventually("wheel on beta while ctrl is down", || {
+        beta.sink.snapshot().contains(&SinkEvent::Wheel(0, 120))
+    })
+    .await;
+
+    alpha.source.send(CapturedInput::Key {
+        key: KEY_LEFTCTRL,
+        pressed: false,
+    });
+    eventually("grab once ctrl is up", || alpha.source.is_grabbed()).await;
 
     for node in [alpha, beta] {
         node.handle.stop().await;
@@ -672,6 +836,164 @@ async fn pushing_the_controlled_machines_own_mouse_to_its_edge_takes_over() {
     }
 }
 
+/// Wayland: the engine cannot read the pointer, so the desktop reports the edge hits.
+#[tokio::test]
+async fn an_edge_hit_reported_by_the_desktop_switches_machines() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let row = ["alpha", "beta"];
+    let (watcher, edges) = MemoryEdges::new();
+    let alpha = start_full(
+        "alpha",
+        &row,
+        &ports,
+        &key,
+        true,
+        |_| {},
+        None,
+        MemoryClipboard::default(),
+        Some(Box::new(watcher)),
+    )
+    .await;
+    let beta = start("beta", &row, &ports, &key, true, |_| {}).await;
+    connected(&[&alpha, &beta], 1).await;
+
+    edges.send(EdgeEvent::Ready);
+
+    // Only the edge that leads to a connected machine is watched.
+    eventually("the right edge is watched", || {
+        edges
+            .controls()
+            .contains(&EdgeControl::Watch(vec![Edge::Right]))
+    })
+    .await;
+
+    // Once the desktop reports the edges, the pointer position is not used any more.
+    push_right(&alpha, 500);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(beta.handle.status().controlled_by, None);
+
+    // A hit on an edge that leads nowhere is handed back at once and changes nothing.
+    let miss = EdgeHit {
+        edge: Edge::Left,
+        along: 0.5,
+        cursor: (0.0, 540.0),
+        token: 1,
+    };
+
+    edges.send(EdgeEvent::Hit(miss.clone()));
+    eventually("miss released", || {
+        edges
+            .controls()
+            .contains(&EdgeControl::Release(miss.clone()))
+    })
+    .await;
+    assert_eq!(beta.handle.status().controlled_by, None);
+
+    // A hit on the right edge hands control to beta, and the capture goes back to the desktop.
+    let hit = EdgeHit {
+        edge: Edge::Right,
+        along: 0.5,
+        cursor: (1919.0, 540.0),
+        token: 2,
+    };
+
+    edges.send(EdgeEvent::Hit(hit.clone()));
+    eventually("beta controlled", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+    assert!(edges.controls().contains(&EdgeControl::Release(hit)));
+    eventually("alpha grabbed", || alpha.source.is_grabbed()).await;
+
+    alpha.handle.stop().await;
+    beta.handle.stop().await;
+}
+
+/// The machine being controlled takes control back with its own mouse, through the desktop.
+#[tokio::test]
+async fn the_controlled_machine_takes_over_at_a_reported_edge() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let row = ["alpha", "beta"];
+    let (watcher, edges) = MemoryEdges::new();
+    let alpha = start("alpha", &row, &ports, &key, true, |_| {}).await;
+    let beta = start_full(
+        "beta",
+        &row,
+        &ports,
+        &key,
+        true,
+        |_| {},
+        None,
+        MemoryClipboard::default(),
+        Some(Box::new(watcher)),
+    )
+    .await;
+    connected(&[&alpha, &beta], 1).await;
+    edges.send(EdgeEvent::Ready);
+
+    alpha
+        .handle
+        .request(Command::SwitchTo(Some(name("beta"))))
+        .await
+        .unwrap();
+    eventually("beta controlled", || {
+        beta.handle.status().controlled_by.as_deref() == Some("alpha")
+    })
+    .await;
+
+    // Beta's left edge is where alpha sits.
+    edges.send(EdgeEvent::Hit(EdgeHit {
+        edge: Edge::Left,
+        along: 0.5,
+        cursor: (0.0, 540.0),
+        token: 3,
+    }));
+
+    eventually("beta controls alpha", || {
+        alpha.handle.status().controlled_by.as_deref() == Some("beta")
+    })
+    .await;
+    assert!(beta.handle.status().controlled_by.is_none());
+
+    alpha.handle.stop().await;
+    beta.handle.stop().await;
+}
+
+/// Without the portal the shortcuts remain, and the status says why edges do not work.
+#[tokio::test]
+async fn an_unavailable_edge_source_is_explained_in_the_status() {
+    let key = SecurityKey::generate().unwrap();
+    let ports = ports(&["alpha", "beta"]);
+    let row = ["alpha", "beta"];
+    let (watcher, edges) = MemoryEdges::new();
+    let alpha = start_full(
+        "alpha",
+        &row,
+        &ports,
+        &key,
+        true,
+        |_| {},
+        None,
+        MemoryClipboard::default(),
+        Some(Box::new(watcher)),
+    )
+    .await;
+
+    edges.send(EdgeEvent::Unavailable("the portal said no".into()));
+    eventually("reason shown", || {
+        alpha
+            .handle
+            .status()
+            .edge_switching_unavailable
+            .is_some_and(|reason| reason.contains("the portal said no"))
+    })
+    .await;
+
+    alpha.handle.stop().await;
+}
+
 /// GNOME on Wayland: no background reads, so the clipboard is read when control moves.
 #[tokio::test]
 async fn the_clipboard_follows_you_without_background_reads() {
@@ -687,6 +1009,7 @@ async fn the_clipboard_follows_you_without_background_reads() {
         |_| {},
         None,
         MemoryClipboard::without_polling(),
+        None,
     )
     .await;
     let beta = start_full(
@@ -698,6 +1021,7 @@ async fn the_clipboard_follows_you_without_background_reads() {
         |_| {},
         None,
         MemoryClipboard::without_polling(),
+        None,
     )
     .await;
     connected(&[&alpha, &beta], 1).await;

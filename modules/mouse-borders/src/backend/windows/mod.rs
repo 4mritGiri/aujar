@@ -73,6 +73,7 @@ pub fn backends(config: &EngineConfig) -> Backends {
     });
 
     Backends {
+        edges: None,
         source,
         sink: Box::new(SendInputSink),
         desktop: Box::new(WindowsDesktop),

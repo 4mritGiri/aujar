@@ -30,6 +30,8 @@ pub struct EngineConfig {
     pub policy: SwitchPolicy,
     pub move_relatively: bool,
     pub hide_mouse_at_edge: bool,
+    /// Watch for screen-edge hits through the desktop's input-capture portal (Wayland).
+    pub edge_portal: bool,
     pub same_subnet_only: bool,
     pub share_clipboard: bool,
     pub transfer_files: bool,
@@ -136,6 +138,7 @@ impl EngineConfig {
             },
             move_relatively: settings.move_relatively,
             hide_mouse_at_edge: settings.hide_mouse_at_edge,
+            edge_portal: settings.edge_portal,
             same_subnet_only: settings.same_subnet_only,
             share_clipboard: settings.share_clipboard,
             transfer_files: settings.transfer_files,

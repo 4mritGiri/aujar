@@ -250,6 +250,7 @@ pub fn platform_backends(config: &crate::config::EngineConfig) -> Backends {
         let reason = "this operating system (or build) has no Mouse Borders backend";
 
         Backends {
+            edges: None,
             source: Box::new(unavailable::UnavailableSource::new(reason)),
             sink: Box::new(unavailable::UnavailableSink::new(reason)),
             desktop: Box::new(unavailable::UnavailableDesktop::new(reason)),
@@ -260,8 +261,59 @@ pub fn platform_backends(config: &crate::config::EngineConfig) -> Backends {
     }
 }
 
+/// The pointer ran into a screen edge that leads to another machine.
+///
+/// Desktops that cannot tell where the pointer is (Wayland) report this themselves.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EdgeHit {
+    pub edge: crate::layout::Edge,
+    /// How far along the edge the pointer was: `0.0` at the top or left end, `1.0` at the
+    /// bottom or right end.
+    pub along: f64,
+    /// The desktop's own position of the pointer, handed back when the capture is released.
+    pub cursor: (f64, f64),
+    /// Identifies the capture to release.
+    pub token: u32,
+}
+
+/// What an [`EdgeWatcher`] tells the engine.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EdgeEvent {
+    /// Watching works: the pointer running into a watched edge is now reported.
+    Ready,
+    /// It does not work here (the reason is for the user).
+    Unavailable(String),
+    /// Something worth a line in the log.
+    Note(String),
+    Hit(EdgeHit),
+}
+
+/// What the engine tells an [`EdgeWatcher`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum EdgeControl {
+    /// These are the edges that lead to a connected machine: report only those.
+    Watch(Vec<crate::layout::Edge>),
+    /// The hit has been dealt with: give the pointer back to the desktop.
+    Release(EdgeHit),
+}
+
+/// Tells the engine when the pointer runs into a screen edge, for desktops where the engine
+/// cannot read the pointer position itself.
+#[async_trait]
+pub trait EdgeWatcher: Send {
+    /// Watch until `events` is closed. `control` carries the edges to watch and the hits that
+    /// have been dealt with.
+    async fn run(
+        self: Box<Self>,
+        events: tokio::sync::mpsc::Sender<EdgeEvent>,
+        control: tokio::sync::mpsc::UnboundedReceiver<EdgeControl>,
+    );
+}
+
 /// Everything the engine needs from the desktop.
 pub struct Backends {
+    /// `None` where the pointer position can be read (or there is no way to watch the edges).
+    pub edges: Option<Box<dyn EdgeWatcher>>,
     pub source: Box<dyn InputSource>,
     pub sink: Box<dyn InputSink>,
     pub desktop: Box<dyn Desktop>,

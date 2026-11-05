@@ -40,6 +40,7 @@ fn fixture(denied: &[Capability]) -> Fixture {
             let (sink, _) = MemorySink::new();
 
             Backends {
+                edges: None,
                 source: Box::new(source),
                 sink: Box::new(sink),
                 desktop: Box::new(MemoryDesktop::new(
