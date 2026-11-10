@@ -31,8 +31,10 @@ again every 450 ms (up to about 20 s) and the real answer replaces the placehold
 | X11 window managers | `wmctrl` | install `wmctrl` |
 
 GNOME gives applications no view of other windows, so the extension runs inside the shell. It
-exposes only `List()` and `Activate(id)`: it can read window titles/app names and focus a
-window; it cannot close, move or type into windows. Any process in your session can call it, so
+exposes `List()` and `Activate(id)`: it can read window titles/app names and focus a window; it
+cannot close, move or type into windows. It also offers `SetHidden(bool)` (`dev.aujar.Pointer`)
+so Mouse Borders can hide the mouse pointer while you control another computer; the pointer
+comes back by itself unless that request is renewed within a minute. Any process in your session can call it, so
 window titles are visible to your own session's programs (the same trust boundary as the
 session bus). Remove it with `aujar gnome-extension remove`.
 

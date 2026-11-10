@@ -674,7 +674,7 @@ impl SettingsView {
                     toggle_row!(self, cx, "mb-wrap", "Wrap around", "Past the last machine, continue on the first.", mouse_borders.wrap_mouse),
                     toggle_row!(self, cx, "mb-corners", "Block screen corners", "Do not switch when the pointer is in a corner (avoids accidents).", mouse_borders.block_corners),
                     toggle_row!(self, cx, "mb-relative", "Move relatively", "For machines with different resolutions or several monitors.", mouse_borders.move_relatively),
-                    toggle_row!(self, cx, "mb-hide", "Hide the pointer while away", "Hides this machine's pointer while you control another one (X11 only).", mouse_borders.hide_mouse_at_edge),
+                    toggle_row!(self, cx, "mb-hide", "Hide the pointer while away", "Hides this machine's pointer while you control another one (X11, or GNOME with the Aujar Windows extension: aujar gnome-extension install).", mouse_borders.hide_mouse_at_edge),
                 ],
             ),
             self.section(

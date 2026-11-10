@@ -8,6 +8,7 @@ mod clipboard_cli;
 mod drm;
 mod evdev_source;
 mod logind;
+mod pointer_hide;
 mod portal_edges;
 mod uinput_sink;
 mod x11;
@@ -105,6 +106,13 @@ impl Desktop for BlindDesktop {
 
     fn pointer(&self) -> Result<Position> {
         Err(Error::unsupported("switching at screen edges", self.reason))
+    }
+
+    /// Only GNOME with the Aujar Windows extension can do this; elsewhere it quietly does not.
+    fn set_cursor_visible(&self, visible: bool) -> Result<()> {
+        pointer_hide::set_hidden(!visible);
+
+        Ok(())
     }
 }
 

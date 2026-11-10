@@ -873,37 +873,23 @@ async fn an_edge_hit_reported_by_the_desktop_switches_machines() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(beta.handle.status().controlled_by, None);
 
-    // A hit on an edge that leads nowhere is handed back at once and changes nothing.
-    let miss = EdgeHit {
+    // A hit on an edge that leads nowhere changes nothing.
+    edges.send(EdgeEvent::Hit(EdgeHit {
         edge: Edge::Left,
         along: 0.5,
-        cursor: (0.0, 540.0),
-        token: 1,
-    };
-
-    edges.send(EdgeEvent::Hit(miss.clone()));
-    eventually("miss released", || {
-        edges
-            .controls()
-            .contains(&EdgeControl::Release(miss.clone()))
-    })
-    .await;
+    }));
+    tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(beta.handle.status().controlled_by, None);
 
-    // A hit on the right edge hands control to beta, and the capture goes back to the desktop.
-    let hit = EdgeHit {
+    // A hit on the right edge hands control to beta.
+    edges.send(EdgeEvent::Hit(EdgeHit {
         edge: Edge::Right,
         along: 0.5,
-        cursor: (1919.0, 540.0),
-        token: 2,
-    };
-
-    edges.send(EdgeEvent::Hit(hit.clone()));
+    }));
     eventually("beta controlled", || {
         beta.handle.status().controlled_by.as_deref() == Some("alpha")
     })
     .await;
-    assert!(edges.controls().contains(&EdgeControl::Release(hit)));
     eventually("alpha grabbed", || alpha.source.is_grabbed()).await;
 
     alpha.handle.stop().await;
@@ -943,12 +929,23 @@ async fn the_controlled_machine_takes_over_at_a_reported_edge() {
     })
     .await;
 
+    // Motion that alpha injects runs into beta's edges too: it must not count. Only a touch of
+    // beta's own mouse does.
+    edges.send(EdgeEvent::Hit(EdgeHit {
+        edge: Edge::Left,
+        along: 0.5,
+    }));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(alpha.handle.status().controlled_by, None);
+
+    beta.source
+        .send(CapturedInput::PointerMotion { dx: -3, dy: 0 });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     // Beta's left edge is where alpha sits.
     edges.send(EdgeEvent::Hit(EdgeHit {
         edge: Edge::Left,
         along: 0.5,
-        cursor: (0.0, 540.0),
-        token: 3,
     }));
 
     eventually("beta controls alpha", || {

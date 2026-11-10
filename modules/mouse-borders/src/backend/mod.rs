@@ -263,17 +263,15 @@ pub fn platform_backends(config: &crate::config::EngineConfig) -> Backends {
 
 /// The pointer ran into a screen edge that leads to another machine.
 ///
-/// Desktops that cannot tell where the pointer is (Wayland) report this themselves.
+/// Desktops that cannot tell where the pointer is (Wayland) report this themselves. The desktop
+/// holds all input until the capture it started is given back, so the watcher gives it back
+/// before the engine hears about the hit: a hit is never kept waiting on the engine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdgeHit {
     pub edge: crate::layout::Edge,
     /// How far along the edge the pointer was: `0.0` at the top or left end, `1.0` at the
     /// bottom or right end.
     pub along: f64,
-    /// The desktop's own position of the pointer, handed back when the capture is released.
-    pub cursor: (f64, f64),
-    /// Identifies the capture to release.
-    pub token: u32,
 }
 
 /// What an [`EdgeWatcher`] tells the engine.
@@ -293,8 +291,6 @@ pub enum EdgeEvent {
 pub enum EdgeControl {
     /// These are the edges that lead to a connected machine: report only those.
     Watch(Vec<crate::layout::Edge>),
-    /// The hit has been dealt with: give the pointer back to the desktop.
-    Release(EdgeHit),
 }
 
 /// Tells the engine when the pointer runs into a screen edge, for desktops where the engine

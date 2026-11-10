@@ -431,6 +431,15 @@ impl InputSource for EvdevSource {
             let result = if grabbed { raw.grab() } else { raw.ungrab() };
 
             if let Err(error) = result {
+                if !grabbed {
+                    // Letting go: a device that is gone or was never grabbed must not stop the
+                    // others from being released. (This used to `break` here, which left the
+                    // devices after the failing one captured for good.)
+                    tracing::warn!(path = %device.path.display(), %error, "cannot release a device");
+
+                    continue;
+                }
+
                 failure = Some(format!("{}: {error}", device.path.display()));
 
                 break;
@@ -438,11 +447,9 @@ impl InputSource for EvdevSource {
         }
 
         if let Some(failure) = failure {
-            if grabbed {
-                // All or nothing: a half-grabbed keyboard is worse than none.
-                for device in &mut self.devices {
-                    let _ = device.stream.device_mut().ungrab();
-                }
+            // All or nothing: a half-grabbed keyboard is worse than none.
+            for device in &mut self.devices {
+                let _ = device.stream.device_mut().ungrab();
             }
 
             return Err(Error::Other(format!(

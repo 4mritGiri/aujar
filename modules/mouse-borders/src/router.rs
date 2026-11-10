@@ -325,9 +325,13 @@ impl Router {
         };
         let clamped = bounds(screen).clamp(moved);
 
-        if let Some(edge) = escaped_edge(moved, screen)
-            && self.permitted(clamped, screen, modifiers, now)
-            && let Some(to) = self.target(&machine, edge)
+        // In a corner the pointer leaves through two edges at once. Try the dominant one first,
+        // but fall back to the other: a wall on one side must not trap a pointer whose other
+        // side leads home.
+        if self.permitted(clamped, screen, modifiers, now)
+            && let Some((edge, to)) = escaped_edges(moved, screen)
+                .into_iter()
+                .find_map(|edge| self.target(&machine, edge).map(|to| (edge, to)))
         {
             let entry = self.entry_for(clamped, edge, screen, &to);
             let focus = if to == self.local {
@@ -448,10 +452,14 @@ impl Router {
         modifiers: Modifiers,
         now: Instant,
     ) -> Option<Edge> {
-        let edge = pushed_edge(position, delta, screen)?;
+        if !self.permitted(position, screen, modifiers, now) {
+            return None;
+        }
 
-        self.permitted(position, screen, modifiers, now)
-            .then_some(edge)
+        // Same corner rule as `on_remote_motion`: the first pushed edge that leads somewhere.
+        pushed_edges(position, delta, screen)
+            .into_iter()
+            .find(|edge| self.target(&self.local, *edge).is_some())
     }
 
     /// Whether policy, timing and corner rules allow a switch starting at `position`.
@@ -502,9 +510,9 @@ fn max_y(size: Size) -> i32 {
     (size.height as i32 - 1).max(0)
 }
 
-/// The edge `position` is pressing against, given the motion `delta`. Pressing against two
-/// edges (a corner) picks the axis the user is moving fastest along.
-fn pushed_edge(position: Position, delta: (i32, i32), screen: Size) -> Option<Edge> {
+/// The edges `position` is pressing against, given the motion `delta`, the one the user is
+/// moving fastest along first. A corner presses against two edges.
+fn pushed_edges(position: Position, delta: (i32, i32), screen: Size) -> Vec<Edge> {
     let horizontal = if position.x <= 0 && delta.0 < 0 {
         Some(Edge::Left)
     } else if position.x >= max_x(screen) && delta.0 > 0 {
@@ -521,14 +529,17 @@ fn pushed_edge(position: Position, delta: (i32, i32), screen: Size) -> Option<Ed
     };
 
     match (horizontal, vertical) {
-        (Some(h), Some(v)) => Some(if delta.0.abs() >= delta.1.abs() { h } else { v }),
-        (h, v) => h.or(v),
+        (Some(h), Some(v)) if delta.0.abs() >= delta.1.abs() => vec![h, v],
+        (Some(h), Some(v)) => vec![v, h],
+        (Some(h), None) => vec![h],
+        (None, Some(v)) => vec![v],
+        (None, None) => Vec::new(),
     }
 }
 
-/// The edge an unclamped position left the screen through. Leaving through a corner picks
-/// the axis it overshot furthest.
-fn escaped_edge(moved: Position, screen: Size) -> Option<Edge> {
+/// The edges an unclamped position left the screen through, the one it overshot furthest
+/// first. Leaving through a corner is two edges.
+fn escaped_edges(moved: Position, screen: Size) -> Vec<Edge> {
     let over_x = if moved.x < 0 {
         moved.x
     } else {
@@ -552,8 +563,11 @@ fn escaped_edge(moved: Position, screen: Size) -> Option<Edge> {
     };
 
     match (horizontal, vertical) {
-        (Some(h), Some(v)) => Some(if h.1 >= v.1 { h.0 } else { v.0 }),
-        (h, v) => h.or(v).map(|(edge, _)| edge),
+        (Some(h), Some(v)) if h.1 >= v.1 => vec![h.0, v.0],
+        (Some(h), Some(v)) => vec![v.0, h.0],
+        (Some(h), None) => vec![h.0],
+        (None, Some(v)) => vec![v.0],
+        (None, None) => Vec::new(),
     }
 }
 
@@ -753,6 +767,35 @@ mod tests {
                 .on_local_motion(pos(1919, 540), (5, 0), Modifiers::default(), now)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn a_corner_push_falls_back_to_the_edge_that_has_a_neighbour() {
+        let mut router = trio();
+        let now = Instant::now();
+
+        router
+            .on_local_motion(pos(1919, 540), (5, 0), Modifiers::default(), now)
+            .unwrap();
+
+        // Into the top-left corner of b. Nothing lies above b, so this only clamps.
+        let step = router
+            .on_remote_motion((-ENTRY_INSET, -2000), Modifiers::default(), later(now, 500))
+            .unwrap();
+
+        assert!(matches!(step, RemoteStep::Moved { .. }));
+
+        // Pushing mostly up and a little left: the top is a wall, the left leads home.
+        let step = router
+            .on_remote_motion((-3, -40), Modifiers::default(), later(now, 1000))
+            .unwrap();
+
+        let RemoteStep::Switched(transfer) = step else {
+            panic!("expected a switch, got {step:?}");
+        };
+
+        assert_eq!(transfer.to, name("a"));
+        assert_eq!(router.focus(), &Focus::Local);
     }
 
     #[test]

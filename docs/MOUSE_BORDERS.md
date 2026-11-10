@@ -163,6 +163,13 @@ if the machine you are controlling disconnects, input returns to you immediately
 `aujar mwb status` (and the Mouse Borders page in Settings) shows the screen layout, which way
 each edge leads, and, while another machine has the keyboard, how to come back from it.
 
+**Hiding the pointer while you are away.** Turn on "Hide the pointer while away" in Settings,
+Mouse Borders. On X11 that just works. GNOME on Wayland keeps the pointer showing at the screen
+edge (the desktop's input capture does not hide it, and applications cannot), so there Aujar asks
+the Aujar Windows Shell extension to hide it: run `aujar gnome-extension install` again (the
+extension gained this in this version) and log out and back in. Without the extension the pointer
+simply stays visible at the edge.
+
 **Both machines can control each other.** While another machine controls this one, this
 machine's own mouse still works. Push it against the screen edge that leads to the other
 machine and this machine takes control of it (in a row of two, you swap places). This needs
