@@ -54,6 +54,13 @@ const NUDGE_INTERVAL: Duration = Duration::from_secs(10);
 
 const GRAB_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// While another machine controls this one, screen-edge capture (Wayland) is only on for this
+/// long after the user touched this machine's own mouse or keyboard.
+const OWN_INPUT_WINDOW: Duration = Duration::from_secs(2);
+
+/// How often the request to hide the pointer is repeated while away (see `hide_pointer`).
+const POINTER_HIDE_RENEWAL: Duration = Duration::from_secs(20);
+
 /// How long a switch waits for held keys and mouse buttons to be let go before it grabs the
 /// input anyway (see `Engine::acquire_grab`).
 const GRAB_RELEASE_WAIT: Duration = Duration::from_secs(2);
@@ -388,6 +395,7 @@ impl Engine {
             keyboard: KeyboardTracker::default(),
             held_buttons: BTreeSet::new(),
             grab_wait: None,
+            pointer_hidden_at: None,
             edge_control,
             edge_watch_ready: false,
             watched_edges: Vec::new(),
@@ -584,6 +592,8 @@ struct Actor {
     /// Set while a switch waits for held keys and buttons to be let go before the input is
     /// grabbed: the time after which it stops waiting.
     grab_wait: Option<Instant>,
+    /// When the request to hide the pointer was last made, while it is hidden.
+    pointer_hidden_at: Option<Instant>,
     /// Where the desktop reports the pointer running into an edge instead of the engine reading
     /// the pointer position (Wayland): the way to talk to it.
     edge_control: Option<mpsc::UnboundedSender<EdgeControl>>,
@@ -891,13 +901,23 @@ impl Actor {
         let held = self.keyboard.held();
         let _ = self.injector.release_keys(&held);
 
-        if self.cfg.hide_mouse_at_edge
-            && let Err(error) = self.desktop.set_cursor_visible(false)
-        {
-            self.log(format!("cannot hide the pointer: {error}"));
-        }
+        self.hide_pointer();
 
         Ok(())
+    }
+
+    /// Hide the local pointer while another machine is controlled (when that is wanted), and
+    /// note when, so it can be renewed: a desktop that hides it on request (GNOME) shows it
+    /// again by itself if nobody renews the request, so it cannot stay hidden for good.
+    fn hide_pointer(&mut self) {
+        if !self.cfg.hide_mouse_at_edge {
+            return;
+        }
+
+        match self.desktop.set_cursor_visible(false) {
+            Ok(()) => self.pointer_hidden_at = Some(Instant::now()),
+            Err(error) => self.log(format!("cannot hide the pointer: {error}")),
+        }
     }
 
     /// A switch is waiting for held keys and buttons to be let go. Returns `true` when the
@@ -949,13 +969,19 @@ impl Actor {
             return Ok(());
         }
 
-        self.grabbed = false;
-
         if self.cfg.hide_mouse_at_edge {
             let _ = self.desktop.set_cursor_visible(true);
         }
 
-        self.set_grab(false).await
+        self.pointer_hidden_at = None;
+
+        // Only forget the grab once the devices really let go. Clearing the flag first meant a
+        // failed release (timeout, device change) was never retried, and the local mouse stayed
+        // dead until the program was restarted.
+        self.set_grab(false).await?;
+        self.grabbed = false;
+
+        Ok(())
     }
 
     /// Carry out a change of focus decided by the router.
@@ -1189,14 +1215,21 @@ impl Actor {
 
     /// The pointer ran into a screen edge that leads to a connected machine.
     async fn on_edge_hit(&mut self, hit: EdgeHit, now: Instant) {
-        // Give the pointer back to the desktop at once. When this switches machines, our own
-        // grab of the devices takes over; when it does not (a modifier is missing, a corner,
-        // the pause after a switch), the pointer must not stay captured.
-        if let Some(control) = &self.edge_control {
-            let _ = control.send(EdgeControl::Release(hit.clone()));
+        // The desktop already has the pointer back (the watcher gives it back first), so a hit
+        // that does not lead to a switch (a modifier is missing, a pause after a switch) costs
+        // nothing; one that does is picked up by our own grab of the devices.
+        if self.router.focus() != &Focus::Local {
+            return;
         }
 
-        if self.router.focus() != &Focus::Local {
+        // Another machine is driving this one and nobody touched this machine's own mouse: the
+        // pointer only ran into the edge because of that machine's motion. Its own router
+        // decides when control goes back.
+        if self.controlled_by.is_some()
+            && !self
+                .last_local_input
+                .is_some_and(|at| now.saturating_duration_since(at) < OWN_INPUT_WINDOW)
+        {
             return;
         }
 
@@ -1217,15 +1250,29 @@ impl Actor {
         }
 
         let local = self.cfg.local.clone();
-        let edges: Vec<Edge> = [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom]
-            .into_iter()
-            .filter(|edge| {
-                self.router
-                    .layout()
-                    .neighbor(&local, *edge)
-                    .is_some_and(|to| self.router.is_online(to))
-            })
-            .collect();
+        // No barriers while this machine is not the one in use. When another machine drives
+        // the pointer here, its motion runs into our barriers; the desktop then captures and
+        // releases the pointer over and over, which shows as flicker at the border (and made
+        // this machine "ask for control" on behalf of motion that was not its user's).
+        let in_use = match self.controlled_by {
+            Some(_) => self
+                .last_local_input
+                .is_some_and(|at| at.elapsed() < OWN_INPUT_WINDOW),
+            None => true,
+        };
+        let edges: Vec<Edge> = if self.router.focus() != &Focus::Local || !in_use {
+            Vec::new()
+        } else {
+            [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom]
+                .into_iter()
+                .filter(|edge| {
+                    self.router
+                        .layout()
+                        .neighbor(&local, *edge)
+                        .is_some_and(|to| self.router.is_online(to))
+                })
+                .collect()
+        };
 
         if edges != self.watched_edges {
             self.watched_edges = edges.clone();
@@ -1984,6 +2031,23 @@ impl Actor {
 
     async fn on_tick(&mut self) {
         let now = Instant::now();
+
+        // Away from this machine, with the pointer hidden: renew that now and then.
+        if self
+            .pointer_hidden_at
+            .is_some_and(|at| now.duration_since(at) >= POINTER_HIDE_RENEWAL)
+        {
+            self.hide_pointer();
+        }
+
+        // Control is back on this machine but the devices are still captured (a release that
+        // failed): try again every second instead of leaving the mouse dead.
+        if self.grabbed && self.router.focus() == &Focus::Local {
+            match self.release_grab().await {
+                Ok(()) => self.log("input was still captured; released it"),
+                Err(error) => tracing::warn!(%error, "cannot release captured input yet"),
+            }
+        }
 
         for (peer, id) in self.files.expire(now).await {
             self.send(

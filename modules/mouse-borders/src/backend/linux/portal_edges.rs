@@ -4,10 +4,12 @@
 //! Wayland does not let an application read the pointer position, so the engine cannot see the
 //! pointer reach an edge. The portal can: we ask it for "barriers" along the screen edges that
 //! lead to another machine, and it tells us when the pointer runs into one. The portal then
-//! captures the input and sends it to us over libei. We do not need that stream (our own devices
-//! reader and grabber already do the capturing): the engine hands the pointer straight back with
-//! `Release`, and the rest works as with any other desktop. Barriers only exist for edges that
-//! lead to a connected machine, so every other edge keeps behaving like a plain screen edge.
+//! captures *all* input (the desktop stops delivering it to any window) until we give it back
+//! with `Release`. We do not need the libei stream (our own devices reader and grabber already do
+//! the capturing), so the capture is handed back at once, before the engine even hears about the
+//! hit: every hit costs one round trip, never a wait for the engine. Barriers only exist for
+//! edges that lead to a connected machine, so every other edge keeps behaving like a plain
+//! screen edge, and they stay clear of the corners.
 //!
 //! The portal asks the user once per session whether Aujar may do this.
 
@@ -25,8 +27,12 @@ use tokio::sync::mpsc;
 use super::super::{EdgeControl, EdgeEvent, EdgeHit, EdgeWatcher};
 use crate::layout::Edge;
 
-/// How long to let the desktop settle after a release before capturing is switched on again.
-const REENABLE_AFTER: Duration = Duration::from_millis(250);
+/// Barriers stop this far from a corner of the desktop, so a pointer in a corner is never
+/// captured (it would be, over and over, while the user pushes into the corner).
+const CORNER_MARGIN: i32 = 24;
+
+/// A `Disabled` that comes this soon after we disabled capturing ourselves is our own.
+const OWN_DISABLE_WINDOW: Duration = Duration::from_secs(1);
 
 /// How close (in pixels) to a barrier the pointer must be for us to tell which one it was, when
 /// the desktop does not say.
@@ -99,7 +105,12 @@ struct Planned {
 }
 
 /// The barriers for the wanted edges: along the outer sides of the whole desktop only, so the
-/// seam between two monitors stays free. A line sits on the outermost pixels (`x + width - 1`).
+/// seam between two monitors stays free, and short of the desktop's corners.
+///
+/// The desktop is strict about where a barrier goes (GNOME checks each one against the monitor
+/// edges): a vertical line sits exactly on `x` or `x + width`, a horizontal one on `y` or
+/// `y + height`; along the edge it stays inside the monitor, and a horizontal line must end one
+/// pixel before the right edge (`right - 1`), or the desktop refuses it.
 fn plan_barriers(zones: &[Zone], wanted: &[Edge]) -> Vec<Planned> {
     let Some(desktop) = bounding_zone(zones) else {
         return Vec::new();
@@ -108,35 +119,66 @@ fn plan_barriers(zones: &[Zone], wanted: &[Edge]) -> Vec<Planned> {
 
     for edge in wanted {
         for zone in zones {
-            let line = match edge {
-                Edge::Left if zone.x == desktop.x => {
-                    Some((zone.x, zone.y, zone.x, zone.bottom() - 1))
-                }
-                Edge::Right if zone.right() == desktop.right() => Some((
-                    zone.right() - 1,
-                    zone.y,
-                    zone.right() - 1,
-                    zone.bottom() - 1,
-                )),
-                Edge::Top if zone.y == desktop.y => {
-                    Some((zone.x, zone.y, zone.right() - 1, zone.y))
-                }
-                Edge::Bottom if zone.bottom() == desktop.bottom() => Some((
-                    zone.x,
-                    zone.bottom() - 1,
-                    zone.right() - 1,
-                    zone.bottom() - 1,
-                )),
-                _ => None,
+            // Along the edge: from `start` to `end`, short of a corner of the desktop.
+            let (on_outer_side, start, end) = match edge {
+                Edge::Left | Edge::Right => (
+                    if *edge == Edge::Left {
+                        zone.x == desktop.x
+                    } else {
+                        zone.right() == desktop.right()
+                    },
+                    zone.y
+                        + if zone.y == desktop.y {
+                            CORNER_MARGIN
+                        } else {
+                            0
+                        },
+                    zone.bottom()
+                        - 1
+                        - if zone.bottom() == desktop.bottom() {
+                            CORNER_MARGIN
+                        } else {
+                            0
+                        },
+                ),
+                Edge::Top | Edge::Bottom => (
+                    if *edge == Edge::Top {
+                        zone.y == desktop.y
+                    } else {
+                        zone.bottom() == desktop.bottom()
+                    },
+                    zone.x
+                        + if zone.x == desktop.x {
+                            CORNER_MARGIN
+                        } else {
+                            0
+                        },
+                    zone.right()
+                        - 1
+                        - if zone.right() == desktop.right() {
+                            CORNER_MARGIN
+                        } else {
+                            0
+                        },
+                ),
             };
 
-            if let Some(line) = line {
-                planned.push(Planned {
-                    id: planned.len() as u32 + 1,
-                    edge: *edge,
-                    line,
-                });
+            if !on_outer_side || end <= start {
+                continue;
             }
+
+            let line = match edge {
+                Edge::Left => (zone.x, start, zone.x, end),
+                Edge::Right => (zone.right(), start, zone.right(), end),
+                Edge::Top => (start, zone.y, end, zone.y),
+                Edge::Bottom => (start, zone.bottom(), end, zone.bottom()),
+            };
+
+            planned.push(Planned {
+                id: planned.len() as u32 + 1,
+                edge: *edge,
+                line,
+            });
         }
     }
 
@@ -191,6 +233,8 @@ struct Portal<'a> {
     zone_set: u32,
     wanted: Vec<Edge>,
     planned: Vec<Planned>,
+    /// When we last switched capturing off ourselves.
+    disabled_by_us: Option<std::time::Instant>,
 }
 
 impl Portal<'_> {
@@ -264,24 +308,17 @@ impl Portal<'_> {
         }))
     }
 
-    async fn release(&self, token: u32, cursor: (f64, f64)) -> Result<(), String> {
+    /// Give the captured input back to the desktop. Only valid while a capture is active (the
+    /// desktop says "Capture not active" otherwise, which is harmless). The pointer stays where
+    /// it is: warping it somewhere could land it on a barrier again.
+    async fn release(&self, token: u32) -> Result<(), String> {
         self.capture
             .release(
                 &self.session,
-                ReleaseOptions::default()
-                    .set_activation_id(token)
-                    .set_cursor_position(cursor),
+                ReleaseOptions::default().set_activation_id(token),
             )
             .await
-            .map_err(describe)?;
-
-        // Some desktops switch capturing off on release: give the pointer a moment to move away
-        // from the barrier, then switch it on again (harmless where it never went off).
-        tokio::time::sleep(REENABLE_AFTER).await;
-
-        let _ = self.capture.enable(&self.session, Default::default()).await;
-
-        Ok(())
+            .map_err(describe)
     }
 
     fn desktop(&self) -> Option<Zone> {
@@ -391,6 +428,7 @@ async fn watch(
         zone_set: 0,
         wanted: Vec::new(),
         planned: Vec::new(),
+        disabled_by_us: None,
     };
 
     portal.refresh_zones().await?;
@@ -410,8 +448,11 @@ async fn watch(
                 let cursor = hit
                     .cursor_position()
                     .map_or((0.0, 0.0), |(x, y)| (f64::from(x), f64::from(y)));
-                let Some(desktop) = portal.desktop() else { continue };
 
+                // Everything is held until this is given back, so do that first.
+                let given_back = portal.release(token).await;
+
+                let Some(desktop) = portal.desktop() else { continue };
                 let edge = match hit.barrier_id() {
                     Some(ActivatedBarrier::Barrier(id)) => portal
                         .planned
@@ -422,22 +463,20 @@ async fn watch(
                 }
                 .or_else(|| edge_near(cursor, desktop, &portal.wanted));
 
-                match edge {
-                    Some(edge) => {
-                        let hit = EdgeHit {
-                            edge,
-                            along: along(edge, cursor, desktop),
-                            cursor,
-                            token,
-                        };
+                if let Err(reason) = given_back {
+                    let _ = events
+                        .send(EdgeEvent::Note(format!("cannot hand the pointer back: {reason}")))
+                        .await;
+                }
 
-                        if events.send(EdgeEvent::Hit(hit)).await.is_err() {
-                            return Ok(());
-                        }
-                    }
-                    // Not one of ours: never keep the pointer captured.
-                    None => {
-                        let _ = portal.release(token, cursor).await;
+                if let Some(edge) = edge {
+                    let hit = EdgeHit {
+                        edge,
+                        along: along(edge, cursor, desktop),
+                    };
+
+                    if events.send(EdgeEvent::Hit(hit)).await.is_err() {
+                        return Ok(());
                     }
                 }
             }
@@ -455,21 +494,21 @@ async fn watch(
                         }
                     }
                 }
-                EdgeControl::Release(hit) => {
-                    if let Err(reason) = portal.release(hit.token, hit.cursor).await {
-                        let _ = events
-                            .send(EdgeEvent::Note(format!("cannot hand the pointer back: {reason}")))
-                            .await;
-                    }
-                }
             },
             Some(_) = disabled.next() => {
-                // The desktop switched capturing off (the session may have been reset): barriers
-                // again, with the edges the engine last asked for.
-                let wanted = portal.wanted.clone();
+                // The desktop switched capturing off by itself (the session may have been
+                // reset): barriers again, with the edges the engine last asked for. Our own
+                // `disable` (when the barriers change) is not that: leave it alone, or every
+                // change would start the next one.
+                let own = portal
+                    .disabled_by_us
+                    .is_some_and(|at| at.elapsed() < OWN_DISABLE_WINDOW);
 
-                tokio::time::sleep(REENABLE_AFTER).await;
-                let _ = portal.watch_edges(wanted).await;
+                if !own {
+                    let wanted = portal.wanted.clone();
+
+                    let _ = portal.watch_edges(wanted).await;
+                }
             }
             Some(_) = zones_changed.next() => {
                 // Monitors came or went: the barriers must follow the new screen edges.
@@ -498,7 +537,7 @@ mod tests {
     };
 
     #[test]
-    fn one_screen_gets_a_barrier_on_each_wanted_side_on_its_outermost_pixels() {
+    fn one_screen_gets_barriers_on_the_edge_coordinates_short_of_the_corners() {
         let plan = plan_barriers(
             &[LAPTOP],
             &[Edge::Left, Edge::Right, Edge::Top, Edge::Bottom],
@@ -509,13 +548,16 @@ mod tests {
             .map(|planned| (planned.edge, planned.line))
             .collect();
 
+        // Vertical lines sit on x = 0 and x = width, horizontal ones on y = 0 and y = height
+        // (that is what the desktop accepts); every line stops CORNER_MARGIN short of a corner,
+        // and horizontal lines end at `right - 1 - margin`.
         assert_eq!(
             lines,
             vec![
-                (Edge::Left, (0, 0, 0, 1079)),
-                (Edge::Right, (1919, 0, 1919, 1079)),
-                (Edge::Top, (0, 0, 1919, 0)),
-                (Edge::Bottom, (0, 1079, 1919, 1079)),
+                (Edge::Left, (0, 24, 0, 1055)),
+                (Edge::Right, (1920, 24, 1920, 1055)),
+                (Edge::Top, (24, 0, 1895, 0)),
+                (Edge::Bottom, (24, 1080, 1895, 1080)),
             ]
         );
 
@@ -525,6 +567,14 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_horizontal_barrier_never_reaches_the_right_edge_of_the_desktop() {
+        // The desktop refuses a horizontal line that touches `x = right`.
+        for planned in plan_barriers(&[LAPTOP], &[Edge::Top, Edge::Bottom]) {
+            assert!(planned.line.2 < LAPTOP.right(), "{planned:?}");
+        }
     }
 
     #[test]
@@ -548,16 +598,30 @@ mod tests {
         };
         let plan = plan_barriers(&[LAPTOP, monitor], &[Edge::Left, Edge::Right]);
 
-        // Left: only the laptop (x = 0). Right: only the monitor (the far side).
+        // Left: only the laptop (x = 0). It reaches neither the top nor the bottom of the
+        // desktop (the monitor is taller), so it is not trimmed. Right: only the monitor (the
+        // far side), trimmed at both its corners.
         assert_eq!(
             plan.iter()
                 .map(|planned| (planned.edge, planned.line))
                 .collect::<Vec<_>>(),
             vec![
                 (Edge::Left, (0, 0, 0, 1079)),
-                (Edge::Right, (4479, -200, 4479, 1239)),
+                (Edge::Right, (4480, -176, 4480, 1215)),
             ]
         );
+    }
+
+    #[test]
+    fn a_zone_too_small_for_the_margins_gets_no_barrier() {
+        let tiny = Zone {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 40,
+        };
+
+        assert!(plan_barriers(&[tiny], &[Edge::Left, Edge::Top]).is_empty());
     }
 
     #[test]
