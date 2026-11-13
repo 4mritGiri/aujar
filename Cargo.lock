@@ -536,6 +536,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "aujar-awake"
+version = "0.1.1"
+dependencies = [
+ "ashpd",
+ "async-trait",
+ "aujar-config",
+ "aujar-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "aujar-clipboard"
 version = "0.1.1"
 
@@ -571,6 +585,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "aujar-awake",
  "aujar-color",
  "aujar-config",
  "aujar-core",
@@ -614,6 +629,7 @@ name = "aujar-ipc"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "aujar-awake",
  "aujar-core",
  "aujar-mouse-borders",
  "aujar-nexdesk",
@@ -638,6 +654,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "aujar-awake",
  "aujar-color",
  "aujar-config",
  "aujar-core",
@@ -779,6 +796,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-channel",
+ "aujar-awake",
  "aujar-color",
  "aujar-config",
  "aujar-ipc",

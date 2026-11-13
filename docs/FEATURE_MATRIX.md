@@ -59,7 +59,7 @@ the current target's machine-readable feature support report.
 | NexDesk (open the remote-access manager) | — | `modules/nexdesk` | ✅ `aujar nexdesk open` / `status`; saved-connection search and a settings page 📅 ([NEXDESK](NEXDESK.md)) | ✅ | ✅ | ✅ | ✅ | process launch only, no desktop backend |
 | Mouse utilities (find my mouse, highlighter) | Mouse Utilities | — | 📅 | ❌ generic / ⚠️ per compositor | ⚠️ | ⚠️ | ⚠️ | |
 | Text extractor (OCR) | Text Extractor | — | 📅 | 📅 | 📅 | 📅 | 📅 | Screen capture + Tesseract |
-| Awake (inhibit sleep) | Awake | — | 📅 | 📅 | 📅 (logind / portal Inhibit) | 📅 | 📅 | |
+| Awake (inhibit sleep) | Awake | `modules/awake` | ✅ `aujar awake on/off/for/status`, Settings page, remembered across restarts, timed modes | 📅 | ✅ (portal Inhibit) | 📅 | 📅 | `xdg-desktop-portal` Inhibit |
 
 ## 3. Front-ends
 

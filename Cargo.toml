@@ -24,6 +24,7 @@ members = [
     "modules/window",
     "modules/zones",
     "modules/clipboard",
+    "modules/awake",
     "modules/color",
     "modules/image-resizer",
     "modules/ruler",
@@ -47,6 +48,7 @@ default-members = [
     "modules/window",
     "modules/zones",
     "modules/clipboard",
+    "modules/awake",
     "modules/color",
     "modules/image-resizer",
     "modules/ruler",
@@ -95,6 +97,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # Internal path crates. Version is required so cargo-deny `wildcards = "deny"` accepts them.
+aujar-awake = { path = "modules/awake", version = "0.1.1" }
 aujar-color = { path = "modules/color", version = "0.1.1" }
 aujar-config = { path = "crates/aujar-config", version = "0.1.1" }
 aujar-core = { path = "crates/aujar-core", version = "0.1.1" }

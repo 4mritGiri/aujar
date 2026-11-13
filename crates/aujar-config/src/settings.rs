@@ -506,6 +506,15 @@ pub struct Settings {
     pub web: Web,
     pub weather: Weather,
     pub mouse_borders: MouseBorders,
+    pub awake: Awake,
+}
+
+/// Awake: keeping the computer from sleeping while you are away from the keyboard.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Awake {
+    /// Also keep the screen on and the session from locking (otherwise only sleep is stopped).
+    pub keep_screen_on: bool,
 }
 
 /// Preferences for the screen color picker and its editor.

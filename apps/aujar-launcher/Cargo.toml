@@ -16,6 +16,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
+aujar-awake = { workspace = true }
 aujar-config = { workspace = true }
 aujar-core = { workspace = true }
 aujar-color = { workspace = true }

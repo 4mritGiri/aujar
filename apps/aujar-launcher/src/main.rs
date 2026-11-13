@@ -8,6 +8,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
+mod awake;
 mod gnome_extension;
 mod mouse_borders;
 mod nexdesk;
@@ -170,6 +171,13 @@ enum Command {
     MouseBorders {
         #[command(subcommand)]
         action: mouse_borders::MwbAction,
+    },
+
+    /// Keep the computer from sleeping: on, off, or for a set time.
+    #[command(name = "awake")]
+    Awake {
+        #[command(subcommand)]
+        action: awake::AwakeAction,
     },
 
     /// Open the NexDesk remote-access manager (RDP, remote control), or check it is installed.
@@ -472,6 +480,8 @@ async fn main() -> Result<()> {
         Command::MouseBorders { action } => mouse_borders::run(action, resolve_socket()).await?,
 
         Command::NexDesk { action } => nexdesk::run(action, resolve_socket()).await?,
+
+        Command::Awake { action } => awake::run(action, resolve_socket()).await?,
 
         Command::Daemon { socket } => {
             let socket_path = socket.unwrap_or_else(resolve_socket);

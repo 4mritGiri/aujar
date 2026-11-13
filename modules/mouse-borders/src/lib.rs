@@ -23,6 +23,7 @@ pub mod net;
 pub mod pairing;
 pub mod permissions;
 pub mod protocol;
+pub mod report;
 pub mod router;
 pub mod secure;
 pub mod service;

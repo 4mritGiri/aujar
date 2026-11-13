@@ -1,0 +1,23 @@
+[package]
+name = "aujar-awake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Keep the computer from sleeping (Awake): until you say otherwise, or for a set time"
+
+[dependencies]
+async-trait.workspace = true
+aujar-config = { workspace = true }
+aujar-runtime = { workspace = true }
+serde.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The desktop's own inhibit portal: the lock lives as long as our connection to the session bus,
+# so it disappears by itself if the daemon dies.
+ashpd = { workspace = true, features = ["inhibit"] }
+
+[dev-dependencies]
+serde_json.workspace = true

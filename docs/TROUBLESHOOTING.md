@@ -85,6 +85,15 @@ That is the activation behavior in Settings, Color Picker. "Open editor" opens t
 and the editor opens with the color after you pick. Aujar uses the desktop's own picker, so it
 never takes a screenshot of your screen.
 
+## What to send when asking for help with Mouse Borders
+
+Run `aujar mwb report` on the machine that has the problem (and on the other one if it is about
+two machines) and paste the output. It lists the desktop session and GNOME version, whether the
+input-capture portal and the pointer-hiding extension are there, what `aujar mwb doctor` checks,
+the layout and status, and the latest log lines. It shows machine names and network addresses
+from your own setup, and it does not contain your security key. Add when it happens (while
+crossing, while idle, while moving on the other machine).
+
 ## A key repeats by itself, or clicks stop working, after switching machines
 
 This was caused by taking over the keyboard while `Ctrl+Alt+<number>` (or another key or mouse
