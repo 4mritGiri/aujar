@@ -689,7 +689,7 @@ dependencies = [
  "evdev",
  "futures-util",
  "gethostname",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "if-addrs",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
