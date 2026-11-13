@@ -1,0 +1,24 @@
+# Cargo configuration shared by everyone working in this repository.
+#
+# Only command aliases live here: they are harmless on every machine. Machine-specific
+# settings (a faster linker, sccache, a shared target directory) belong in your own
+# ~/.cargo/config.toml; see docs/DEVELOPMENT.md, "Faster builds".
+#
+# Note: cargo reads this file for integrations/nexdesk too (it sits below this directory), so
+# the aliases also exist there. They do nothing harmful, they just point at Aujar packages.
+
+[alias]
+# The `aujar` CLI (package aujar-launcher-app, binary `aujar`):
+#   cargo aujar ping        cargo aujar search fire        cargo aujar doctor
+aujar = "run -p aujar-launcher-app --"
+# The GPUI launcher and settings window (debug build).
+aujar-ui = "run -p aujar-ui"
+# The standalone Mouse Borders agent:  cargo mwb run   cargo mwb doctor
+mwb = "run -p aujar-mwb --"
+
+# The same lint gate as `just lint` and CI (the GPU-heavy UI crate is checked separately).
+lint = "clippy --workspace --exclude aujar-ui --all-targets --all-features -- -D warnings"
+# Clippy for the UI crate only (needs the windowing and GPU headers: scripts/setup-dev.sh).
+lint-ui = "clippy -p aujar-ui --all-targets -- -D warnings"
+# Tests for everything except the UI crate, like CI.
+test-all = "test --workspace --exclude aujar-ui"

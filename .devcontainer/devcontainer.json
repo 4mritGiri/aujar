@@ -1,0 +1,18 @@
+{
+  // Reproducible build-and-test environment (Ubuntu 24.04, same as CI's first job).
+  // Good for: building, `just check`, `cargo check -p aujar-ui`, working on any crate.
+  // Not for: running the launcher UI or Mouse Borders. A container has no desktop session,
+  // GPU, portals or input devices, so test those on your host (see docs/DEVELOPMENT.md).
+  "name": "Aujar",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "postCreateCommand": "./scripts/setup-dev.sh --yes",
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "RUST_BACKTRACE": "1"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer", "tamasfe.even-better-toml", "nefrob.vscode-just-syntax"]
+    }
+  }
+}

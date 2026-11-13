@@ -112,3 +112,68 @@ aujar-nexdesk = { path = "modules/nexdesk", version = "0.1.1" }
 aujar-platform = { path = "crates/aujar-platform", version = "0.1.1" }
 aujar-rename = { path = "modules/rename", version = "0.1.1" }
 aujar-runtime = { path = "crates/aujar-runtime", version = "0.1.1" }
+
+# ---- build profiles (see docs/DEVELOPMENT.md, "Faster builds") ------------------------------
+# Debug builds are what `cargo test`, `cargo run` and the editor use all day. Two changes keep
+# them quick without giving up the debugger:
+#   * line tables instead of full debug info: backtraces, panics and breakpoints on lines still
+#     work, but object files are much smaller and linking is faster. Need to inspect local
+#     variables? Run with `CARGO_PROFILE_DEV_DEBUG=full cargo run ...` (or edit this line).
+#   * unpacked debuginfo: the linker does not have to merge it into the binary.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Full debug info for the debugger (Zed's "Debug: ..." configurations in .zed/debug.json build
+# with this profile). It has its own directory, target/debugging, so switching between running
+# and debugging never rebuilds the other one. The first debugging build compiles everything
+# once (slow for aujar-ui); after that it is incremental.
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+# Unoptimized image codecs and cryptography are painfully slow (resizing a photo, the Noise
+# handshake in the Mouse Borders tests). Optimize only those dependencies: the first build
+# costs a little more, every run afterwards is much faster, and Aujar's own crates still
+# compile quickly and keep their debug assertions. Packages that are not in the dependency
+# graph are simply ignored.
+[profile.dev.package.image]
+opt-level = 2
+[profile.dev.package.png]
+opt-level = 2
+[profile.dev.package.zune-jpeg]
+opt-level = 2
+[profile.dev.package.zune-core]
+opt-level = 2
+[profile.dev.package.fdeflate]
+opt-level = 2
+[profile.dev.package.flate2]
+opt-level = 2
+[profile.dev.package.miniz_oxide]
+opt-level = 2
+[profile.dev.package.crc32fast]
+opt-level = 2
+[profile.dev.package.gif]
+opt-level = 2
+[profile.dev.package.tiff]
+opt-level = 2
+[profile.dev.package.image-webp]
+opt-level = 2
+[profile.dev.package.tiny-skia]
+opt-level = 2
+[profile.dev.package.snow]
+opt-level = 2
+[profile.dev.package.chacha20]
+opt-level = 2
+[profile.dev.package.poly1305]
+opt-level = 2
+[profile.dev.package.chacha20poly1305]
+opt-level = 2
+[profile.dev.package.curve25519-dalek]
+opt-level = 2
+[profile.dev.package.sha2]
+opt-level = 2
+
+# Dependencies' build scripts and proc macros run on every build: optimizing them is free speed.
+[profile.dev.build-override]
+opt-level = 1

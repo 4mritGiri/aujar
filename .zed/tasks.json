@@ -1,0 +1,191 @@
+// Zed tasks for Aujar. Run one with the command palette: `task: spawn`
+// (re-run the last one with `task: rerun`). They mirror the justfile; the long-running ones
+// (daemon, UI, events) keep their terminal open.
+[
+  // ---- quality gates -------------------------------------------------------------------
+  {
+    "label": "check: fmt + clippy + tests (same as CI)",
+    "command": "just",
+    "args": ["check"],
+    "reveal": "always",
+    "allow_concurrent_runs": false
+  },
+  {
+    "label": "check: tests only",
+    "command": "just",
+    "args": ["test"],
+    "reveal": "always"
+  },
+  {
+    "label": "check: clippy only",
+    "command": "just",
+    "args": ["lint"],
+    "reveal": "always"
+  },
+  {
+    "label": "check: format everything",
+    "command": "just",
+    "args": ["fmt"],
+    "reveal": "always"
+  },
+  {
+    "label": "check: cargo test for the crate of the current file",
+    // cargo finds the nearest Cargo.toml above this directory.
+    "command": "cargo",
+    "args": ["test"],
+    "cwd": "$ZED_DIRNAME",
+    "reveal": "always"
+  },
+  {
+    "label": "ui: check (clippy on aujar-ui, needs GPU/windowing headers)",
+    "command": "just",
+    "args": ["check-ui"],
+    "reveal": "always"
+  },
+
+  // ---- run -----------------------------------------------------------------------------
+  {
+    "label": "run: daemon (foreground, debug logging)",
+    "command": "cargo",
+    "args": ["run", "-p", "aujar-launcher-app", "--", "daemon"],
+    "env": { "RUST_LOG": "debug" },
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "run: UI (release, as the project's docs do)",
+    "command": "cargo",
+    "args": ["run", "-p", "aujar-ui", "--release"],
+    "env": { "RUST_LOG": "info" },
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "run: UI (debug build; faster to compile, slower to run)",
+    "command": "cargo",
+    "args": ["run", "-p", "aujar-ui"],
+    "env": { "RUST_LOG": "info" },
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "run: Mouse Borders agent (aujar-mwb) in the foreground",
+    "command": "cargo",
+    "args": ["run", "-p", "aujar-mwb", "--", "run"],
+    "env": { "RUST_LOG": "debug" },
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+
+  // ---- isolated dev instance -----------------------------------------------------------
+  // The CLI and the UI honor AUJAR_SOCKET, so a dev daemon on its own socket runs beside your
+  // installed Aujar without stopping it. Start the daemon first, then the UI and the others.
+  // (Shared across both: ~/.config and ~/.local/state, and the desktop's global shortcut and
+  // portals. To test the shortcut, stop the installed services instead; see "services" below.)
+  {
+    "label": "dev: daemon on its own socket (/tmp/aujar-dev.sock)",
+    "command": "cargo",
+    "args": ["run", "-p", "aujar-launcher-app", "--", "daemon"],
+    "env": { "AUJAR_SOCKET": "/tmp/aujar-dev.sock", "RUST_LOG": "debug" },
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "dev: UI on the dev socket (debug build)",
+    "command": "cargo",
+    "args": ["run", "-p", "aujar-ui"],
+    "env": { "AUJAR_SOCKET": "/tmp/aujar-dev.sock", "RUST_LOG": "info" },
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "dev: events from the dev daemon",
+    "command": "cargo",
+    "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "events"],
+    "env": { "AUJAR_SOCKET": "/tmp/aujar-dev.sock" },
+    "use_new_terminal": true,
+    "reveal": "always"
+  },
+  {
+    "label": "dev: doctor against the dev daemon",
+    "command": "cargo",
+    "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "doctor"],
+    "env": { "AUJAR_SOCKET": "/tmp/aujar-dev.sock" },
+    "reveal": "always"
+  },
+
+  // ---- inspect the running daemon ------------------------------------------------------
+  {
+    "label": "aujar: doctor (is the daemon up, which session, is the shortcut bound)",
+    "command": "cargo",
+    "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "doctor"],
+    "reveal": "always"
+  },
+  {
+    "label": "aujar: events (watch daemon -> UI events)",
+    "command": "cargo",
+    "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "events"],
+    "use_new_terminal": true,
+    "reveal": "always"
+  },
+  {
+    "label": "aujar: platform (what works on this desktop)",
+    "command": "cargo",
+    "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "platform"],
+    "reveal": "always"
+  },
+  {
+    "label": "aujar: mwb report (paste this in Mouse Borders bug reports)",
+    "command": "cargo",
+    "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "mwb", "report"],
+    "reveal": "always"
+  },
+
+  // ---- installed (systemd) instance ----------------------------------------------------
+  // The plain "run: daemon" task uses the default socket, which the installed service also
+  // owns. Stop the installed services before using it (or use the "dev:" tasks above).
+  {
+    "label": "services: stop the installed Aujar (before run: daemon)",
+    "command": "systemctl",
+    "args": ["--user", "stop", "aujar.service", "aujar-ui.service"],
+    "reveal": "always"
+  },
+  {
+    "label": "services: start the installed Aujar",
+    "command": "systemctl",
+    "args": ["--user", "start", "aujar.service", "aujar-ui.service"],
+    "reveal": "always"
+  },
+  {
+    "label": "services: logs of the installed Aujar",
+    "command": "journalctl",
+    "args": ["--user", "-u", "aujar.service", "-u", "aujar-ui.service", "-n", "100", "--no-pager"],
+    "reveal": "always"
+  },
+
+  // ---- environment ---------------------------------------------------------------------
+  {
+    "label": "setup: install development dependencies",
+    "command": "./scripts/setup-dev.sh",
+    "use_new_terminal": true,
+    "reveal": "always"
+  },
+  {
+    "label": "setup: verify the environment (no changes)",
+    "command": "./scripts/setup-dev.sh",
+    "args": ["--check"],
+    "reveal": "always"
+  },
+  {
+    "label": "nexdesk: build (separate workspace)",
+    "command": "./scripts/build-nexdesk.sh",
+    "use_new_terminal": true,
+    "reveal": "always"
+  }
+]

@@ -1,0 +1,62 @@
+// Project settings for the Zed editor (https://zed.dev). Zed merges these over your user
+// settings, and this file may contain comments. Keep it in sync with .editorconfig and CI.
+{
+  "tab_size": 4,
+  "hard_tabs": false,
+  "format_on_save": "on",
+  "ensure_final_newline_on_save": true,
+  "remove_trailing_whitespace_on_save": true,
+
+  // Keep the project panel, search and file finder fast: build output and the vendored
+  // NexDesk tree (a separate project, never built with Aujar's cargo) are hidden.
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.DS_Store",
+    "**/target",
+    "integrations/nexdesk/target",
+    "integrations/nexdesk/vendor"
+  ],
+
+  "languages": {
+    "Rust": {
+      "tab_size": 4,
+      "formatter": "language_server"
+    },
+    // Same two-space indent as .editorconfig.
+    "TOML": { "tab_size": 2 },
+    "YAML": { "tab_size": 2 },
+    "JSON": { "tab_size": 2 },
+    "JSONC": { "tab_size": 2 },
+    "Markdown": {
+      "tab_size": 2,
+      "soft_wrap": "editor_width",
+      // Two trailing spaces are a hard line break in Markdown.
+      "remove_trailing_whitespace_on_save": false
+    }
+  },
+
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        // Give rust-analyzer its own target dir (target/rust-analyzer) so editor checks and
+        // your terminal `cargo` runs never block each other on the build directory lock.
+        "cargo": { "targetDir": true },
+
+        // Same lint gate as `just lint` and CI: clippy, and without the GPUI UI crate.
+        // aujar-ui needs GPU/windowing headers and a big dependency tree, so it is skipped
+        // here; code in apps/aujar-ui is still indexed (navigation and completion work),
+        // only its on-save diagnostics are off. To get them, run the "ui: check" task, or
+        // delete the "extraArgs" line below while working on the UI.
+        "check": {
+          "command": "clippy",
+          "extraArgs": ["--exclude", "aujar-ui"]
+        },
+
+        "procMacro": { "enable": true },
+
+        // NexDesk is its own Cargo workspace (see docs/NEXDESK.md); do not watch it.
+        "files": { "excludeDirs": ["integrations/nexdesk", "target"] }
+      }
+    }
+  }
+}

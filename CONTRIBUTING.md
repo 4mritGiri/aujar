@@ -5,12 +5,14 @@ Thanks for helping! Please read this and the [Code of Conduct](CODE_OF_CONDUCT.m
 ## Getting started
 
 ```bash
-git clone https://github.com/4mritGiri/aujar && cd aujar
-cargo install just cargo-deny   # optional helpers
-just check                      # fmt + clippy + tests
+git clone --recurse-submodules https://github.com/4mritGiri/aujar && cd aujar
+./scripts/setup-dev.sh          # system packages, Rust, just, cargo-deny, nextest, watch
+just check                      # fmt + clippy + tests (the same gate CI runs)
 ```
 
-Requires Rust 1.85+ (edition 2024).
+Requires Rust 1.85+ (edition 2024). [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers the editor
+setup (Zed config is in `.zed/`), running a development copy next to an installed one,
+debugging, logs and a map of the repository.
 
 ## Workflow
 

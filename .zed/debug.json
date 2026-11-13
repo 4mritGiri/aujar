@@ -1,0 +1,59 @@
+// Debug configurations for Zed's debugger (command palette: `debugger: start`).
+// They use the CodeLLDB adapter and build first, so you always debug the current code.
+// The build uses the "debugging" profile (full debug info so local variables show up; the
+// everyday dev profile only keeps line tables for speed). Its binaries are in
+// target/debugging/, separate from target/debug/, so nothing is rebuilt when you switch.
+// Breakpoints go in the gutter. Environment, arguments and the build step can be edited here.
+[
+  {
+    "label": "Debug: aujar daemon",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build", "--profile", "debugging", "-p", "aujar-launcher-app"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debugging/aujar",
+    "args": ["daemon"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": { "RUST_LOG": "debug" }
+  },
+  {
+    "label": "Debug: aujar CLI (edit args)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build", "--profile", "debugging", "-p", "aujar-launcher-app"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debugging/aujar",
+    "args": ["search", "fire"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": { "RUST_LOG": "debug" }
+  },
+  {
+    "label": "Debug: aujar-ui",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build", "--profile", "debugging", "-p", "aujar-ui"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debugging/aujar-ui",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": { "RUST_LOG": "info" }
+  },
+  {
+    "label": "Debug: aujar-mwb agent",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "build": {
+      "command": "cargo",
+      "args": ["build", "--profile", "debugging", "-p", "aujar-mwb"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debugging/aujar-mwb",
+    "args": ["run"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": { "RUST_LOG": "debug" }
+  }
+]

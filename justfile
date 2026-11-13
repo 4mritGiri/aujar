@@ -33,7 +33,30 @@ test-ui:
 audit:
     cargo deny check
 
+# ---- setup ----
+
+# Install system packages, Rust components and helper tools (asks before each step).
+setup:
+    ./scripts/setup-dev.sh
+
+# Report what is missing in the development environment without changing anything.
+setup-check:
+    ./scripts/setup-dev.sh --check
+
 # ---- development ----
+
+# Remove only rust-analyzer's separate build directory (editor checks); your own builds stay.
+clean-ra:
+    rm -rf target/rust-analyzer
+
+# Build everything but the UI and write an HTML timing report (target/cargo-timings/): shows
+# which crates and which build steps (compiling, linking, build scripts) cost the most.
+timings:
+    cargo build --timings --workspace --exclude aujar-ui
+
+# Disk used by the build directory, per profile (debug, debugging, release, rust-analyzer).
+target-size:
+    du -sh target target/* 2>/dev/null | sort -h
 
 run-daemon:
     cargo run -p aujar-launcher-app -- daemon
