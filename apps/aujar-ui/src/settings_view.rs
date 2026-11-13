@@ -30,6 +30,8 @@ enum EditTarget {
     NepseKey,
     /// A web shortcut as `keyword | Name | URL`: `Some(index)` edits one, `None` adds one.
     Shortcut(Option<usize>),
+    /// A time for Awake, such as `45m` or `1h30m`.
+    AwakeTime,
 }
 
 #[derive(Debug, Clone)]
@@ -219,6 +221,7 @@ enum Page {
     Search,
     Web,
     MouseBorders,
+    Awake,
     NexDesk,
     Files,
     History,
@@ -227,23 +230,25 @@ enum Page {
 
 impl Page {
     /// The top group of the sidebar.
-    const MAIN: [Page; 6] = [
+    const MAIN: [Page; 7] = [
         Page::Appearance,
         Page::ColorPicker,
         Page::Search,
         Page::Web,
         Page::MouseBorders,
+        Page::Awake,
         Page::NexDesk,
     ];
     /// The collapsible "Data" group.
     const DATA: [Page; 2] = [Page::Files, Page::History];
     /// Every page, in sidebar order (used by search).
-    const ALL: [Page; 9] = [
+    const ALL: [Page; 10] = [
         Page::Appearance,
         Page::ColorPicker,
         Page::Search,
         Page::Web,
         Page::MouseBorders,
+        Page::Awake,
         Page::NexDesk,
         Page::Files,
         Page::History,
@@ -257,6 +262,7 @@ impl Page {
             Self::Search => "Search plugins",
             Self::Web => "Web search",
             Self::MouseBorders => "Mouse Borders",
+            Self::Awake => "Awake",
             Self::NexDesk => "NexDesk",
             Self::Files => "Files",
             Self::History => "History",
@@ -271,6 +277,7 @@ impl Page {
             Self::Search => "Choose what the launcher can find and answer",
             Self::Web => "Where the \"search the web\" row and keyword shortcuts go",
             Self::MouseBorders => "Use one keyboard and mouse across your computers",
+            Self::Awake => "Keep your computer from sleeping",
             Self::NexDesk => "Open your saved remote desktop connections",
             Self::Files => "Which folders the launcher looks through",
             Self::History => "Recent items and the clipboard",
@@ -285,6 +292,7 @@ impl Page {
             Self::Search => "icons/search.svg",
             Self::Web => "icons/globe.svg",
             Self::MouseBorders => "icons/mouse.svg",
+            Self::Awake => "icons/sun.svg",
             Self::NexDesk => "icons/window.svg",
             Self::Files => "icons/folder.svg",
             Self::History => "icons/history.svg",
@@ -311,6 +319,9 @@ impl Page {
                 "web search engine duckduckgo google brave bing startpage shortcuts keyword"
             }
             Self::MouseBorders => "mouse keyboard share machines network clipboard files cursor",
+            Self::Awake => {
+                "awake sleep suspend keep on caffeine screen idle lock timer prevent stay"
+            }
             Self::NexDesk => {
                 "nexdesk rdp remote desktop connection connections open install installed"
             }
@@ -364,6 +375,7 @@ pub struct SettingsView {
     page: Page,
     mouse_borders: mouse_borders::State,
     nexdesk: nexdesk::State,
+    awake: awake::State,
     pub focus_handle: FocusHandle,
     sidebar_open: bool,
     data_open: bool,
@@ -391,6 +403,7 @@ impl SettingsView {
 
         Self::keep_mouse_borders_status_fresh(cx);
         Self::keep_nexdesk_status_fresh(cx);
+        Self::keep_awake_status_fresh(cx);
 
         Self {
             palette: Palette::from_settings(&settings),
@@ -400,6 +413,7 @@ impl SettingsView {
             page: Page::Appearance,
             mouse_borders: mouse_borders::State::default(),
             nexdesk: nexdesk::State::default(),
+            awake: awake::State::default(),
             focus_handle: cx.focus_handle(),
             sidebar_open: true,
             data_open: true,
@@ -439,6 +453,10 @@ impl SettingsView {
 
         if page == Page::NexDesk {
             self.refresh_nexdesk(cx);
+        }
+
+        if page == Page::Awake {
+            self.refresh_awake(cx);
         }
 
         cx.notify();
@@ -693,6 +711,21 @@ impl SettingsView {
                     });
                 }
             }
+            EditTarget::AwakeTime => {
+                match aujar_awake::api::parse_duration(&edit.text)
+                    .and_then(aujar_awake::api::check_seconds)
+                {
+                    Ok(seconds) => {
+                        self.editing = None;
+                        self.set_awake(aujar_ipc::AwakeRequest::For { seconds }, cx);
+                    }
+                    Err(error) => {
+                        if let Some(editing) = self.editing.as_mut() {
+                            editing.error = Some(error);
+                        }
+                    }
+                }
+            }
             EditTarget::NepseKey => match save_nepse_key(edit.text.trim()) {
                 Ok(()) => {
                     self.editing = None;
@@ -828,9 +861,12 @@ impl SettingsView {
     fn section(&self, title: &str, rows: Vec<AnyElement>) -> AnyElement {
         let pal = self.palette;
 
+        // `flex_shrink_0`: the page is a scrolling column, and a section must keep its height
+        // when the page is taller than the window (it scrolls) instead of being squashed.
         div()
             .flex()
             .flex_col()
+            .flex_shrink_0()
             .gap_2()
             .child(
                 div()
@@ -850,6 +886,7 @@ impl SettingsView {
         rounded_px(div(), 12.)
             .flex()
             .flex_col()
+            .flex_shrink_0()
             .border_1()
             .border_color(rgba(pal.border))
             .bg(rgba(pal.subtle))
@@ -1671,6 +1708,7 @@ macro_rules! stepper_row {
 
 // Pages come after the macros so they can use them.
 mod appearance;
+mod awake;
 mod files;
 mod general;
 mod history;
@@ -1710,6 +1748,7 @@ impl Render for SettingsView {
             Page::Search => self.plugins_page(cx),
             Page::Web => self.web_page(cx),
             Page::MouseBorders => self.mouse_borders_page(cx),
+            Page::Awake => self.awake_page(cx),
             Page::NexDesk => self.nexdesk_page(cx),
             Page::Files => self.files_page(cx),
             Page::History => self.history_page(cx),

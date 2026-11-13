@@ -13,6 +13,7 @@ aujar-color = { workspace = true }
 aujar-hotkeys = { workspace = true }
 aujar-ipc = { workspace = true }
 aujar-mouse-borders = { workspace = true }
+aujar-awake = { workspace = true }
 aujar-nexdesk = { workspace = true }
 aujar-launcher = { workspace = true }
 aujar-platform = { workspace = true }
@@ -26,3 +27,4 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+

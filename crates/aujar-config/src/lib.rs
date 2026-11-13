@@ -1,13 +1,15 @@
 mod history;
 pub mod platform;
 mod settings;
+mod state;
 
 pub use history::{History, HistoryEntry};
 pub use settings::{
-    Accent, Appearance, ColorFormat, ColorPicker, ColorPickerActivation, EasyMouse, Engine, Files,
-    LauncherPosition, Machine, MatrixMode, MouseBorders, MouseBordersHotkeys, Plugins, Settings,
-    SwitchKeys, Theme, Weather, Web, WebShortcut,
+    Accent, Appearance, Awake, ColorFormat, ColorPicker, ColorPickerActivation, EasyMouse, Engine,
+    Files, LauncherPosition, Machine, MatrixMode, MouseBorders, MouseBordersHotkeys, Plugins,
+    Settings, SwitchKeys, Theme, Weather, Web, WebShortcut,
 };
+pub use state::{AwakeMode, AwakeState, State};
 
 use serde::Deserialize;
 use std::{fs, path::Path};

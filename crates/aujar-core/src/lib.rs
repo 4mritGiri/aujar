@@ -207,10 +207,12 @@ pub enum Capability {
     ControlInput,
     /// Listen for and connect to other machines on the network.
     Network,
+    /// Keep the computer from sleeping (Awake).
+    InhibitSleep,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 10] = [
+    pub const ALL: [Capability; 11] = [
         Self::ReadClipboard,
         Self::WriteClipboard,
         Self::ReadWindows,
@@ -221,6 +223,7 @@ impl Capability {
         Self::FileSystem,
         Self::ControlInput,
         Self::Network,
+        Self::InhibitSleep,
     ];
 
     /// Parse the stable snake_case name produced by [`Capability::as_str`].
@@ -242,6 +245,7 @@ impl Capability {
             Self::FileSystem => "filesystem",
             Self::ControlInput => "control_input",
             Self::Network => "network",
+            Self::InhibitSleep => "inhibit_sleep",
         }
     }
 }

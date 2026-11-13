@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 aujar-core = { workspace = true }
 aujar-mouse-borders = { path = "../../modules/mouse-borders", version = "0.1.1", default-features = false }
+aujar-awake = { workspace = true }
 aujar-nexdesk = { workspace = true }
 aujar-rename = { workspace = true }
 serde.workspace = true

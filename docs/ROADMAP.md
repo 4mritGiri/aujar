@@ -11,7 +11,7 @@
 - [x] Module boundaries
 - [x] Automated CI on Linux (configured; verify first run)
 - [ ] Protocol versioning
-- [ ] Persistent daemon state
+- [x] Persistent daemon state (`state.toml`, crash-safe; used by Awake so far, see `aujar_config::State`)
 - [x] Mouse without borders (Mouse without borders is a quick and easy way to move your cursor across multiple devices): `modules/mouse-borders`, see [MOUSE_BORDERS](MOUSE_BORDERS.md). Still open: Wayland edge switching (InputCapture portal), drag-and-drop in the layout editor and for file transfer
 
 ## v0.2 — Launcher

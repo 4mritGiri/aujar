@@ -23,7 +23,7 @@ use aujar_mouse_borders::{
     net,
     pairing::PairingCode,
     permissions::{self, Interaction, Outcome},
-    settings_edit,
+    report, settings_edit,
 };
 use clap::{Subcommand, ValueEnum};
 
@@ -145,6 +145,10 @@ pub enum MwbCommand {
     /// Check that this machine is ready, and say how to fix what is not.
     Doctor,
 
+    /// Print a report to paste when something does not work: the desktop session, whether screen
+    /// edges and pointer hiding can work here, the checks, the status and the latest log lines.
+    Report,
+
     /// Give your account the keyboard and mouse access Mouse Borders needs (Linux). Asks for
     /// your password once; nothing to do on macOS and Windows.
     Setup {
@@ -171,6 +175,12 @@ pub struct Cli<'a> {
 pub async fn run(command: MwbCommand, cli: &Cli<'_>) -> Result<()> {
     match command {
         MwbCommand::Doctor => doctor_report(),
+
+        MwbCommand::Report => {
+            print!("{}", build_report(cli).await);
+
+            Ok(())
+        }
 
         MwbCommand::Setup { ask: true } => offer_setup(cli).await,
 
@@ -460,6 +470,21 @@ async fn offer_setup(cli: &Cli<'_>) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// The text of `report`: what this machine looks like, `doctor`'s checks, and the status of the
+/// running service (or why it could not be asked).
+async fn build_report(cli: &Cli<'_>) -> String {
+    let settings = Settings::load_or_default();
+    let facts = report::collect(&settings.mouse_borders);
+    let checks = doctor::run(&settings.mouse_borders, &KeyStore::user_default());
+    let status = match ask(cli, MouseBordersRequest::Status).await {
+        Ok(MouseBordersResponse::Status(status)) => Ok(format_status(&status)),
+        Ok(other) => Err(format!("unexpected answer: {other:?}")),
+        Err(error) => Err(format!("{error:#}")),
+    };
+
+    report::format_report(&facts, &checks, &status)
 }
 
 fn doctor_report() -> Result<()> {
@@ -755,6 +780,53 @@ mod tests {
 
         assert!(home.contains("Screen layout"));
         assert!(!home.contains("To come back"));
+    }
+
+    struct Fixed(Result<MouseBordersResponse, String>);
+
+    #[async_trait]
+    impl Transport for Fixed {
+        async fn call(&self, _request: MouseBordersRequest) -> Result<MouseBordersResponse> {
+            match &self.0 {
+                Ok(response) => Ok(response.clone()),
+                Err(reason) => bail!("{reason}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_report_includes_the_running_status() {
+        let transport = Fixed(Ok(MouseBordersResponse::Status(Box::new(running()))));
+        let cli = Cli {
+            transport: &transport,
+            program: "aujar mwb",
+        };
+        let text = build_report(&cli).await;
+
+        assert!(text.contains("== This machine =="), "{text}");
+        assert!(text.contains("== Checks =="), "{text}");
+        assert!(text.contains("== Status =="), "{text}");
+        assert!(text.contains("Screen layout"), "{text}");
+        assert!(text.contains("== Recent log =="), "{text}");
+    }
+
+    #[tokio::test]
+    async fn the_report_still_works_when_the_service_is_not_running() {
+        let transport = Fixed(Err("the daemon is not running".into()));
+        let cli = Cli {
+            transport: &transport,
+            program: "aujar mwb",
+        };
+        let text = build_report(&cli).await;
+
+        assert!(
+            text.contains("not available: the daemon is not running"),
+            "{text}"
+        );
+        assert!(
+            text.contains("== Checks =="),
+            "the checks need no daemon: {text}"
+        );
     }
 
     #[test]

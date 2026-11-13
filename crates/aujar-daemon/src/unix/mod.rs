@@ -32,6 +32,7 @@ use tokio::{
     net::{UnixListener, UnixStream},
 };
 
+mod awake;
 mod modules;
 mod mouse_borders;
 mod nexdesk;
@@ -152,6 +153,7 @@ struct Shared {
     launcher: std::sync::Mutex<LauncherState>,
     mouse_borders: aujar_mouse_borders::service::MouseBordersModule,
     nexdesk: aujar_nexdesk::NexDeskModule,
+    awake: Arc<aujar_awake::AwakeModule>,
     owner_uid: u32,
     denied: HashSet<Capability>,
     events: broadcast::Sender<Event>,
@@ -301,6 +303,21 @@ fn init_logging() {
 }
 
 pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result<()> {
+    run_with_awake(
+        socket_path,
+        options,
+        Arc::new(aujar_awake::AwakeModule::new()),
+    )
+    .await
+}
+
+/// Like [`run_with`], with the Awake module given. Tests give one that holds no real lock and
+/// keeps its state in a scratch directory.
+pub async fn run_with_awake(
+    socket_path: impl AsRef<Path>,
+    options: Options,
+    awake: Arc<aujar_awake::AwakeModule>,
+) -> Result<()> {
     init_logging();
 
     let socket_path = socket_path.as_ref();
@@ -346,6 +363,7 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
         launcher: std::sync::Mutex::new(LauncherState::new()),
         mouse_borders,
         nexdesk,
+        awake,
         owner_uid,
         denied,
         events: broadcast::channel(EVENT_BUFFER).0,
@@ -356,6 +374,12 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
             "disabled by daemon option".to_owned()
         }),
     });
+
+    awake::start(
+        &shared.awake,
+        !shared.denied.contains(&Capability::InhibitSleep),
+    )
+    .await;
 
     if options.hotkeys {
         start_hotkeys(Arc::clone(&shared));
@@ -369,6 +393,9 @@ pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result
     // Tell subscribers we are going away, and give their tasks a moment to write it.
     let _ = shared.events.send(Event::Shutdown);
     tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Let go of the "do not sleep" lock; the mode itself is kept for the next start.
+    shared.awake.stop().await;
 
     registry
         .stop_all()
@@ -672,6 +699,8 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
         }
 
         Request::NexDesk(request) => nexdesk::handle(request, &shared.nexdesk),
+
+        Request::Awake(request) => awake::handle(request, &shared.awake).await,
 
         Request::Launcher(command) => {
             let subscribers = shared.events.send(Event::Launcher(command)).unwrap_or(0);

@@ -163,6 +163,8 @@ if the machine you are controlling disconnects, input returns to you immediately
 `aujar mwb status` (and the Mouse Borders page in Settings) shows the screen layout, which way
 each edge leads, and, while another machine has the keyboard, how to come back from it.
 
+**Something not working?** `aujar mwb report` prints everything needed to find out why (session, portal, extension, checks, status, log): paste it when asking for help.
+
 **Hiding the pointer while you are away.** Turn on "Hide the pointer while away" in Settings,
 Mouse Borders. On X11 that just works. GNOME on Wayland keeps the pointer showing at the screen
 edge (the desktop's input capture does not hide it, and applications cannot), so there Aujar asks

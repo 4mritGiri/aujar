@@ -39,6 +39,8 @@ pub enum Request {
     MouseBorders(MouseBordersRequest),
     /// Open the NexDesk remote-access manager, or ask whether it is installed.
     NexDesk(NexDeskRequest),
+    /// Keep the computer from sleeping, or ask whether that is on.
+    Awake(AwakeRequest),
 }
 
 /// Mouse Borders request and response types, shared with the standalone agent.
@@ -46,6 +48,11 @@ pub use aujar_mouse_borders::api::{
     MouseBordersPeer, MouseBordersRequest, MouseBordersResponse, MouseBordersStatus,
 };
 
+/// Awake request and response types.
+pub use aujar_awake::{
+    AwakeMode, AwakeStatus,
+    api::{AwakeRequest, AwakeResponse},
+};
 /// NexDesk request and response types.
 pub use aujar_nexdesk::api::{NexDeskRequest, NexDeskResponse, NexDeskStatus};
 
@@ -81,6 +88,7 @@ impl Request {
             Self::PickColor => Some(Capability::ScreenCapture),
             Self::MouseBorders(request) => request.required_capability(),
             Self::NexDesk(request) => request.required_capability(),
+            Self::Awake(request) => request.required_capability(),
             Self::Ping
             | Self::Health
             | Self::Modules
@@ -152,6 +160,7 @@ pub enum Response {
     Status(StatusResponse),
     MouseBorders(MouseBordersResponse),
     NexDesk(NexDeskResponse),
+    Awake(AwakeResponse),
     /// A launcher command was broadcast to this many subscribers.
     Delivered {
         subscribers: usize,
@@ -369,6 +378,50 @@ mod tests {
     }
 
     #[test]
+    fn awake_status_needs_nothing_and_changes_need_inhibit_sleep() {
+        assert_eq!(
+            Request::Awake(AwakeRequest::Status).required_capability(),
+            None
+        );
+
+        for request in [
+            AwakeRequest::Off,
+            AwakeRequest::Indefinite,
+            AwakeRequest::For { seconds: 600 },
+        ] {
+            assert_eq!(
+                Request::Awake(request).required_capability(),
+                Some(Capability::InhibitSleep)
+            );
+        }
+    }
+
+    #[test]
+    fn awake_requests_and_responses_cross_the_socket_as_lines() {
+        let request = Request::Awake(AwakeRequest::For { seconds: 1800 });
+        let line = String::from_utf8(encode_line(request.clone()).unwrap()).unwrap();
+
+        assert_eq!(
+            format!("{:?}", decode_line::<Request>(line.trim_end()).unwrap()),
+            format!("{request:?}")
+        );
+
+        let response = Response::Awake(AwakeResponse::Status(AwakeStatus {
+            mode: AwakeMode::Timed,
+            active: true,
+            remaining_seconds: Some(1700),
+            keep_screen_on: true,
+            error: None,
+        }));
+        let line = String::from_utf8(encode_line(response.clone()).unwrap()).unwrap();
+
+        assert_eq!(
+            format!("{:?}", decode_line::<Response>(line.trim_end()).unwrap()),
+            format!("{response:?}")
+        );
+    }
+
+    #[test]
     fn nexdesk_open_needs_execute_command_and_status_needs_nothing() {
         assert_eq!(
             Request::NexDesk(NexDeskRequest::Status).required_capability(),
@@ -437,7 +490,9 @@ mod tests {
     #[test]
     fn local_transport_is_selected_at_compile_time() {
         #[cfg(unix)]
-        assert!(cfg!(unix));
+        const {
+            assert!(cfg!(unix))
+        };
         #[cfg(windows)]
         assert!(cfg!(windows));
     }
