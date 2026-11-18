@@ -2,6 +2,7 @@
 # directories (apps/aujar-ui/target, integrations/nexdesk/target), and a slash-anchored
 # pattern would only match the one at the repository root.
 target/
+**/target/
 **/*.rs.bk
 
 # Packages and release artifacts (scripts/build-nexdesk.sh --deb writes to ./dist)
