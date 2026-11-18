@@ -69,11 +69,7 @@ pub async fn run(action: MwbAction, socket: PathBuf) -> Result<()> {
 async fn service() -> Result<()> {
     use aujar_mouse_borders::service::{Profile, ServiceState, Supervisor};
 
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .try_init();
+    aujar_log::init("aujar-mouse-borders-service");
 
     let denied: HashSet<Capability> = aujar_config::Policy::load_optional("/etc/aujar/policy.toml")
         .context("cannot load /etc/aujar/policy.toml")?

@@ -17,6 +17,7 @@ aujar-config = { workspace = true }
 aujar-awake = { path = "../../modules/awake", version = "0.1.1" }
 aujar-color = { path = "../../modules/color", version = "0.1.1" }
 aujar-ipc = { workspace = true }
+aujar-log = { workspace = true }
 aujar-mouse-borders = { path = "../../modules/mouse-borders", version = "0.1.1", default-features = false }
 # GPUI snapshot of Zed `main` (zed@5b055fa), published to crates.io by a GPUI contributor
 # (huacnlee) as `gpui-pre*`. Chosen because:
@@ -28,3 +29,4 @@ gpui = { package = "gpui-pre", version = "=0.3.3" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.3", features = ["font-kit", "wayland", "x11"] }
 libc = "0.2"
 tokio = { version = "1", features = ["rt", "time"] }
+tracing = { workspace = true }

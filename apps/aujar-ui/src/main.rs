@@ -841,11 +841,10 @@ static LAUNCHER_ALIVE: AtomicBool = AtomicBool::new(false);
 /// window move. The launcher is never reactivated during this interval; that steals user input.
 static BLUR_IGNORE_UNTIL: AtomicU64 = AtomicU64::new(0);
 
-/// Diagnostics on stderr when `AUJAR_DEBUG` is set (run `AUJAR_DEBUG=1 aujar-ui`).
+/// Diagnostics at debug level: shown with `AUJAR_DEBUG=1` (as before), `RUST_LOG=debug`, or
+/// `AUJAR_LOG_FILE=1 AUJAR_DEBUG=1` to keep them in a file.
 fn debug(message: &str) {
-    if std::env::var_os("AUJAR_DEBUG").is_some() {
-        eprintln!("aujar-ui[{}ms]: {message}", now_ms() % 100_000);
-    }
+    tracing::debug!("{message}");
 }
 
 fn now_ms() -> u64 {
@@ -5552,8 +5551,11 @@ fn push_clip_image(clips: &mut Vec<ClipEntry>, item: ClipboardItem) {
             let big = image.bytes.is_empty() || image.bytes.len() > clips::MAX_IMAGE_BYTES;
             let file = clips::image_path(&image.bytes, extension);
 
-            (!big && clips::save_image(&file, &image.bytes))
-                .then(|| (extension, file, image.bytes.len() as u64))
+            (!big && clips::save_image(&file, &image.bytes)).then_some((
+                extension,
+                file,
+                image.bytes.len() as u64,
+            ))
         }
         _ => None,
     });
@@ -5804,7 +5806,7 @@ async fn execute(socket: &Path, id: &str) -> Result<()> {
 
     match send(socket, request).await? {
         Response::Executed(done) => {
-            eprintln!("aujar-ui: launched {}", done.title);
+            tracing::info!("launched {}", done.title);
             Ok(())
         }
         Response::Error(message) => bail!(message),
@@ -5862,7 +5864,7 @@ async fn serve_requests(
             }
             UiRequest::Execute(id) => {
                 if let Err(error) = execute(&socket, &id).await {
-                    eprintln!("aujar-ui: launch failed: {error:#}");
+                    tracing::warn!("launch failed: {error:#}");
                 }
             }
             UiRequest::OpenSettings => {
@@ -5903,7 +5905,7 @@ async fn serve_requests(
 async fn run_session(socket: &Path, tx: &async_channel::Sender<UiMessage>) -> Result<()> {
     let mut stream = subscribe(socket).await?;
 
-    eprintln!("aujar-ui: subscribed to the daemon");
+    tracing::info!("subscribed to the daemon");
 
     while let Some(event) = stream.recv().await? {
         match event {
@@ -5934,9 +5936,30 @@ fn spawn_bridge(
         runtime.block_on(async move {
             tokio::spawn(serve_requests(socket.clone(), tx.clone(), requests));
 
+            // A daemon that is down would otherwise be reported every second: say each
+            // distinct failure once, and keep the repeats at debug level.
+            let mut last_error = String::new();
+
             loop {
-                if let Err(error) = run_session(&socket, &tx).await {
-                    eprintln!("aujar-ui: {error:#} (retrying)");
+                match run_session(&socket, &tx).await {
+                    Ok(()) => {
+                        last_error.clear();
+
+                        tracing::info!("the daemon closed the event stream (reconnecting)");
+                    }
+                    Err(error) => {
+                        let text = format!("{error:#}");
+
+                        if text == last_error {
+                            tracing::debug!("daemon still unavailable: {text}");
+                        } else {
+                            tracing::warn!(
+                                "daemon connection failed: {text} (retrying every second)"
+                            );
+
+                            last_error = text;
+                        }
+                    }
                 }
 
                 tokio::time::sleep(Duration::from_secs(1)).await;
@@ -6066,7 +6089,22 @@ fn ensure_single_instance() -> Option<std::os::unix::net::UnixListener> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    let path = dir.join("aujar-ui.lock");
+
+    // One UI per daemon. A UI started against another daemon (AUJAR_SOCKET, as `just dev`
+    // does) must not be refused because the installed UI is running, so the lock is named
+    // after the socket in that case. Without AUJAR_SOCKET nothing changes.
+    let name = match std::env::var_os("AUJAR_SOCKET") {
+        Some(socket) if !socket.is_empty() => {
+            use std::hash::{Hash, Hasher};
+
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            socket.hash(&mut hasher);
+
+            format!("aujar-ui-{:016x}.lock", hasher.finish())
+        }
+        _ => "aujar-ui.lock".to_owned(),
+    };
+    let path = dir.join(name);
 
     match UnixListener::bind(&path) {
         Ok(listener) => Some(listener),
@@ -6083,6 +6121,10 @@ fn ensure_single_instance() -> Option<std::os::unix::net::UnixListener> {
 }
 
 fn main() {
+    // Logs go to stderr, and to a file with AUJAR_LOG_FILE=1 (this program is usually started
+    // from the desktop and has no terminal). GPUI's own messages arrive through the same path.
+    aujar_log::init("aujar-ui");
+
     let Some(_instance) = ensure_single_instance() else {
         eprintln!("aujar-ui: already running (stop it first: systemctl --user stop aujar-ui)");
 
@@ -6381,7 +6423,7 @@ mod tests {
 
         // Quick enough not to feel slow, long enough to be seen.
         assert!((80..=250).contains(&OPEN_MS) && (60..=200).contains(&CLOSE_MS));
-        assert!(CLOSE_MS <= OPEN_MS);
+        const { assert!(CLOSE_MS <= OPEN_MS) };
     }
 
     #[test]
@@ -6419,10 +6461,10 @@ mod tests {
     #[test]
     fn the_window_fits_its_content() {
         // The row alone, the row with a short card, the row with the full card.
-        assert!(ROW_H < ROW_H + ROW_GAP + CARD_SHORT_H);
-        assert!(CARD_SHORT_H < CARD_FULL_H);
+        const { assert!(ROW_H < ROW_H + ROW_GAP + CARD_SHORT_H) };
+        const { assert!(CARD_SHORT_H < CARD_FULL_H) };
         // Never taller than the window the launcher opens with.
-        assert!(ROW_H + ROW_GAP + CARD_FULL_H <= WINDOW_H);
+        const { assert!(ROW_H + ROW_GAP + CARD_FULL_H <= WINDOW_H) };
     }
 
     #[test]

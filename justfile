@@ -10,6 +10,90 @@ check:
     cargo clippy --workspace --exclude aujar-ui --all-targets --all-features -- -D warnings
     cargo test --workspace --exclude aujar-ui
 
+# Everything CI runs, locally: fmt, clippy, tests, MSRV check (when the toolchain is installed),
+# cargo-deny (when installed) and the Mouse Borders crates. Slower than `check`; run before a PR.
+ci: check msrv test-mouse-borders _audit-if-installed
+
+# The Mouse Borders crates also run on Windows and macOS in CI; this is their Linux test set.
+test-mouse-borders:
+    cargo test -p aujar-config -p aujar-mouse-borders -p aujar-mwb-cli -p aujar-mwb
+
+# CI checks the workspace builds on the minimum supported Rust (see rust-version in Cargo.toml).
+# Needs that toolchain once: `rustup toolchain install 1.85 --profile minimal`.
+msrv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if rustup toolchain list | grep -q '^1\.85'; then
+        cargo +1.85 check --workspace --exclude aujar-ui
+    else
+        echo "skipping MSRV check: run 'rustup toolchain install 1.85 --profile minimal' to enable it"
+    fi
+
+_audit-if-installed:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v cargo-deny >/dev/null; then
+        cargo deny check
+    else
+        echo "skipping cargo-deny: not installed (scripts/setup-dev.sh installs it)"
+    fi
+
+# ---- daily loop ----
+
+# Daemon + UI on a private socket, rebuilt and restarted when you save a file. Ctrl+C stops it.
+# More switches (--no-watch, --hotkeys, ...): run ./scripts/dev.sh --help
+dev:
+    ./scripts/dev.sh
+
+# Same, daemon only: for CLI, launcher-engine and Mouse Borders work (no GPU build).
+dev-daemon:
+    ./scripts/dev.sh --no-ui
+
+# Same, with its own settings and state, so the UI never writes to your real ~/.config/aujar.
+dev-isolated:
+    ./scripts/dev.sh --isolate
+
+# Re-run `cargo check` for the platform crates on every save (fast feedback in a terminal).
+watch:
+    cargo watch -q -c -x 'check --workspace --exclude aujar-ui'
+
+# Re-run the tests of one crate on every save:  just watch-test aujar-rename
+watch-test crate:
+    cargo watch -q -c -x 'test -p {{crate}}'
+
+# Tests of one crate:  just test-crate aujar-rename
+test-crate crate *ARGS:
+    cargo test -p {{crate}} {{ARGS}}
+
+# The test suite with cargo-nextest: parallel, readable failures (cargo install cargo-nextest).
+nextest:
+    cargo nextest run --workspace --exclude aujar-ui
+
+# Is the installed or dev daemon healthy? Honors AUJAR_SOCKET (use it for the dev daemon).
+doctor:
+    cargo run -q -p aujar-launcher-app -- doctor
+    cargo run -q -p aujar-launcher-app -- mwb doctor
+
+# ---- Mouse Borders lab (two daemons on this machine, paired over loopback) ----
+
+# Start both daemons, pair them, show the status. See docs/DEVELOPMENT.md.
+lab-up:
+    ./scripts/mwb-lab.sh up
+
+lab-status:
+    ./scripts/mwb-lab.sh status
+
+# Pair, connect, send a file, check it arrived, shut down: exit 1 on any failure.
+lab-smoke:
+    ./scripts/mwb-lab.sh smoke
+
+lab-down:
+    ./scripts/mwb-lab.sh down
+
+# Run an aujar command as one of the lab machines:  just lab a mwb status
+lab side *ARGS:
+    ./scripts/mwb-lab.sh {{side}} {{ARGS}}
+
 # ---- code quality ----
 
 fmt:

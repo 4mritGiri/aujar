@@ -8,6 +8,7 @@ members = [
     "crates/aujar-core",
     "crates/aujar-config",
     "crates/aujar-ipc",
+    "crates/aujar-log",
     "crates/aujar-mwb-cli",
     "crates/aujar-platform",
     "crates/aujar-hotkeys",
@@ -37,6 +38,7 @@ default-members = [
     "crates/aujar-core",
     "crates/aujar-config",
     "crates/aujar-ipc",
+    "crates/aujar-log",
     "crates/aujar-mwb-cli",
     "crates/aujar-platform",
     "crates/aujar-hotkeys",
@@ -62,7 +64,6 @@ version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
-authors = ["Aujar Contributors"]
 repository = "https://github.com/4mritGiri/aujar"
 
 [workspace.dependencies]
@@ -105,6 +106,7 @@ aujar-daemon = { path = "crates/aujar-daemon", version = "0.1.1" }
 aujar-hotkeys = { path = "crates/aujar-hotkeys", version = "0.1.1" }
 aujar-image-resizer = { path = "modules/image-resizer", version = "0.1.1" }
 aujar-ipc = { path = "crates/aujar-ipc", version = "0.1.1" }
+aujar-log = { path = "crates/aujar-log", version = "0.1.1" }
 aujar-launcher = { path = "modules/launcher", version = "0.1.1" }
 aujar-mouse-borders = { path = "modules/mouse-borders", version = "0.1.1" }
 aujar-mwb-cli = { path = "crates/aujar-mwb-cli", version = "0.1.1" }

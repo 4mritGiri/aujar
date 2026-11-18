@@ -24,13 +24,13 @@ aujar-daemon = { workspace = true }
 aujar-image-resizer = { workspace = true }
 aujar-ipc = { workspace = true }
 aujar-launcher = { workspace = true }
+aujar-log = { workspace = true }
 aujar-mouse-borders = { workspace = true }
 aujar-mwb-cli = { workspace = true }
 aujar-rename = { workspace = true }
 aujar-platform = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 # ---- Debian/Ubuntu package: `cargo deb -p aujar-launcher-app` ----
 [package.metadata.deb]
@@ -102,6 +102,3 @@ modprobe uinput >/dev/null 2>&1 || :
 udevadm control --reload-rules >/dev/null 2>&1 || :
 udevadm trigger --subsystem-match=misc --sysname-match=uinput >/dev/null 2>&1 || :
 """
-
-[dev-dependencies]
-tempfile = "3"

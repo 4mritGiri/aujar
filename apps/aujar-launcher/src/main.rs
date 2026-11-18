@@ -28,6 +28,11 @@ const WINDOWS_PIPE_NAME: &str = r"\\.\pipe\aujar";
     about = "Aujar — Cross-platform productivity toolkit"
 )]
 struct Cli {
+    /// Log more to stderr: -v shows Aujar's debug messages, -vv its trace messages.
+    /// `RUST_LOG` overrides this; see docs/DEVELOPMENT.md ("Logs and diagnostics").
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -140,7 +145,13 @@ enum Command {
     },
 
     /// Diagnose the daemon, UI connection and global shortcut.
-    Doctor,
+    Doctor {
+        /// Also show developer details: which socket this program uses and why, the
+        /// environment variables that change Aujar's behaviour, log and settings locations,
+        /// and the state of an installed daemon.
+        #[arg(long)]
+        dev: bool,
+    },
 
     /// Manage the keyboard shortcut that shows the launcher (GNOME).
     Shortcut {
@@ -255,6 +266,10 @@ enum ImageAction {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Silent unless asked for with -v, RUST_LOG, AUJAR_DEBUG, AUJAR_IPC_TRACE or AUJAR_LOG_FILE,
+    // so ordinary command output stays clean.
+    aujar_log::init_cli("aujar", cli.verbose);
+
     match cli.command {
         Command::Platform => print_platform_report(),
 
@@ -368,7 +383,7 @@ async fn main() -> Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "aujar", &mut std::io::stdout());
         }
 
-        Command::Doctor => doctor().await?,
+        Command::Doctor { dev } => doctor(dev).await?,
 
         Command::GnomeExtension { action } => match action {
             ExtensionAction::Install => gnome_extension::install()?,
@@ -580,7 +595,107 @@ async fn run_daemon(socket: PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn doctor() -> anyhow::Result<()> {
+async fn doctor(dev: bool) -> anyhow::Result<()> {
+    let result = doctor_report().await;
+
+    if dev {
+        print_dev_info();
+    }
+
+    result
+}
+
+/// The extra section of `aujar doctor --dev`: where this program looks for things and which
+/// settings change its behaviour. Everything here is local; nothing is sent anywhere.
+fn print_dev_info() {
+    println!();
+    println!("--- development ---");
+
+    if let Ok(exe) = std::env::current_exe() {
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+
+        println!("binary:     {} ({profile} build)", exe.display());
+    }
+
+    println!("version:    {}", env!("CARGO_PKG_VERSION"));
+
+    let socket = resolve_socket();
+    let source = if std::env::var_os("AUJAR_SOCKET").is_some() {
+        "AUJAR_SOCKET"
+    } else if std::env::var_os("XDG_RUNTIME_DIR").is_some() {
+        "XDG_RUNTIME_DIR"
+    } else {
+        "the built-in fallback"
+    };
+
+    println!(
+        "socket:     {} (from {source}; exists: {})",
+        socket.display(),
+        socket.exists()
+    );
+
+    println!(
+        "settings:   {}",
+        aujar_config::platform::config_dir().display()
+    );
+    println!(
+        "state:      {}",
+        aujar_config::platform::state_dir().display()
+    );
+
+    match aujar_log::log_file_path("aujar-daemon") {
+        Some(path) => println!(
+            "log files:  {} (AUJAR_LOG_FILE is set; the UI writes aujar-ui.log next to it)",
+            path.display()
+        ),
+        None => println!("log files:  none (set AUJAR_LOG_FILE=1 to also log to a file)"),
+    }
+
+    for name in [
+        "AUJAR_SOCKET",
+        "AUJAR_NO_HOTKEYS",
+        "AUJAR_DEBUG",
+        "AUJAR_IPC_TRACE",
+        "AUJAR_LOG_FILE",
+        "RUST_LOG",
+        "XDG_CONFIG_HOME",
+        "XDG_STATE_HOME",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            println!("env:        {name}={}", value.to_string_lossy());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        for unit in ["aujar.service", "aujar-ui.service"] {
+            let state = std::process::Command::new("systemctl")
+                .args(["--user", "is-active", unit])
+                .output()
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                .unwrap_or_else(|_| "unknown (systemctl not found)".to_owned());
+
+            println!("service:    {unit}: {state}");
+        }
+
+        if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+            let installed = PathBuf::from(runtime).join(DEFAULT_SOCKET_NAME);
+
+            if installed != socket && installed.exists() {
+                println!(
+                    "note:       a daemon also listens on {}; this command talks to the socket above",
+                    installed.display()
+                );
+            }
+        }
+    }
+}
+
+async fn doctor_report() -> anyhow::Result<()> {
     let socket = resolve_socket();
 
     println!("socket:     {}", socket.display());

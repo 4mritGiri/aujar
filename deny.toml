@@ -13,6 +13,14 @@ ignore = [
     # an upstream maintenance migration, with no safe upgrade available in that release line.
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0372",
+    # zbus_names is "unmaintained" only because it was merged into zbus 6.0 (its `names` module).
+    # It reaches us through ashpd 0.13 -> zbus 5, the same upstream migration as above, and no
+    # upgrade exists in that release line. Not a vulnerability. Drop once ashpd moves to zbus 6.
+    "RUSTSEC-2026-0371",
+    # paste is archived by its author (unmaintained, not vulnerable); no safe upgrade exists.
+    # It comes in through the `image` crate's AVIF (rav1e) and OpenEXR (exr -> pulp) support.
+    # Gone if those `image` features are turned off, or when image/exr move to `pastey`.
+    "RUSTSEC-2024-0436",
 ]
 
 [licenses]

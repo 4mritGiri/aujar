@@ -7,7 +7,9 @@ Thanks for helping! Please read this and the [Code of Conduct](CODE_OF_CONDUCT.m
 ```bash
 git clone --recurse-submodules https://github.com/4mritGiri/aujar && cd aujar
 ./scripts/setup-dev.sh          # system packages, Rust, just, cargo-deny, nextest, watch
-just check                      # fmt + clippy + tests (the same gate CI runs)
+just check                      # fmt + clippy + tests (the quick gate)
+just ci                         # everything CI runs; run it before opening a PR
+just dev                        # daemon + UI, rebuilt on every save
 ```
 
 Requires Rust 1.85+ (edition 2024). [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers the editor

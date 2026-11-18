@@ -1,0 +1,12 @@
+[package]
+name = "aujar-log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Logging setup shared by every Aujar binary"
+
+[dependencies]
+aujar-config.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

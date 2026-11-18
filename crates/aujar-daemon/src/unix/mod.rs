@@ -280,7 +280,12 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { hotkeys: true }
+        // `AUJAR_NO_HOTKEYS=1` keeps a development daemon from registering the global shortcut,
+        // so it does not fight an installed daemon for it (see docs/DEVELOPMENT.md).
+        let disabled = std::env::var_os("AUJAR_NO_HOTKEYS")
+            .is_some_and(|value| !value.is_empty() && value != "0");
+
+        Self { hotkeys: !disabled }
     }
 }
 
@@ -288,18 +293,11 @@ pub async fn run(socket_path: impl AsRef<Path>) -> Result<()> {
     run_with(socket_path, Options::default()).await
 }
 
-/// Send `tracing` output to stderr (journald when run by systemd). `RUST_LOG` overrides the
-/// default `info` level. Harmless if a subscriber is already installed (tests).
+/// Send `tracing` output to stderr (journald when run by systemd), and optionally to a file.
+/// `RUST_LOG`, `AUJAR_DEBUG`, `AUJAR_IPC_TRACE` and `AUJAR_LOG_FILE` change what is logged
+/// (see the `aujar-log` crate). Harmless if a subscriber is already installed (tests).
 fn init_logging() {
-    use std::io::IsTerminal;
-
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_ansi(std::io::stderr().is_terminal())
-        .try_init();
+    aujar_log::init("aujar-daemon");
 }
 
 pub async fn run_with(socket_path: impl AsRef<Path>, options: Options) -> Result<()> {
@@ -574,7 +572,17 @@ async fn handle_client(stream: UnixStream, shared: Arc<Shared>) -> Result<()> {
     let payload = if envelope.version != PROTOCOL_VERSION {
         Response::Error(format!("unsupported protocol version {}", envelope.version))
     } else {
-        dispatch(envelope.payload, &shared).await
+        // Only the kind of request is ever logged, never its contents.
+        let traced = aujar_ipc::trace_enabled()
+            .then(|| (envelope.payload.kind(), std::time::Instant::now()));
+
+        let response = dispatch(envelope.payload, &shared).await;
+
+        if let Some((kind, started)) = traced {
+            aujar_ipc::trace_handled(&kind, started, &response);
+        }
+
+        response
     };
 
     write_half.write_all(&encode_line(payload)?).await?;
@@ -603,6 +611,8 @@ async fn stream_events(
         .write_all(&encode_line(Response::Subscribed)?)
         .await?;
 
+    tracing::debug!(target: "aujar::ipc", "event subscriber connected");
+
     let mut ignored = String::new();
 
     loop {
@@ -610,6 +620,8 @@ async fn stream_events(
             received = events.recv() => match received {
                 Ok(event) => {
                     writer.write_all(&encode_line(&event)?).await?;
+
+                    tracing::debug!(target: "aujar::ipc", event = ?event, "event pushed");
 
                     if event == Event::Shutdown {
                         break;
@@ -625,6 +637,8 @@ async fn stream_events(
             _ = reader.read_line(&mut ignored) => break,
         }
     }
+
+    tracing::debug!(target: "aujar::ipc", "event subscriber disconnected");
 
     Ok(())
 }

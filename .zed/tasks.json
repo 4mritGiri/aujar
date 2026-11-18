@@ -81,7 +81,87 @@
     "reveal": "always"
   },
 
-  // ---- isolated dev instance -----------------------------------------------------------
+  // ---- the daily loop: rebuild and restart on every save --------------------------------
+  // `just dev` runs the daemon and the UI on a private socket (/tmp/aujar-dev.sock) under
+  // cargo-watch, without the global shortcut, so the installed Aujar is left alone. Stop with
+  // Ctrl+C in its terminal. Install cargo-watch with ./scripts/setup-dev.sh.
+  {
+    "label": "dev: everything, rebuilt on save (daemon + UI)",
+    "command": "just",
+    "args": ["dev"],
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "dev: daemon only, rebuilt on save (CLI / launcher engine / Mouse Borders)",
+    "command": "just",
+    "args": ["dev-daemon"],
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "dev: everything with its own settings and state (does not touch ~/.config/aujar)",
+    "command": "just",
+    "args": ["dev-isolated"],
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "dev: everything with IPC trace (every daemon request, kind + timing)",
+    "command": "./scripts/dev.sh",
+    "args": ["--ipc-trace"],
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "check: watch (cargo check on every save)",
+    "command": "just",
+    "args": ["watch"],
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "check: everything CI runs (just ci)",
+    "command": "just",
+    "args": ["ci"],
+    "reveal": "always",
+    "allow_concurrent_runs": false
+  },
+
+  // ---- Mouse Borders lab: two daemons on this machine, paired over loopback ------------
+  // For pairing, the key, connections, file transfer, status, protocol changes. Not for moving
+  // the pointer between machines (that needs two real computers). Details: docs/DEVELOPMENT.md.
+  {
+    "label": "lab: Mouse Borders up (two paired daemons)",
+    "command": "just",
+    "args": ["lab-up"],
+    "reveal": "always"
+  },
+  {
+    "label": "lab: Mouse Borders status",
+    "command": "just",
+    "args": ["lab-status"],
+    "reveal": "always"
+  },
+  {
+    "label": "lab: Mouse Borders smoke test (pair, connect, send a file, shut down)",
+    "command": "just",
+    "args": ["lab-smoke"],
+    "reveal": "always"
+  },
+  {
+    "label": "lab: Mouse Borders down",
+    "command": "just",
+    "args": ["lab-down"],
+    "reveal": "always"
+  },
+
+  // ---- isolated dev instance, by hand ---------------------------------------------------
   // The CLI and the UI honor AUJAR_SOCKET, so a dev daemon on its own socket runs beside your
   // installed Aujar without stopping it. Start the daemon first, then the UI and the others.
   // (Shared across both: ~/.config and ~/.local/state, and the desktop's global shortcut and
@@ -105,6 +185,13 @@
     "reveal": "always"
   },
   {
+    "label": "dev: doctor --dev against the dev daemon",
+    "command": "cargo",
+    "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "doctor", "--dev"],
+    "env": { "AUJAR_SOCKET": "/tmp/aujar-dev.sock" },
+    "reveal": "always"
+  },
+  {
     "label": "dev: events from the dev daemon",
     "command": "cargo",
     "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "events"],
@@ -121,6 +208,12 @@
   },
 
   // ---- inspect the running daemon ------------------------------------------------------
+  {
+    "label": "aujar: doctor --dev (adds socket source, env vars, log and settings paths, services)",
+    "command": "cargo",
+    "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "doctor", "--dev"],
+    "reveal": "always"
+  },
   {
     "label": "aujar: doctor (is the daemon up, which session, is the shortcut bound)",
     "command": "cargo",
@@ -144,6 +237,26 @@
     "label": "aujar: mwb report (paste this in Mouse Borders bug reports)",
     "command": "cargo",
     "args": ["run", "-q", "-p", "aujar-launcher-app", "--", "mwb", "report"],
+    "reveal": "always"
+  },
+
+  // ---- logs ----------------------------------------------------------------------------
+  // The UI is normally started from the desktop and has no terminal. Run it with a log file
+  // (AUJAR_LOG_FILE=1 writes <state dir>/logs/aujar-ui.log, 0600, rotated at 5 MiB), then
+  // follow it here.
+  {
+    "label": "run: UI with a log file, debug messages (AUJAR_LOG_FILE=1)",
+    "command": "cargo",
+    "args": ["run", "-p", "aujar-ui"],
+    "env": { "AUJAR_LOG_FILE": "1", "AUJAR_DEBUG": "1" },
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "logs: follow the Aujar log files (~/.local/state/aujar/logs)",
+    "command": "tail -n 100 -F ~/.local/state/aujar/logs/*.log",
+    "use_new_terminal": true,
     "reveal": "always"
   },
 

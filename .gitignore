@@ -1,5 +1,7 @@
-# Build output
-/target/
+# Build output. No leading slash on purpose: aujar-ui and NexDesk keep their own target/
+# directories (apps/aujar-ui/target, integrations/nexdesk/target), and a slash-anchored
+# pattern would only match the one at the repository root.
+target/
 **/*.rs.bk
 
 # Packages and release artifacts (scripts/build-nexdesk.sh --deb writes to ./dist)

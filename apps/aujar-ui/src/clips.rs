@@ -186,7 +186,10 @@ mod tests {
         fs::write(&spaced, b"y").unwrap();
 
         // One path.
-        assert_eq!(clip_files(&plain.to_string_lossy()), [plain.clone()]);
+        assert_eq!(
+            clip_files(&plain.to_string_lossy()),
+            std::slice::from_ref(&plain)
+        );
 
         // Several, one per line, as paths and as addresses (spaces encoded).
         let text = format!(

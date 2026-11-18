@@ -218,6 +218,94 @@ pub struct Envelope<T> {
     pub payload: T,
 }
 
+/// The name of an enum variant (`Search`, `Pong`, ...) without its contents.
+///
+/// For logging only: requests and responses can hold search text, file names, clipboard data or
+/// key material, which must never reach a log.
+fn variant_name<T: Serialize>(value: &T) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(name)) => name,
+        Ok(serde_json::Value::Object(map)) => {
+            map.keys().next().cloned().unwrap_or_else(|| "?".to_owned())
+        }
+        _ => "?".to_owned(),
+    }
+}
+
+impl Request {
+    /// The kind of request, without its contents (safe to log).
+    pub fn kind(&self) -> String {
+        variant_name(self)
+    }
+}
+
+impl Response {
+    /// The kind of response, without its contents (safe to log).
+    pub fn kind(&self) -> String {
+        variant_name(self)
+    }
+}
+
+/// Whether IPC trace lines are wanted (`AUJAR_IPC_TRACE=1` or `RUST_LOG=aujar::ipc=debug`).
+/// Check this before doing any work that only the trace needs.
+pub fn trace_enabled() -> bool {
+    tracing::enabled!(target: "aujar::ipc", tracing::Level::DEBUG)
+}
+
+/// Trace one request the daemon has answered. Call only when [`trace_enabled`].
+pub fn trace_handled(kind: &str, started: std::time::Instant, response: &Response) {
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    match response {
+        Response::Error(message) => tracing::debug!(
+            target: "aujar::ipc",
+            request = %kind,
+            elapsed_ms,
+            error = %message,
+            "handled, answered with an error"
+        ),
+        other => tracing::debug!(
+            target: "aujar::ipc",
+            request = %kind,
+            response = %other.kind(),
+            elapsed_ms,
+            "handled"
+        ),
+    }
+}
+
+fn trace_sent(socket: &Path, kind: &str, started: std::time::Instant, result: &Result<Response>) {
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let socket = socket.display();
+
+    match result {
+        Ok(Response::Error(message)) => tracing::debug!(
+            target: "aujar::ipc",
+            %socket,
+            request = %kind,
+            elapsed_ms,
+            error = %message,
+            "sent, the daemon answered with an error"
+        ),
+        Ok(response) => tracing::debug!(
+            target: "aujar::ipc",
+            %socket,
+            request = %kind,
+            response = %response.kind(),
+            elapsed_ms,
+            "sent"
+        ),
+        Err(error) => tracing::debug!(
+            target: "aujar::ipc",
+            %socket,
+            request = %kind,
+            elapsed_ms,
+            error = %format!("{error:#}"),
+            "request failed"
+        ),
+    }
+}
+
 /// Serialize `payload` as one protocol line (JSON followed by a newline).
 pub fn encode_line<T: Serialize>(payload: T) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(&Envelope {
@@ -281,6 +369,19 @@ async fn read_reply(reader: &mut BufReader<LocalStream>) -> Result<String> {
 
 /// Send one request and wait for its single response.
 pub async fn send(socket: impl AsRef<Path>, request: Request) -> Result<Response> {
+    let socket = socket.as_ref();
+    let traced = trace_enabled().then(|| (request.kind(), std::time::Instant::now()));
+
+    let result = send_untraced(socket, request).await;
+
+    if let Some((kind, started)) = traced {
+        trace_sent(socket, &kind, started, &result);
+    }
+
+    result
+}
+
+async fn send_untraced(socket: &Path, request: Request) -> Result<Response> {
     let stream = open(socket, request).await?;
 
     let mut reader = BufReader::new(stream);
@@ -495,5 +596,40 @@ mod tests {
         };
         #[cfg(windows)]
         assert!(cfg!(windows));
+    }
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::*;
+
+    #[test]
+    fn kinds_name_the_variant_and_nothing_else() {
+        assert_eq!(Request::Ping.kind(), "Ping");
+        assert_eq!(
+            Request::Launcher(LauncherCommand::Toggle).kind(),
+            "Launcher"
+        );
+        assert_eq!(
+            Request::Search(SearchRequest {
+                query: "my secret query".into(),
+                limit: None,
+            })
+            .kind(),
+            "Search"
+        );
+        assert_eq!(Response::Pong.kind(), "Pong");
+        assert_eq!(Response::Error("boom".into()).kind(), "Error");
+    }
+
+    #[test]
+    fn a_kind_never_contains_the_request_contents() {
+        let kind = Request::Execute(ExecuteRequest {
+            id: "apps:secret-file-name".into(),
+        })
+        .kind();
+
+        assert_eq!(kind, "Execute");
+        assert!(!kind.contains("secret"));
     }
 }

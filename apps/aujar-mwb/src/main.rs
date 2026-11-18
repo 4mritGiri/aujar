@@ -89,9 +89,6 @@ fn denied_capabilities() -> Result<HashSet<Capability>> {
 }
 
 fn init_logging(background: bool) {
-    let filter =
-        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
-
     if background {
         // No console: keep a log next to the other state files (replaced at each start).
         let path = aujar_config::platform::state_dir().join("aujar-mwb.log");
@@ -101,6 +98,9 @@ fn init_logging(background: bool) {
         }
 
         if let Ok(file) = std::fs::File::create(path) {
+            let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into());
+
             let _ = tracing_subscriber::fmt()
                 .with_env_filter(filter)
                 .with_ansi(false)
@@ -111,7 +111,7 @@ fn init_logging(background: bool) {
         }
     }
 
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    aujar_log::init("aujar-mwb");
 }
 
 #[cfg(windows)]
