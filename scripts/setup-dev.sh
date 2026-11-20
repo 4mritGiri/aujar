@@ -14,6 +14,8 @@
 #       --no-rust         skip the Rust toolchain step
 #       --no-cargo-tools  skip just / cargo-deny / cargo-nextest / cargo-watch
 #       --no-submodule    skip fetching the NexDesk submodule
+#       --no-hooks        skip turning on the git hooks (Conventional Commits, DCO sign-off,
+#                         formatting; see scripts/install-hooks.sh)
 #       --optional        also install runtime helpers the launcher can use
 #                         (wmctrl, xclip, wl-clipboard, ffmpegthumbnailer, poppler)
 #       --fast-linker     also install the mold linker (much faster linking of the big
@@ -35,6 +37,7 @@ DO_SYSTEM=1
 DO_RUST=1
 DO_CARGO_TOOLS=1
 DO_SUBMODULE=1
+DO_HOOKS=1
 DO_OPTIONAL=0
 DO_FAST_LINKER=0
 
@@ -47,10 +50,11 @@ for arg in "$@"; do
         --no-rust) DO_RUST=0 ;;
         --no-cargo-tools) DO_CARGO_TOOLS=0 ;;
         --no-submodule) DO_SUBMODULE=0 ;;
+        --no-hooks) DO_HOOKS=0 ;;
         --optional) DO_OPTIONAL=1 ;;
         --fast-linker) DO_FAST_LINKER=1 ;;
         -h | --help)
-            sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -225,6 +229,14 @@ check_environment() {
         if have vulkaninfo; then ok "vulkaninfo (GPU diagnostics)"; else missing_optional "vulkaninfo (vulkan-tools; handy when the UI will not start)"; fi
     fi
 
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if [ "$(git config --local --get core.hooksPath || true)" = ".githooks" ]; then
+            ok "git hooks (Conventional Commits, DCO sign-off, formatting)"
+        else
+            missing_optional "git hooks are off (scripts/install-hooks.sh)"
+        fi
+    fi
+
     if [ -f integrations/nexdesk/Cargo.toml ]; then
         ok "NexDesk sources (integrations/nexdesk)"
     else
@@ -366,6 +378,40 @@ fetch_submodule() {
     fi
 }
 
+# ---------------------------------------------------------------- git hooks
+
+install_git_hooks() {
+    step "Git hooks"
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        info "not a git checkout (a zip download has no .git): skipping"
+        return 0
+    fi
+
+    local current
+    current="$(git config --local --get core.hooksPath || true)"
+
+    if [ "$current" = ".githooks" ]; then
+        info "already on"
+        return 0
+    fi
+
+    if [ -n "$current" ]; then
+        warn "core.hooksPath is '$current' (another hook manager?): leaving it alone."
+        info "To use Aujar's hooks instead: scripts/install-hooks.sh --force"
+        return 0
+    fi
+
+    info "commit-msg: Conventional Commits + the DCO sign-off (git commit -s)"
+    info "pre-commit: no build output or big files in commits; Rust formatted"
+    info "pre-push:   cargo clippy, the gate CI runs"
+    confirm "Turn the hooks on for this clone?" || {
+        info "skipped (later: scripts/install-hooks.sh)"
+        return 0
+    }
+
+    run ./scripts/install-hooks.sh
+}
+
 # ---------------------------------------------------------------- fast linker
 
 install_fast_linker() {
@@ -405,6 +451,7 @@ install_fast_linker() {
 [ "$DO_RUST" -eq 1 ] && install_rust
 [ "$DO_CARGO_TOOLS" -eq 1 ] && install_cargo_tools
 [ "$DO_SUBMODULE" -eq 1 ] && fetch_submodule
+[ "$DO_HOOKS" -eq 1 ] && install_git_hooks
 [ "$DO_FAST_LINKER" -eq 1 ] && install_fast_linker
 
 if [ "$DRY_RUN" -eq 0 ]; then

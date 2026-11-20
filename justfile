@@ -12,7 +12,7 @@ check:
 
 # Everything CI runs, locally: fmt, clippy, tests, MSRV check (when the toolchain is installed),
 # cargo-deny (when installed) and the Mouse Borders crates. Slower than `check`; run before a PR.
-ci: check msrv test-mouse-borders _audit-if-installed
+ci: check msrv test-mouse-borders hooks-test _audit-if-installed
 
 # The Mouse Borders crates also run on Windows and macOS in CI; this is their Linux test set.
 test-mouse-borders:
@@ -83,6 +83,19 @@ nextest:
 doctor:
     cargo run -q -p aujar-launcher-app -- doctor
     cargo run -q -p aujar-launcher-app -- mwb doctor
+
+# ---- git hooks ----
+
+# Turn the git hooks on for this clone: Conventional Commits, DCO sign-off, formatting, clippy.
+hooks:
+    ./scripts/install-hooks.sh
+
+hooks-off:
+    ./scripts/install-hooks.sh --uninstall
+
+# Test the hooks and the commit-message check in a throw-away repository (fast, no cargo).
+hooks-test:
+    ./scripts/test-hooks.sh
 
 # ---- Mouse Borders lab (two daemons on this machine, paired over loopback) ----
 

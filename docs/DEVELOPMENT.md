@@ -14,7 +14,8 @@ just check                    # fmt + clippy + tests: the same gate CI runs
 Forgot `--recurse-submodules`? `git submodule update --init` (only NexDesk needs it; Aujar builds
 without it).
 
-`scripts/setup-dev.sh` asks before each step and only installs what is missing. Useful flags:
+`scripts/setup-dev.sh` asks before each step (including turning on the [git hooks](#git-hooks)) and only
+installs what is missing. Useful flags:
 `--yes` (no prompts), `--dry-run` (print, change nothing), `--check` (just report), `--optional`
 (also install runtime helpers such as `wmctrl`, `wl-clipboard`, `ffmpegthumbnailer`). It supports
 apt, dnf and pacman. Anything else: it prints what to install by hand.
@@ -77,6 +78,7 @@ crates/aujar-mwb-cli/  command-line shared by `aujar mwb` and `aujar-mwb`
 modules/               one domain per directory: launcher (search providers), rename,
                        image-resizer, color, awake, mouse-borders, nexdesk, window, zones,
                        clipboard, ruler, workspace (the last five are still stubs)
+.githooks/             git hooks (commit-msg, pre-commit, pre-push), turned on by scripts/install-hooks.sh
 dev/fixtures/          recorded answers of the online lookups, replayed by the offline mode
 integrations/nexdesk/  git submodule, its own Cargo workspace, never built with Aujar's cargo
 packaging/             systemd units, .desktop files, deb/rpm/Arch, GNOME extension
@@ -123,6 +125,7 @@ add code there; they are planned for removal.
 | `just watch` / `just watch-test <crate>` | re-run `cargo check` / one crate's tests on every save |
 | `just test-crate <crate> [args]` / `just nextest` | one crate's tests / the whole suite with cargo-nextest |
 | `just doctor` | `aujar doctor` and `aujar mwb doctor` (honors `AUJAR_SOCKET`) |
+| `just hooks` / `just hooks-off` / `just hooks-test` | turn the git hooks on / off / test them ([details](#git-hooks)) |
 | `just dev-offline` / `just record-fixtures` | the dev loop with the online lookups answered from `dev/fixtures` / record those files from the real services |
 | `just lab-up` / `lab-smoke` / `lab-down` | the Mouse Borders lab ([details](#mouse-borders-lab-two-daemons-on-one-machine)) |
 | `just --list` | everything else (builds, packaging, installed-service control) |
@@ -388,6 +391,40 @@ effect" because the CLI is talking to the installed daemon, or the other way rou
 | NexDesk sources missing | `git submodule update --init` (only `scripts/build-nexdesk.sh` needs them) |
 | Editor and terminal `cargo` wait for each other | `.zed/settings.json` gives rust-analyzer its own target dir; if you use another editor, set `rust-analyzer.cargo.targetDir` to `true` |
 
+## Git hooks
+
+CONTRIBUTING asks for two things in every commit: a [Conventional Commits](https://www.conventionalcommits.org/)
+message and a [DCO](https://developercertificate.org/) sign-off (`Signed-off-by:`, which `git commit -s`
+adds). The hooks check them for you, before the commit exists:
+
+```bash
+./scripts/install-hooks.sh          # or: just hooks.  setup-dev.sh offers it too.
+./scripts/install-hooks.sh --status
+./scripts/install-hooks.sh --uninstall
+```
+
+It sets `core.hooksPath` to `.githooks/` for this clone only (it refuses to replace another hook
+manager unless you pass `--force`).
+
+| Hook | What it does |
+|---|---|
+| `commit-msg` | the message must be `<type>[(scope)][!]: <subject>` with a type from `feat fix docs style refactor perf test build ci chore revert`, and contain a `Signed-off-by: Name <email>` line. Merge and `Revert "..."` commits, and `fixup!`/`squash!` commits you will squash later, are let through. The error message says how to fix it |
+| `pre-commit` | refuses staged files under a `target/` directory or over 5 MiB (the way build output ends up in a repository), and, when Rust files are staged, runs `cargo fmt --all -- --check` |
+| `pre-push` | `cargo clippy` with warnings as errors, the lint gate CI runs. Incremental, so seconds when little changed. A branch deletion pushes nothing and is not checked |
+
+Every hook can be skipped once with `--no-verify` (`git commit --no-verify`, `git push --no-verify`) or
+for a whole shell with `AUJAR_SKIP_HOOKS=1`. The hooks are plain bash with no dependencies; there is
+nothing to install besides turning them on.
+
+**On pull requests**, `.github/workflows/commits.yml` runs `scripts/check-pr-commits.sh` over every
+commit in the PR with the same rules, because a clone without the hooks can still send commits. It
+skips merge commits and bots (Dependabot's "Bump x" messages), and is stricter than the hook on one
+point: a `fixup!`/`squash!` commit must be squashed first (`git rebase -i --autosquash <base>`).
+To fix a message already pushed: `git rebase -i <base>`, `reword` the commit, keep the sign-off line.
+
+`just hooks-test` (also part of `just ci`) tests all of this in a throw-away repository: the message
+rules, each hook, the installer and the pull-request check.
+
 ## Dev container
 
 `.devcontainer/devcontainer.json` builds an Ubuntu 24.04 environment and runs the setup script.
@@ -396,5 +433,8 @@ portals or input devices, so run the launcher UI and Mouse Borders on your host.
 
 ## What is planned for the developer experience
 
-Done: setup, faster builds, the daily loop (`just dev`, `just ci`, the Mouse Borders lab) and shared
-logging with an IPC trace and `aujar doctor --dev`. Next: git hooks for commit messages and sign-off, and more daemon-plus-CLI integration tests (the lab smoke test and the offline lookup test are the first two).
+The six steps of the plan are done: setup, faster builds, the daily loop (`just dev`, `just ci`, the
+Mouse Borders lab), shared logging with an IPC trace and `aujar doctor --dev`, offline fixtures for the
+online lookups, and git hooks. What could come next: more daemon-plus-CLI integration tests (the lab
+smoke test and the offline lookup test are the first two), a `just release-check` that builds the
+packages, and a Windows/macOS lab for Mouse Borders.

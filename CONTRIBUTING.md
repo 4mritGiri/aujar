@@ -24,6 +24,10 @@ debugging, logs and a map of the repository.
 4. Sign off commits (`git commit -s`) to certify the [DCO](https://developercertificate.org/).
 5. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:` ...).
 
+   `./scripts/setup-dev.sh` (or `just hooks`) turns on git hooks that check both before the commit
+   is made, keep build output out of commits and run the format and lint checks; CI repeats the
+   message check on every pull request. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#git-hooks).
+
 ## Code guidelines
 
 - Domain logic lives in `modules/` or `crates/`; UI/platform glue stays at the edge.

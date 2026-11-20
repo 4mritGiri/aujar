@@ -304,6 +304,18 @@
     "reveal": "always"
   },
   {
+    "label": "hooks: turn the git hooks on (Conventional Commits, DCO, fmt, clippy)",
+    "command": "just",
+    "args": ["hooks"],
+    "reveal": "always"
+  },
+  {
+    "label": "hooks: test them in a throw-away repository",
+    "command": "just",
+    "args": ["hooks-test"],
+    "reveal": "always"
+  },
+  {
     "label": "setup: verify the environment (no changes)",
     "command": "./scripts/setup-dev.sh",
     "args": ["--check"],
