@@ -5551,11 +5551,8 @@ fn push_clip_image(clips: &mut Vec<ClipEntry>, item: ClipboardItem) {
             let big = image.bytes.is_empty() || image.bytes.len() > clips::MAX_IMAGE_BYTES;
             let file = clips::image_path(&image.bytes, extension);
 
-            (!big && clips::save_image(&file, &image.bytes)).then_some((
-                extension,
-                file,
-                image.bytes.len() as u64,
-            ))
+            (!big && clips::save_image(&file, &image.bytes))
+                .then_some((extension, file, image.bytes.len() as u64))
         }
         _ => None,
     });

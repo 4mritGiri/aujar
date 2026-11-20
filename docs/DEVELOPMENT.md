@@ -77,6 +77,7 @@ crates/aujar-mwb-cli/  command-line shared by `aujar mwb` and `aujar-mwb`
 modules/               one domain per directory: launcher (search providers), rename,
                        image-resizer, color, awake, mouse-borders, nexdesk, window, zones,
                        clipboard, ruler, workspace (the last five are still stubs)
+dev/fixtures/          recorded answers of the online lookups, replayed by the offline mode
 integrations/nexdesk/  git submodule, its own Cargo workspace, never built with Aujar's cargo
 packaging/             systemd units, .desktop files, deb/rpm/Arch, GNOME extension
 docs/                  architecture, IPC, feature matrix, threat model, ADRs
@@ -122,6 +123,7 @@ add code there; they are planned for removal.
 | `just watch` / `just watch-test <crate>` | re-run `cargo check` / one crate's tests on every save |
 | `just test-crate <crate> [args]` / `just nextest` | one crate's tests / the whole suite with cargo-nextest |
 | `just doctor` | `aujar doctor` and `aujar mwb doctor` (honors `AUJAR_SOCKET`) |
+| `just dev-offline` / `just record-fixtures` | the dev loop with the online lookups answered from `dev/fixtures` / record those files from the real services |
 | `just lab-up` / `lab-smoke` / `lab-down` | the Mouse Borders lab ([details](#mouse-borders-lab-two-daemons-on-one-machine)) |
 | `just --list` | everything else (builds, packaging, installed-service control) |
 
@@ -230,6 +232,47 @@ If the UI does not reconnect after the daemon restarts (the reconnect check in
 | `XDG_CONFIG_HOME`, `XDG_STATE_HOME` | where settings (`aujar/settings.toml`) and state (`state.toml`, the Mouse Borders key and audit log) live |
 | `AUJAR_DEV_HOME` | base directory for `just dev-isolated` (default `/tmp/aujar-dev-home`) |
 | `AUJAR_LAB_DIR`, `AUJAR_LAB_PORT_A`, `AUJAR_LAB_PORT_B` | the Mouse Borders lab (below) |
+
+## Offline lookups (fixtures)
+
+The launcher's online lookups (`define`, `weather`, `stock`, sports scores, NEPSE) call real
+services, which makes manual testing slow and flaky and tests impossible offline. They all go
+through one function (`web::get_with_header`, which runs `curl`), and that function has a replay
+and a record mode:
+
+| Variable | Effect |
+|---|---|
+| `AUJAR_FIXTURES=<dir>` | **replay**: answer from the files in `<dir>`, never from the network. A missing file is a normal "Couldn't look up ..." result that names the file it wanted |
+| `AUJAR_FIXTURES_RECORD=1` (with `AUJAR_FIXTURES`) | **record**: ask the network as usual and save each answer in `<dir>` |
+
+```bash
+just record-fixtures                       # once, with internet: real answers into dev/fixtures/
+just dev-offline                           # the dev loop, answering from those files
+just record-fixtures "define ephemeral" "weather oslo"    # your own queries
+```
+
+How it works:
+
+- One file per request, named after the URL without `https://`, with everything but letters, digits,
+  `.` and `-` turned into `_`: `https://api.dictionaryapi.dev/v2/entries/en/fire` is
+  `api.dictionaryapi.dev_v2_entries_en_fire.http`. Very long URLs are cut and get a hash. A name can
+  never leave the directory.
+- The format is the HTTP status on the first line (`HTTP 200`) and the body after it, so a fixture
+  is easy to read and to write by hand: copy one and change the body to test an odd answer, a 404 or
+  a rate limit (`HTTP 429`).
+- Only the status and the body are saved, never request headers (the NEPSE key travels in one).
+- **Currency** is not covered: it has its own `curl` call, but it keeps its rates on disk and works
+  offline after the first fetch.
+- Nothing else reads these variables, and they are not documented for users: this is a development
+  tool.
+
+**Test it.** `crates/aujar-daemon/tests/offline_lookups.rs` starts a real daemon and asks it
+`define fire`; the answer comes from `dev/fixtures/api.dictionaryapi.dev_v2_entries_en_fire.http`.
+Add a fixture and a similar test when you change how a lookup parses its answer.
+
+**What to commit.** Fixtures are real data from other people's services: commit small, stable ones
+(a word, a city, a ticker), not a day's sports scoreboard, which is large and changes. Review
+`git status` after recording.
 
 ## Mouse Borders lab: two daemons on one machine
 
@@ -354,6 +397,4 @@ portals or input devices, so run the launcher UI and Mouse Borders on your host.
 ## What is planned for the developer experience
 
 Done: setup, faster builds, the daily loop (`just dev`, `just ci`, the Mouse Borders lab) and shared
-logging with an IPC trace and `aujar doctor --dev`. Next: offline fixtures for the online launcher
-providers, an integration test for daemon plus CLI (the lab smoke test is a first step), and git hooks
-for commit messages and sign-off.
+logging with an IPC trace and `aujar doctor --dev`. Next: git hooks for commit messages and sign-off, and more daemon-plus-CLI integration tests (the lab smoke test and the offline lookup test are the first two).

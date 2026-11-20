@@ -10,6 +10,7 @@
 
 use std::{
     collections::HashMap,
+    path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -206,6 +207,107 @@ pub struct Response {
     pub body: String,
 }
 
+// ---- offline fixtures (development and tests) -----------------------------------------------
+//
+// `AUJAR_FIXTURES=<dir>` makes every lookup read its answer from a file in <dir> instead of
+// asking the network: fast, deterministic, and it works on a plane. `AUJAR_FIXTURES_RECORD=1`
+// (together with `AUJAR_FIXTURES`) goes the other way: lookups ask the network as usual and
+// each answer is saved in <dir>, so a set of fixtures is recorded once and replayed after.
+//
+// Only the status and the body are kept, never request headers (the NEPSE API key travels in
+// one). The mode is for development: nothing else in Aujar reads these variables.
+
+/// The environment variable that turns the offline mode on (a directory).
+pub const FIXTURES_ENV: &str = "AUJAR_FIXTURES";
+const FIXTURES_RECORD_ENV: &str = "AUJAR_FIXTURES_RECORD";
+/// File names longer than this get a hash instead of the rest of the URL.
+const MAX_FIXTURE_NAME: usize = 120;
+
+struct Fixtures {
+    dir: PathBuf,
+    record: bool,
+}
+
+fn fixtures_from_env() -> Option<Fixtures> {
+    let dir = std::env::var_os(FIXTURES_ENV).filter(|value| !value.is_empty())?;
+    let record = std::env::var_os(FIXTURES_RECORD_ENV)
+        .is_some_and(|value| !value.is_empty() && value != "0");
+
+    Some(Fixtures {
+        dir: PathBuf::from(dir),
+        record,
+    })
+}
+
+/// FNV-1a: a hash that never changes between Rust releases (fixture names must not).
+fn fnv1a(text: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+
+    hash
+}
+
+/// The file a URL's answer is kept in: the URL without `https://`, with everything except
+/// letters, digits, `.` and `-` turned into `_` (so a name can never leave the directory),
+/// and `.http` appended. Very long URLs are cut and given a hash to stay distinct.
+pub fn fixture_name(url: &str) -> String {
+    let url = url.strip_prefix("https://").unwrap_or(url);
+
+    let mut name: String = url
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    if name.len() > MAX_FIXTURE_NAME {
+        // The name is ASCII by now, so cutting at a byte count is safe.
+        name.truncate(MAX_FIXTURE_NAME);
+        name.push_str(&format!("-{:016x}", fnv1a(url)));
+    }
+
+    name.push_str(".http");
+    name
+}
+
+/// A fixture is `HTTP <status>` on the first line and the body after it.
+fn parse_fixture(text: &str) -> Option<Response> {
+    let (first, body) = text.split_once('\n').unwrap_or((text, ""));
+    let status = first.trim().strip_prefix("HTTP ")?.trim().parse().ok()?;
+
+    Some(Response {
+        status,
+        body: body.to_owned(),
+    })
+}
+
+fn replay_from(dir: &Path, url: &str) -> Result<Response, String> {
+    let name = fixture_name(url);
+
+    let text = std::fs::read_to_string(dir.join(&name)).map_err(|_| {
+        format!("offline mode: no recorded answer {name} (record it with AUJAR_FIXTURES_RECORD=1)")
+    })?;
+
+    parse_fixture(&text)
+        .ok_or_else(|| format!("offline mode: {name} is not a fixture (first line: HTTP <status>)"))
+}
+
+fn record_to(dir: &Path, url: &str, response: &Response) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(
+        dir.join(fixture_name(url)),
+        format!("HTTP {}\n{}", response.status, response.body),
+    )
+}
+
 /// GET `url` (HTTPS only) with `curl`. Network and tool problems become readable errors;
 /// HTTP error statuses are returned for the caller to interpret (a 404 can mean "no such
 /// word").
@@ -217,9 +319,6 @@ pub fn get(url: &str) -> Result<Response, String> {
 /// curl through its config on stdin, never the command line, so it does not show up in `ps`.
 /// Header text with a quote or line break is refused.
 pub fn get_with_header(url: &str, header: Option<&str>) -> Result<Response, String> {
-    use std::io::Write;
-    use std::process::Stdio;
-
     if !url.starts_with("https://") {
         return Err("refusing a non-HTTPS request".to_owned());
     }
@@ -227,6 +326,28 @@ pub fn get_with_header(url: &str, header: Option<&str>) -> Result<Response, Stri
     if header.is_some_and(|h| h.chars().any(|c| matches!(c, '"' | '\\' | '\n' | '\r'))) {
         return Err("refusing a malformed request header".to_owned());
     }
+
+    let fixtures = fixtures_from_env();
+
+    // Offline mode: answer from the recorded file, never from the network.
+    if let Some(fixtures) = fixtures.as_ref().filter(|fixtures| !fixtures.record) {
+        return replay_from(&fixtures.dir, url);
+    }
+
+    let response = curl_get(url, header)?;
+
+    // Recording: keep the answer for later replays (status and body only).
+    if let Some(fixtures) = &fixtures {
+        let _ = record_to(&fixtures.dir, url, &response);
+    }
+
+    Ok(response)
+}
+
+/// The real request, through `curl`.
+fn curl_get(url: &str, header: Option<&str>) -> Result<Response, String> {
+    use std::io::Write;
+    use std::process::Stdio;
 
     let mut command = Command::new("curl");
 
@@ -363,6 +484,86 @@ mod tests {
         }
 
         Lookup::Loading
+    }
+
+    #[test]
+    fn fixture_names_are_readable_and_cannot_leave_the_directory() {
+        assert_eq!(
+            fixture_name("https://api.dictionaryapi.dev/v2/entries/en/fire"),
+            "api.dictionaryapi.dev_v2_entries_en_fire.http"
+        );
+
+        let nasty = fixture_name("https://example.com/a/../../etc/passwd?x=1&y=\u{e4}\\z");
+
+        assert!(!nasty.contains('/') && !nasty.contains('\\'));
+        assert!(nasty.ends_with(".http"));
+
+        assert_ne!(
+            fixture_name("https://example.com/a?x=1"),
+            fixture_name("https://example.com/a?x=2")
+        );
+    }
+
+    #[test]
+    fn long_urls_get_short_names_that_stay_distinct() {
+        let long = format!("https://example.com/{}", "a".repeat(400));
+        let other = format!("{long}b");
+
+        assert!(fixture_name(&long).len() < 200);
+        assert_ne!(fixture_name(&long), fixture_name(&other));
+        // And the same URL always gets the same name.
+        assert_eq!(fixture_name(&long), fixture_name(&long));
+    }
+
+    #[test]
+    fn a_recorded_answer_replays_exactly() {
+        let dir = std::env::temp_dir().join(format!(
+            "aujar-fixtures-roundtrip-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let url = "https://example.com/v1/thing?q=1";
+        let response = Response {
+            status: 404,
+            body: "{\"title\":\"No\"}\nsecond line".to_owned(),
+        };
+
+        record_to(&dir, url, &response).unwrap();
+
+        let again = replay_from(&dir, url).unwrap();
+
+        assert_eq!(again.status, 404);
+        assert_eq!(again.body, response.body);
+
+        // An answer that was never recorded is an explained error, not a network call.
+        let missing = replay_from(&dir, "https://example.com/other").err().unwrap();
+
+        assert!(missing.contains("no recorded answer"), "{missing}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_damaged_fixture_is_an_error_not_a_guess() {
+        let dir = std::env::temp_dir().join(format!(
+            "aujar-fixtures-damaged-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let url = "https://example.com/broken";
+
+        std::fs::write(dir.join(fixture_name(url)), "this is not a fixture").unwrap();
+
+        let error = replay_from(&dir, url).err().unwrap();
+
+        assert!(error.contains("not a fixture"), "{error}");
+        assert!(parse_fixture("HTTP 200\n{}").is_some());
+        assert!(parse_fixture("HTTP abc\n{}").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -53,6 +53,16 @@ dev-daemon:
 dev-isolated:
     ./scripts/dev.sh --isolate
 
+# Same, with `define`, `weather`, `stock` ... answered from the recorded files in dev/fixtures
+# instead of the network: deterministic, and it works without internet.
+dev-offline:
+    ./scripts/dev.sh --offline
+
+# Record real answers of the online lookups into dev/fixtures (needs the network once).
+# Your own queries:  just record-fixtures "define ephemeral" "weather oslo"
+record-fixtures *QUERIES:
+    ./scripts/record-fixtures.sh {{QUERIES}}
+
 # Re-run `cargo check` for the platform crates on every save (fast feedback in a terminal).
 watch:
     cargo watch -q -c -x 'check --workspace --exclude aujar-ui'

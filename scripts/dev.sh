@@ -8,6 +8,8 @@
 #   scripts/dev.sh --hotkeys       # also register the global shortcut (stop the installed
 #                                  # service first, it owns the shortcut)
 #   scripts/dev.sh --ipc-trace     # log every daemon request (kind + timing, never contents)
+#   scripts/dev.sh --offline       # answer the online lookups (define, weather, stock, ...) from
+#                                  # the recorded files in dev/fixtures instead of the network
 #
 # It runs on its own socket (default /tmp/aujar-dev.sock), so your installed Aujar keeps working.
 # Use the CLI against it from another terminal:
@@ -27,6 +29,7 @@ UI=1
 ISOLATE=0
 HOTKEYS=0
 IPC_TRACE=0
+OFFLINE=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -35,8 +38,9 @@ for arg in "$@"; do
         --isolate) ISOLATE=1 ;;
         --hotkeys) HOTKEYS=1 ;;
         --ipc-trace) IPC_TRACE=1 ;;
+        --offline) OFFLINE=1 ;;
         -h | --help)
-            sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *)
@@ -72,6 +76,11 @@ fi
 export RUST_LOG="${RUST_LOG:-info,aujar=debug}"
 if [ "$IPC_TRACE" -eq 1 ]; then
     export AUJAR_IPC_TRACE=1
+fi
+if [ "$OFFLINE" -eq 1 ]; then
+    # Replay recorded answers; record new ones with ./scripts/record-fixtures.sh.
+    export AUJAR_FIXTURES="$PWD/dev/fixtures"
+    echo "offline lookups: answers come from $AUJAR_FIXTURES"
 fi
 
 if [ "$ISOLATE" -eq 1 ]; then

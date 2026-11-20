@@ -118,6 +118,20 @@
     "reveal": "always"
   },
   {
+    "label": "dev: everything, offline (define / weather / stock answered from dev/fixtures)",
+    "command": "just",
+    "args": ["dev-offline"],
+    "use_new_terminal": true,
+    "allow_concurrent_runs": false,
+    "reveal": "always"
+  },
+  {
+    "label": "fixtures: record real answers of the online lookups (needs the network)",
+    "command": "just",
+    "args": ["record-fixtures"],
+    "reveal": "always"
+  },
+  {
     "label": "check: watch (cargo check on every save)",
     "command": "just",
     "args": ["watch"],

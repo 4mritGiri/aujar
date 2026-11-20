@@ -592,7 +592,6 @@ dependencies = [
  "aujar-hotkeys",
  "aujar-ipc",
  "aujar-launcher",
- "aujar-log",
  "aujar-mouse-borders",
  "aujar-nexdesk",
  "aujar-platform",
@@ -603,6 +602,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -637,7 +637,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -663,22 +662,14 @@ dependencies = [
  "aujar-image-resizer",
  "aujar-ipc",
  "aujar-launcher",
- "aujar-log",
  "aujar-mouse-borders",
  "aujar-mwb-cli",
  "aujar-platform",
  "aujar-rename",
  "clap",
  "clap_complete",
+ "tempfile",
  "tokio",
- "tracing",
-]
-
-[[package]]
-name = "aujar-log"
-version = "0.1.1"
-dependencies = [
- "aujar-config",
  "tracing",
  "tracing-subscriber",
 ]
@@ -726,7 +717,6 @@ dependencies = [
  "anyhow",
  "aujar-config",
  "aujar-core",
- "aujar-log",
  "aujar-mouse-borders",
  "aujar-mwb-cli",
  "clap",
@@ -810,13 +800,11 @@ dependencies = [
  "aujar-color",
  "aujar-config",
  "aujar-ipc",
- "aujar-log",
  "aujar-mouse-borders",
  "gpui-pre",
  "gpui-pre-platform",
  "libc",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -1306,9 +1294,9 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "clipboard-win"
-version = "5.4.3"
+version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "052af7878466feccda12ba7a6a67d019d712f296809559b47c12c8cc196d3a9a"
+checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
 dependencies = [
  "error-code",
 ]
