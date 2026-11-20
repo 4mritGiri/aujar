@@ -75,11 +75,8 @@ fn setup(app: &str, verbosity: u8, base: &str) {
         .with_writer(std::io::stderr)
         .with_ansi(std::io::stderr().is_terminal());
 
-    let file = open_log_file(app).map(|file| {
-        fmt::layer()
-            .with_writer(Mutex::new(file))
-            .with_ansi(false)
-    });
+    let file =
+        open_log_file(app).map(|file| fmt::layer().with_writer(Mutex::new(file)).with_ansi(false));
 
     let installed = tracing_subscriber::registry()
         .with(filter)
@@ -130,11 +127,7 @@ fn env_filter(verbosity: u8, base: &str) -> EnvFilter {
                 eprintln!("aujar: ignoring invalid RUST_LOG: {error}");
             }
 
-            EnvFilter::new(default_directives(
-                verbosity,
-                env_flag("AUJAR_DEBUG"),
-                base,
-            ))
+            EnvFilter::new(default_directives(verbosity, env_flag("AUJAR_DEBUG"), base))
         }
     };
 
@@ -186,7 +179,10 @@ fn open_log_file(app: &str) -> Option<File> {
     match options.open(&path) {
         Ok(file) => Some(file),
         Err(error) => {
-            eprintln!("aujar: cannot write the log file {}: {error}", path.display());
+            eprintln!(
+                "aujar: cannot write the log file {}: {error}",
+                path.display()
+            );
 
             None
         }
@@ -260,8 +256,14 @@ mod tests {
         let state = Path::new("/state");
 
         assert_eq!(resolve_log_path(None, "aujar-ui", state), None);
-        assert_eq!(resolve_log_path(Some(OsStr::new("")), "aujar-ui", state), None);
-        assert_eq!(resolve_log_path(Some(OsStr::new("0")), "aujar-ui", state), None);
+        assert_eq!(
+            resolve_log_path(Some(OsStr::new("")), "aujar-ui", state),
+            None
+        );
+        assert_eq!(
+            resolve_log_path(Some(OsStr::new("0")), "aujar-ui", state),
+            None
+        );
         assert_eq!(
             resolve_log_path(Some(OsStr::new("1")), "aujar-ui", state),
             Some(PathBuf::from("/state/logs/aujar-ui.log"))

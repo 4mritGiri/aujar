@@ -225,11 +225,9 @@ pub struct Envelope<T> {
 fn variant_name<T: Serialize>(value: &T) -> String {
     match serde_json::to_value(value) {
         Ok(serde_json::Value::String(name)) => name,
-        Ok(serde_json::Value::Object(map)) => map
-            .keys()
-            .next()
-            .cloned()
-            .unwrap_or_else(|| "?".to_owned()),
+        Ok(serde_json::Value::Object(map)) => {
+            map.keys().next().cloned().unwrap_or_else(|| "?".to_owned())
+        }
         _ => "?".to_owned(),
     }
 }
@@ -276,12 +274,7 @@ pub fn trace_handled(kind: &str, started: std::time::Instant, response: &Respons
     }
 }
 
-fn trace_sent(
-    socket: &Path,
-    kind: &str,
-    started: std::time::Instant,
-    result: &Result<Response>,
-) {
+fn trace_sent(socket: &Path, kind: &str, started: std::time::Instant, result: &Result<Response>) {
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let socket = socket.display();
 
@@ -613,7 +606,10 @@ mod kind_tests {
     #[test]
     fn kinds_name_the_variant_and_nothing_else() {
         assert_eq!(Request::Ping.kind(), "Ping");
-        assert_eq!(Request::Launcher(LauncherCommand::Toggle).kind(), "Launcher");
+        assert_eq!(
+            Request::Launcher(LauncherCommand::Toggle).kind(),
+            "Launcher"
+        );
         assert_eq!(
             Request::Search(SearchRequest {
                 query: "my secret query".into(),

@@ -517,10 +517,8 @@ mod tests {
 
     #[test]
     fn a_recorded_answer_replays_exactly() {
-        let dir = std::env::temp_dir().join(format!(
-            "aujar-fixtures-roundtrip-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aujar-fixtures-roundtrip-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let url = "https://example.com/v1/thing?q=1";
@@ -537,7 +535,9 @@ mod tests {
         assert_eq!(again.body, response.body);
 
         // An answer that was never recorded is an explained error, not a network call.
-        let missing = replay_from(&dir, "https://example.com/other").err().unwrap();
+        let missing = replay_from(&dir, "https://example.com/other")
+            .err()
+            .unwrap();
 
         assert!(missing.contains("no recorded answer"), "{missing}");
 
@@ -546,10 +546,8 @@ mod tests {
 
     #[test]
     fn a_damaged_fixture_is_an_error_not_a_guess() {
-        let dir = std::env::temp_dir().join(format!(
-            "aujar-fixtures-damaged-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("aujar-fixtures-damaged-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
