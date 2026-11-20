@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Run the lint gate CI runs (clippy with warnings as errors) before anything leaves the machine.
+# It is incremental, so it takes seconds when little changed. Skip once with
+# `git push --no-verify`, or set AUJAR_SKIP_HOOKS=1.
+[ -n "${AUJAR_SKIP_HOOKS:-}" ] && exit 0
+
+# Nothing to check when only deleting a branch or tag.
+pushing=0
+zero="0000000000000000000000000000000000000000"
+
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+    case "$local_sha" in
+        "" | "$zero" | "0000000000000000000000000000000000000000000000000000000000000000") ;;
+        *) pushing=1 ;;
+    esac
+done
+
+[ "$pushing" -eq 1 ] || exit 0
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-push: cargo not found, skipping the lint check." >&2
+    exit 0
+fi
+
+echo "pre-push: cargo clippy (the CI gate; git push --no-verify skips it)"
+
+if ! cargo clippy --workspace --exclude aujar-ui --all-targets --all-features -- -D warnings; then
+    echo >&2
+    echo "pre-push: clippy found problems. Fix them, or push anyway with: git push --no-verify" >&2
+    exit 1
+fi

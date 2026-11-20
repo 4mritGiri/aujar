@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Conventional Commits + DCO sign-off (the rules in CONTRIBUTING.md).
+# Skip once with `git commit --no-verify`, or set AUJAR_SKIP_HOOKS=1.
+[ -n "${AUJAR_SKIP_HOOKS:-}" ] && exit 0
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+
+exec "$root/scripts/check-commit-msg.sh" "$1"

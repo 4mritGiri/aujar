@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Keep build output and big files out of commits, and Rust formatted.
+# Skip once with `git commit --no-verify`, or set AUJAR_SKIP_HOOKS=1.
+[ -n "${AUJAR_SKIP_HOOKS:-}" ] && exit 0
+
+MAX_BYTES=$((5 * 1024 * 1024))
+failed=0
+staged_rust=0
+
+while IFS= read -r -d '' path; do
+    case "/$path" in
+        */target/*)
+            echo "pre-commit: '$path' is build output (a target/ directory); it must not be committed." >&2
+            failed=1
+            continue
+            ;;
+    esac
+
+    case "$path" in
+        *.rs) staged_rust=1 ;;
+    esac
+
+    size="$(git cat-file -s ":$path" 2>/dev/null || echo 0)"
+
+    if [ "$size" -gt "$MAX_BYTES" ]; then
+        echo "pre-commit: '$path' is $((size / 1024 / 1024)) MiB (the limit is $((MAX_BYTES / 1024 / 1024)) MiB)." >&2
+        failed=1
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACM -z)
+
+if [ "$failed" -eq 1 ]; then
+    echo "pre-commit: unstage them (git restore --staged <path>) and add the path to .gitignore if it is" >&2
+    echo "            generated. To commit them anyway: git commit --no-verify" >&2
+    exit 1
+fi
+
+if [ "$staged_rust" -eq 1 ]; then
+    if command -v cargo >/dev/null 2>&1; then
+        if ! output="$(cargo fmt --all -- --check 2>&1)"; then
+            printf '%s\n' "$output" | head -30 >&2
+            echo >&2
+            echo "pre-commit: Rust files are not formatted. Run 'cargo fmt --all' (or 'just fmt'), stage" >&2
+            echo "            the changes and commit again." >&2
+            exit 1
+        fi
+    else
+        echo "pre-commit: cargo not found, skipping the format check." >&2
+    fi
+fi
