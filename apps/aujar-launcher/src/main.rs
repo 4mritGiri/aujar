@@ -9,6 +9,7 @@ use clap_complete::Shell;
 use std::path::PathBuf;
 
 mod awake;
+mod backup;
 mod gnome_extension;
 mod mouse_borders;
 mod nexdesk;
@@ -182,6 +183,13 @@ enum Command {
     MouseBorders {
         #[command(subcommand)]
         action: mouse_borders::MwbAction,
+    },
+
+    /// Back up databases and folders (local or any server over SSH) to this computer, with
+    /// optional encryption, retention and cron scheduling.
+    Backup {
+        #[command(subcommand)]
+        action: backup::BackupAction,
     },
 
     /// Keep the computer from sleeping: on, off, or for a set time.
@@ -495,6 +503,8 @@ async fn main() -> Result<()> {
         Command::MouseBorders { action } => mouse_borders::run(action, resolve_socket()).await?,
 
         Command::NexDesk { action } => nexdesk::run(action, resolve_socket()).await?,
+
+        Command::Backup { action } => backup::run(action)?,
 
         Command::Awake { action } => awake::run(action, resolve_socket()).await?,
 

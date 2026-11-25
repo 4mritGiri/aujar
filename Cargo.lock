@@ -550,6 +550,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aujar-backup"
+version = "0.1.1"
+dependencies = [
+ "aujar-config",
+ "flate2",
+ "serde",
+ "sha2",
+ "thiserror 2.0.21",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "aujar-clipboard"
 version = "0.1.1"
 
@@ -592,6 +604,7 @@ dependencies = [
  "aujar-hotkeys",
  "aujar-ipc",
  "aujar-launcher",
+ "aujar-log",
  "aujar-mouse-borders",
  "aujar-nexdesk",
  "aujar-platform",
@@ -602,7 +615,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -637,6 +649,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -655,6 +668,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aujar-awake",
+ "aujar-backup",
  "aujar-color",
  "aujar-config",
  "aujar-core",
@@ -662,14 +676,22 @@ dependencies = [
  "aujar-image-resizer",
  "aujar-ipc",
  "aujar-launcher",
+ "aujar-log",
  "aujar-mouse-borders",
  "aujar-mwb-cli",
  "aujar-platform",
  "aujar-rename",
  "clap",
  "clap_complete",
- "tempfile",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "aujar-log"
+version = "0.1.1"
+dependencies = [
+ "aujar-config",
  "tracing",
  "tracing-subscriber",
 ]
@@ -717,6 +739,7 @@ dependencies = [
  "anyhow",
  "aujar-config",
  "aujar-core",
+ "aujar-log",
  "aujar-mouse-borders",
  "aujar-mwb-cli",
  "clap",
@@ -797,14 +820,17 @@ dependencies = [
  "anyhow",
  "async-channel",
  "aujar-awake",
+ "aujar-backup",
  "aujar-color",
  "aujar-config",
  "aujar-ipc",
+ "aujar-log",
  "aujar-mouse-borders",
  "gpui-pre",
  "gpui-pre-platform",
  "libc",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

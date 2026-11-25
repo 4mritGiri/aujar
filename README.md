@@ -41,6 +41,7 @@ Something not working? Run `aujar doctor` and see [docs/TROUBLESHOOTING.md](docs
 | [Feature matrix](docs/FEATURE_MATRIX.md) | What is done / planned, per compositor |
 | [Architecture](docs/ARCHITECTURE.md) | Design principles and layout |
 | [Mouse Borders](docs/MOUSE_BORDERS.md) | One keyboard and mouse across up to four Linux, macOS and Windows machines |
+| [Backup](docs/BACKUP.md) | Daily database and folder backups to this computer (any server over SSH), encryption, retention, cron |
 | [NexDesk](docs/NEXDESK.md) | Opening the NexDesk remote-access suite from Aujar (git submodule, separate process) |
 | [Roadmap](docs/ROADMAP.md) | Milestones |
 | [Threat model](docs/THREAT_MODEL.md) | Security assumptions |

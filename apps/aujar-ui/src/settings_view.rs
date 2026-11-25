@@ -32,6 +32,12 @@ enum EditTarget {
     Shortcut(Option<usize>),
     /// A time for Awake, such as `45m` or `1h30m`.
     AwakeTime,
+    /// A server for Backup as `name | user@host | port | key`.
+    BackupServer,
+    /// One setting of the open Backup job.
+    BackupField(backup::Field),
+    /// A default every new Backup job starts with.
+    BackupDefault(backup::Setup),
 }
 
 #[derive(Debug, Clone)]
@@ -225,6 +231,7 @@ enum Page {
     NexDesk,
     Files,
     History,
+    Backup,
     General,
 }
 
@@ -240,9 +247,9 @@ impl Page {
         Page::NexDesk,
     ];
     /// The collapsible "Data" group.
-    const DATA: [Page; 2] = [Page::Files, Page::History];
+    const DATA: [Page; 3] = [Page::Files, Page::History, Page::Backup];
     /// Every page, in sidebar order (used by search).
-    const ALL: [Page; 10] = [
+    const ALL: [Page; 11] = [
         Page::Appearance,
         Page::ColorPicker,
         Page::Search,
@@ -252,6 +259,7 @@ impl Page {
         Page::NexDesk,
         Page::Files,
         Page::History,
+        Page::Backup,
         Page::General,
     ];
 
@@ -266,6 +274,7 @@ impl Page {
             Self::NexDesk => "NexDesk",
             Self::Files => "Files",
             Self::History => "History",
+            Self::Backup => "Backup",
             Self::General => "General",
         }
     }
@@ -281,6 +290,7 @@ impl Page {
             Self::NexDesk => "Open your saved remote desktop connections",
             Self::Files => "Which folders the launcher looks through",
             Self::History => "Recent items and the clipboard",
+            Self::Backup => "Back up databases from this computer or any server",
             Self::General => "Shortcuts, config file and about",
         }
     }
@@ -296,6 +306,7 @@ impl Page {
             Self::NexDesk => "icons/window.svg",
             Self::Files => "icons/folder.svg",
             Self::History => "icons/history.svg",
+            Self::Backup => "icons/database.svg",
             Self::General => "icons/app.svg",
         }
     }
@@ -327,6 +338,11 @@ impl Page {
             }
             Self::Files => "files index indexed roots depth folders directories",
             Self::History => "history recent frequent clear clipboard clip launch",
+            Self::Backup => {
+                "backup backups database databases postgres postgresql mysql mariadb sqlite dump \
+                 pg_dump cluster clusters server servers ssh docker cron schedule restore \
+                 retention encrypt gpg port ports"
+            }
             Self::General => "general shortcut keyboard keys config file about version",
         }
     }
@@ -376,6 +392,7 @@ pub struct SettingsView {
     mouse_borders: mouse_borders::State,
     nexdesk: nexdesk::State,
     awake: awake::State,
+    backup: backup::State,
     pub focus_handle: FocusHandle,
     sidebar_open: bool,
     data_open: bool,
@@ -404,6 +421,7 @@ impl SettingsView {
         Self::keep_mouse_borders_status_fresh(cx);
         Self::keep_nexdesk_status_fresh(cx);
         Self::keep_awake_status_fresh(cx);
+        Self::keep_backup_fresh(cx);
 
         Self {
             palette: Palette::from_settings(&settings),
@@ -414,6 +432,7 @@ impl SettingsView {
             mouse_borders: mouse_borders::State::default(),
             nexdesk: nexdesk::State::default(),
             awake: awake::State::default(),
+            backup: backup::State::default(),
             focus_handle: cx.focus_handle(),
             sidebar_open: true,
             data_open: true,
@@ -457,6 +476,10 @@ impl SettingsView {
 
         if page == Page::Awake {
             self.refresh_awake(cx);
+        }
+
+        if page == Page::Backup {
+            self.refresh_backup(cx);
         }
 
         cx.notify();
@@ -719,6 +742,18 @@ impl SettingsView {
                         self.editing = None;
                         self.set_awake(aujar_ipc::AwakeRequest::For { seconds }, cx);
                     }
+                    Err(error) => {
+                        if let Some(editing) = self.editing.as_mut() {
+                            editing.error = Some(error);
+                        }
+                    }
+                }
+            }
+            EditTarget::BackupServer
+            | EditTarget::BackupField(_)
+            | EditTarget::BackupDefault(_) => {
+                match self.commit_backup(&edit.target, edit.text.trim(), cx) {
+                    Ok(()) => self.editing = None,
                     Err(error) => {
                         if let Some(editing) = self.editing.as_mut() {
                             editing.error = Some(error);
@@ -1709,6 +1744,7 @@ macro_rules! stepper_row {
 // Pages come after the macros so they can use them.
 mod appearance;
 mod awake;
+mod backup;
 mod files;
 mod general;
 mod history;
@@ -1752,6 +1788,7 @@ impl Render for SettingsView {
             Page::NexDesk => self.nexdesk_page(cx),
             Page::Files => self.files_page(cx),
             Page::History => self.history_page(cx),
+            Page::Backup => self.backup_page(cx),
             Page::General => self.general_page(cx),
         };
 
