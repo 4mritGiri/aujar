@@ -95,7 +95,11 @@ many clusters on many ports needs no per-port set-up.
 How the dump authenticates: a PostgreSQL cluster is dumped as its own OS user over the local
 socket (`run_as = "postgres"`, `runuser` when the SSH user is root, `sudo -n` otherwise), so no
 password is involved. A database in Docker is dumped with `docker exec` inside its container.
-Anything else uses `~/.pgpass` / `~/.my.cnf` on the server, or a local `password_file`.
+A cluster whose `pg_hba.conf` demands a password even on the local socket ("no password
+supplied") needs a **Password file**: a file on this computer (`chmod 600`) containing the
+password. Over SSH it is sent on the connection's standard input and read into `PGPASSWORD`
+by a tiny wrapper on the server, so it is never stored there or visible in `ps`. Alternatively
+use `~/.pgpass` / `~/.my.cnf` on the server.
 
 New job settings (also available as `aujar backup add --run-as/--bin-dir/--container`):
 

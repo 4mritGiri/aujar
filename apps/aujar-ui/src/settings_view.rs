@@ -749,9 +749,7 @@ impl SettingsView {
                     }
                 }
             }
-            EditTarget::BackupServer
-            | EditTarget::BackupField(_)
-            | EditTarget::BackupDefault(_) => {
+            EditTarget::BackupServer | EditTarget::BackupField(_) | EditTarget::BackupDefault(_) => {
                 match self.commit_backup(&edit.target, edit.text.trim(), cx) {
                     Ok(()) => self.editing = None,
                     Err(error) => {

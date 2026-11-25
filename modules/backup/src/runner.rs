@@ -25,6 +25,10 @@ pub struct Plan {
     pub args: Vec<String>,
     /// Environment variable that receives the contents of a secret file at run time.
     pub secret_env: Option<(&'static str, PathBuf)>,
+    /// The secret is sent to the command's standard input (one line) instead of its
+    /// environment: used over SSH, where an environment variable would not arrive and a
+    /// command line would show the password to every user of the server.
+    pub secret_stdin: bool,
     /// Extension of the finished file (`dump`, `sql.gz`, `tar.gz`), before `.gpg`.
     pub extension: &'static str,
     /// Compress the tool's output ourselves (tools that already compress set this to false).
@@ -53,7 +57,8 @@ pub(crate) fn push_opt(args: &mut Vec<String>, flag: &str, value: Option<impl To
 pub fn plan(job: &Job) -> Result<Plan, BackupError> {
     job.validate()?;
 
-    let (tool, args, extension, gzip): (&str, Vec<String>, &'static str, bool) = match job.kind {
+    let (tool, args, extension, gzip): (&str, Vec<String>, &'static str, bool) = match job.kind
+    {
         Kind::Postgres => {
             let mut args = vec!["--no-password".to_owned()];
             push_opt(&mut args, "-h", job.host.as_ref());
@@ -128,8 +133,7 @@ pub fn plan(job: &Job) -> Result<Plan, BackupError> {
 const AS_USER: &str = r#"if [ "$(id -u)" = 0 ] && command -v runuser >/dev/null 2>&1; then exec runuser -u "$0" -- "$@"; else exec sudo -n -u "$0" -- "$@"; fi"#;
 
 /// Inside a MySQL/MariaDB container the root password is in the container's own environment.
-const IN_CONTAINER_MYSQL: &str =
-    r#"MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}" exec "$0" "$@""#;
+const IN_CONTAINER_MYSQL: &str = r#"MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}" exec "$0" "$@""#;
 
 /// The options every SSH run uses: key login only, no prompts, no forwarding, keep-alives.
 pub(crate) fn ssh_base_args(port: Option<u16>, key: Option<&Path>) -> Vec<String> {
@@ -177,11 +181,7 @@ pub(crate) fn wrap(
         argv.extend(["docker", "exec", "-i"].map(str::to_owned));
         argv.push(container.clone());
         if job.kind == Kind::Mysql {
-            argv.extend([
-                "sh".to_owned(),
-                "-c".to_owned(),
-                IN_CONTAINER_MYSQL.to_owned(),
-            ]);
+            argv.extend(["sh".to_owned(), "-c".to_owned(), IN_CONTAINER_MYSQL.to_owned()]);
         }
         argv.push(tool.to_owned());
     } else if let Some(dir) = &job.bin_dir {
@@ -196,13 +196,20 @@ pub(crate) fn wrap(
     }
     argv.extend(args);
 
+    // Over SSH the password travels on stdin; the server side reads it into the variable the
+    // tool expects, then starts the tool. It is never part of any command line.
+    let secret_stdin = job.ssh.is_some() && secret_env.is_some();
+
+    if let Some((name, _)) = secret_env.as_ref().filter(|_| secret_stdin) {
+        let script = format!(r#"IFS= read -r {name}; export {name}; exec "$0" "$@""#);
+        let mut wrapped = vec!["sh".to_owned(), "-c".to_owned(), script];
+
+        wrapped.append(&mut argv);
+        argv = wrapped;
+    }
+
     if let Some(user) = &job.run_as {
-        let mut wrapped = vec![
-            "sh".to_owned(),
-            "-c".to_owned(),
-            AS_USER.to_owned(),
-            user.clone(),
-        ];
+        let mut wrapped = vec!["sh".to_owned(), "-c".to_owned(), AS_USER.to_owned(), user.clone()];
         wrapped.append(&mut argv);
         argv = wrapped;
     }
@@ -213,6 +220,7 @@ pub(crate) fn wrap(
             program,
             args: argv,
             secret_env,
+            secret_stdin: false,
             extension,
             gzip,
         });
@@ -232,7 +240,8 @@ pub(crate) fn wrap(
     Ok(Plan {
         program: "ssh".to_owned(),
         args: ssh_args,
-        secret_env: None,
+        secret_env,
+        secret_stdin,
         extension,
         gzip,
     })
@@ -540,10 +549,14 @@ fn dump_to(
     let mut command = Command::new(program);
     command
         .args(&plan.args)
-        .stdin(Stdio::null())
+        .stdin(if plan.secret_stdin {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some((name, value)) = secret {
+    if let (Some((name, value)), false) = (&secret, plan.secret_stdin) {
         command.env(name, value);
     }
 
@@ -578,6 +591,10 @@ fn dump_to(
         .map(drain);
 
     let mut dump = command.spawn().map_err(|e| spawn_error(&plan.program, e))?;
+    if let (Some(mut stdin), Some((_, value))) = (dump.stdin.take(), &secret) {
+        // One short line; the pipe buffer takes it without waiting for the reader.
+        let _ = writeln!(stdin, "{value}");
+    }
     let mut stdout = dump.stdout.take().expect("stdout is piped");
     let dump_stderr = drain(dump.stderr.take().expect("stderr is piped"));
 
@@ -846,6 +863,24 @@ mod tests {
             Some(("PGPASSWORD", PathBuf::from("/home/u/.pg_pass")))
         );
         assert!(!plan.display().contains("pg_pass"));
+    }
+
+    #[test]
+    fn over_ssh_the_password_travels_on_stdin_not_in_the_command() {
+        let mut job = pg();
+        job.ssh = Some("root@203.0.113.7".into());
+        job.host = None;
+        job.run_as = Some("postgres".into());
+        job.password_file = Some("/home/u/.pg_pass".into());
+        let plan = plan(&job).unwrap();
+        assert!(plan.secret_stdin);
+        assert_eq!(plan.program, "ssh");
+        let remote = plan.args.last().unwrap();
+        assert!(remote.contains("read -r PGPASSWORD"), "{remote}");
+        assert!(!remote.contains("pg_pass"), "{remote}");
+
+        job.ssh = None;
+        assert!(!super::plan(&job).unwrap().secret_stdin);
     }
 
     #[test]

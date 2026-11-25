@@ -70,29 +70,15 @@ impl Field {
             Self::User => "The database role to connect as.",
             Self::Host => "As seen from where the dump runs. Empty uses the local socket.",
             Self::Port => "The cluster's TCP port.",
-            Self::RunAs => {
-                "Operating-system user the dump runs as (PostgreSQL peer login), e.g. postgres."
-            }
-            Self::BinDir => {
-                "Matching pg_dump/psql, e.g. /usr/lib/postgresql/18/bin. Needed with several versions."
-            }
-            Self::PasswordFile => {
-                "A file (mode 600) holding the password. Not used over SSH: use ~/.pgpass on the server."
-            }
+            Self::RunAs => "Operating-system user the dump runs as (PostgreSQL peer login), e.g. postgres.",
+            Self::BinDir => "Matching pg_dump/psql, e.g. /usr/lib/postgresql/18/bin. Needed with several versions.",
+            Self::PasswordFile => "For a cluster that asks for a password: a file on this computer (chmod 600) holding it. It is sent over SSH when the dump starts, never stored on the server or shown in a command.",
             Self::Dest => "A folder on this computer. Empty uses ~/aujar-backups/<name>.",
-            Self::Schedule => {
-                "A cron expression such as 0 2 * * *, @daily, or `daily 02:00`. Empty turns it off."
-            }
+            Self::Schedule => "A cron expression such as 0 2 * * *, @daily, or `daily 02:00`. Empty turns it off.",
             Self::KeepLast => "How many of the newest backups to keep (empty: 14).",
-            Self::KeepDays => {
-                "Also delete backups older than this many days. The newest is always kept."
-            }
-            Self::GpgRecipient => {
-                "Key id, fingerprint or e-mail. Only the key owner can read the backups."
-            }
-            Self::GpgPassphrase => {
-                "A file (mode 600) with the passphrase. Use either this or a key."
-            }
+            Self::KeepDays => "Also delete backups older than this many days. The newest is always kept.",
+            Self::GpgRecipient => "Key id, fingerprint or e-mail. Only the key owner can read the backups.",
+            Self::GpgPassphrase => "A file (mode 600) with the passphrase. Use either this or a key.",
         }
     }
 
@@ -214,11 +200,13 @@ impl Field {
             fields.extend([Self::Database, Self::User]);
 
             if job.container.is_none() {
-                fields.extend([Self::Host, Self::Port, Self::RunAs, Self::BinDir]);
-
-                if job.ssh.is_none() {
-                    fields.push(Self::PasswordFile);
-                }
+                fields.extend([
+                    Self::Host,
+                    Self::Port,
+                    Self::RunAs,
+                    Self::BinDir,
+                    Self::PasswordFile,
+                ]);
             }
         }
 
@@ -246,12 +234,8 @@ pub(super) enum Setup {
 impl Setup {
     fn hint(self) -> &'static str {
         match self {
-            Self::Folder => {
-                "A folder on this computer, e.g. /srv/backups or ~/Backups. Each job gets its own sub-folder. Empty goes back to ~/aujar-backups."
-            }
-            Self::Schedule => {
-                "A cron expression such as 0 2 * * *, @daily, or `daily 02:00`. Empty means new jobs are not scheduled."
-            }
+            Self::Folder => "A folder on this computer, e.g. /srv/backups or ~/Backups. Each job gets its own sub-folder. Empty goes back to ~/aujar-backups.",
+            Self::Schedule => "A cron expression such as 0 2 * * *, @daily, or `daily 02:00`. Empty means new jobs are not scheduled.",
             Self::Keep => "How many of the newest backups to keep for each new job (empty: 14).",
         }
     }
@@ -451,10 +435,8 @@ fn parse_server(text: &str) -> Result<Server, String> {
         }
         [name, ssh, rest @ ..] if rest.len() <= 2 => ((*name).to_owned(), *ssh, rest),
         _ => {
-            return Err(
-                "Write it as: name | user@host | port | key (port and key are optional)."
-                    .to_owned(),
-            );
+            return Err("Write it as: name | user@host | port | key (port and key are optional)."
+                .to_owned());
         }
     };
 
@@ -666,9 +648,7 @@ impl SettingsView {
                     let mut job = job;
 
                     config.apply_defaults(&mut job);
-                    config
-                        .upsert(job, false)
-                        .map_err(|error| error.to_string())?;
+                    config.upsert(job, false).map_err(|error| error.to_string())?;
                     added += 1;
                 }
             }
@@ -689,9 +669,7 @@ impl SettingsView {
 
         self.change_backup_config(cx, move |config| {
             if config.remove(&name) {
-                Ok(format!(
-                    "Removed {name}. Its backup files were not touched."
-                ))
+                Ok(format!("Removed {name}. Its backup files were not touched."))
             } else {
                 Err(format!("There is no job named {name}."))
             }
@@ -776,8 +754,7 @@ impl SettingsView {
 
                     match setup {
                         Setup::Folder => {
-                            config.defaults.backup_dir =
-                                (!text.is_empty()).then(|| PathBuf::from(&text));
+                            config.defaults.backup_dir = (!text.is_empty()).then(|| PathBuf::from(&text));
                         }
                         Setup::Schedule => {
                             Field::Schedule.set(&mut probe, &text)?;
@@ -872,11 +849,7 @@ impl SettingsView {
         };
 
         if jobs.is_empty() {
-            return self.report_backup(
-                "Scan first: there is nothing to add yet.".to_owned(),
-                true,
-                cx,
-            );
+            return self.report_backup("Scan first: there is nothing to add yet.".to_owned(), true, cx);
         }
 
         self.add_backup_jobs(jobs, cx);
@@ -1090,13 +1063,9 @@ impl SettingsView {
         };
 
         self.run_backup_work("Updating cron\u{2026}".to_owned(), cx, move || {
-            let installed = cron::install(
-                &jobs,
-                &exe,
-                &aujar_backup::log_path(),
-                &saved_crontab_copy(),
-            )
-            .map_err(|error| error.to_string())?;
+            let installed =
+                cron::install(&jobs, &exe, &aujar_backup::log_path(), &saved_crontab_copy())
+                    .map_err(|error| error.to_string())?;
 
             Ok(if installed.scheduled_jobs == 0 {
                 "No job has a schedule, so cron has nothing of ours.".to_owned()
@@ -1275,28 +1244,26 @@ impl SettingsView {
             .unwrap_or_else(|| "not scheduled".to_owned());
         let schedule_edit = defaults.schedule.clone().unwrap_or_default();
 
-        rows.push(
-            self.row(
-                "Schedule for new jobs",
-                "Set once, e.g. `daily 02:00`, and every database you add is scheduled.",
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_3()
-                    .child(self.value_label(&schedule_text))
-                    .child(
-                        self.pill(SharedString::from("bk-def-schedule"), "Edit", false)
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.start_edit(
-                                    EditTarget::BackupDefault(Setup::Schedule),
-                                    schedule_edit.clone(),
-                                    cx,
-                                );
-                            })),
-                    ),
-            ),
-        );
+        rows.push(self.row(
+            "Schedule for new jobs",
+            "Set once, e.g. `daily 02:00`, and every database you add is scheduled.",
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .child(self.value_label(&schedule_text))
+                .child(
+                    self.pill(SharedString::from("bk-def-schedule"), "Edit", false)
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.start_edit(
+                                EditTarget::BackupDefault(Setup::Schedule),
+                                schedule_edit.clone(),
+                                cx,
+                            );
+                        })),
+                ),
+        ));
 
         if editing == Some(EditTarget::BackupDefault(Setup::Schedule)) {
             rows.extend(self.editor_row(Setup::Schedule.hint(), false, cx));
@@ -1306,33 +1273,28 @@ impl SettingsView {
             || format!("default ({})", aujar_backup::DEFAULT_KEEP_LAST),
             |n| n.to_string(),
         );
-        let keep_edit = defaults
-            .keep_last
-            .map(|n| n.to_string())
-            .unwrap_or_default();
+        let keep_edit = defaults.keep_last.map(|n| n.to_string()).unwrap_or_default();
 
-        rows.push(
-            self.row(
-                "Keep newest for new jobs",
-                "Older backups are removed after a new one succeeds.",
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_3()
-                    .child(self.value_label(&keep_text))
-                    .child(
-                        self.pill(SharedString::from("bk-def-keep"), "Edit", false)
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                this.start_edit(
-                                    EditTarget::BackupDefault(Setup::Keep),
-                                    keep_edit.clone(),
-                                    cx,
-                                );
-                            })),
-                    ),
-            ),
-        );
+        rows.push(self.row(
+            "Keep newest for new jobs",
+            "Older backups are removed after a new one succeeds.",
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .child(self.value_label(&keep_text))
+                .child(
+                    self.pill(SharedString::from("bk-def-keep"), "Edit", false)
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.start_edit(
+                                EditTarget::BackupDefault(Setup::Keep),
+                                keep_edit.clone(),
+                                cx,
+                            );
+                        })),
+                ),
+        ));
 
         if editing == Some(EditTarget::BackupDefault(Setup::Keep)) {
             rows.extend(self.editor_row(Setup::Keep.hint(), false, cx));
@@ -1576,41 +1538,33 @@ impl SettingsView {
                     let added = config.job(&job.name).is_some();
                     let job = job.clone();
 
-                    rows.push(
-                        self.row(
-                            &format!("    {name}"),
-                            "Its own backup file",
-                            self.pill(
-                                SharedString::from(format!("bk-db-{}", job.name)),
-                                if added { "Added \u{2713}" } else { "Add" },
-                                added,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _event, _window, cx| {
-                                    this.add_backup_jobs(vec![job.clone()], cx);
-                                },
-                            )),
-                        ),
-                    );
+                    rows.push(self.row(
+                        &format!("    {name}"),
+                        "Its own backup file",
+                        self.pill(
+                            SharedString::from(format!("bk-db-{}", job.name)),
+                            if added { "Added \u{2713}" } else { "Add" },
+                            added,
+                        )
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.add_backup_jobs(vec![job.clone()], cx);
+                        })),
+                    ));
                 }
 
                 if jobs.iter().any(|job| config.job(&job.name).is_none()) {
-                    rows.push(
-                        self.row(
-                            &format!("    Every database above ({})", jobs.len()),
-                            "One job and one file per database",
-                            self.pill(
-                                SharedString::from(format!("bk-dball-{id}")),
-                                "Add all",
-                                true,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _event, _window, cx| {
-                                    this.add_backup_jobs(jobs.clone(), cx);
-                                },
-                            )),
-                        ),
-                    );
+                    rows.push(self.row(
+                        &format!("    Every database above ({})", jobs.len()),
+                        "One job and one file per database",
+                        self.pill(
+                            SharedString::from(format!("bk-dball-{id}")),
+                            "Add all",
+                            true,
+                        )
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            this.add_backup_jobs(jobs.clone(), cx);
+                        })),
+                    ));
                 }
             }
         }
@@ -1636,11 +1590,7 @@ impl SettingsView {
                 .schedule
                 .as_ref()
                 .map_or_else(|| "not scheduled".to_owned(), |when| format!("cron {when}"));
-            let encrypted = if job.is_encrypted() {
-                " \u{b7} encrypted"
-            } else {
-                ""
-            };
+            let encrypted = if job.is_encrypted() { " \u{b7} encrypted" } else { "" };
 
             let hint = format!(
                 "{} \u{b7} {schedule} \u{b7} {}{encrypted} \u{b7} {}",
@@ -1649,27 +1599,18 @@ impl SettingsView {
                 latest_text(latest)
             );
 
-            let (run, check, open, remove) =
-                (name.clone(), name.clone(), name.clone(), name.clone());
+            let (run, check, open, remove) = (name.clone(), name.clone(), name.clone(), name.clone());
             let open_selected = self.backup.selected.as_deref() == Some(job.name.as_str());
 
             let controls = self.choices(vec![
-                self.pill(
-                    SharedString::from(format!("bk-run-{name}")),
-                    "Back up now",
-                    true,
-                )
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.run_backup_now(run.clone(), cx);
-                })),
-                self.pill(
-                    SharedString::from(format!("bk-check-{name}")),
-                    "Check",
-                    false,
-                )
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.verify_backup(check.clone(), cx);
-                })),
+                self.pill(SharedString::from(format!("bk-run-{name}")), "Back up now", true)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.run_backup_now(run.clone(), cx);
+                    })),
+                self.pill(SharedString::from(format!("bk-check-{name}")), "Check", false)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.verify_backup(check.clone(), cx);
+                    })),
                 self.pill(
                     SharedString::from(format!("bk-open-{name}")),
                     "Settings",
@@ -1677,22 +1618,17 @@ impl SettingsView {
                 )
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.editing = None;
-                    this.backup.selected = if this.backup.selected.as_deref() == Some(open.as_str())
-                    {
+                    this.backup.selected = if this.backup.selected.as_deref() == Some(open.as_str()) {
                         None
                     } else {
                         Some(open.clone())
                     };
                     cx.notify();
                 })),
-                self.pill(
-                    SharedString::from(format!("bk-del-{name}")),
-                    "Remove",
-                    false,
-                )
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.remove_backup_job(remove.clone(), cx);
-                })),
+                self.pill(SharedString::from(format!("bk-del-{name}")), "Remove", false)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.remove_backup_job(remove.clone(), cx);
+                    })),
             ]);
 
             rows.push(self.row(&job.name, &hint, controls));
@@ -1773,11 +1709,7 @@ impl SettingsView {
             .snapshot
             .as_ref()
             .map_or(CronState::Unknown, |snapshot| snapshot.cron.clone());
-        let scheduled = config
-            .jobs
-            .iter()
-            .filter(|job| job.schedule.is_some())
-            .count();
+        let scheduled = config.jobs.iter().filter(|job| job.schedule.is_some()).count();
 
         let (headline, hint) = match &state {
             CronState::Unknown => ("Checking cron\u{2026}".to_owned(), String::new()),
@@ -1791,10 +1723,7 @@ impl SettingsView {
             ),
             CronState::UpToDate => (
                 "Cron is up to date".to_owned(),
-                format!(
-                    "{scheduled} scheduled job(s). Output goes to {}",
-                    aujar_backup::log_path().display()
-                ),
+                format!("{scheduled} scheduled job(s). Output goes to {}", aujar_backup::log_path().display()),
             ),
             CronState::OutOfDate => (
                 "Cron is out of date".to_owned(),
@@ -1834,7 +1763,18 @@ impl SettingsView {
 
 /// Run one job and describe the result in a line.
 fn run_one(job: &Job) -> Result<String, String> {
-    let report = aujar_backup::run_job(job).map_err(|error| error.to_string())?;
+    let report = aujar_backup::run_job(job).map_err(|error| {
+        let text = error.to_string();
+
+        if text.contains("no password supplied") || text.contains("password authentication failed") {
+            format!(
+                "{text}\nThis database wants a password. Open this job's Settings and set \
+                 \"Password file\" (a file on this computer, chmod 600, with the password)."
+            )
+        } else {
+            text
+        }
+    })?;
 
     let mut line = format!(
         "{}: {} ({}{})",
@@ -1928,9 +1868,7 @@ mod tests {
         assert_eq!(job.keep_last, Some(30));
         Field::Database.set(&mut job, "").unwrap();
         assert_eq!(job.database, None);
-        Field::BinDir
-            .set(&mut job, "/usr/lib/postgresql/18/bin")
-            .unwrap();
+        Field::BinDir.set(&mut job, "/usr/lib/postgresql/18/bin").unwrap();
         assert!(job.bin_dir.is_some());
     }
 
@@ -1942,11 +1880,7 @@ mod tests {
         assert_eq!(job.schedule.as_deref(), Some("30 2 * * *"));
         Field::Schedule.set(&mut job, "@daily").unwrap();
         assert!(job.schedule.is_some());
-        assert!(
-            Field::Schedule
-                .set(&mut job, "0 2 * * * ; rm -rf /")
-                .is_err()
-        );
+        assert!(Field::Schedule.set(&mut job, "0 2 * * * ; rm -rf /").is_err());
         Field::Schedule.set(&mut job, "").unwrap();
         assert_eq!(job.schedule, None);
     }
@@ -1968,7 +1902,7 @@ mod tests {
         let fields = Field::for_job(&remote);
 
         assert!(fields.contains(&Field::RunAs));
-        assert!(!fields.contains(&Field::PasswordFile));
+        assert!(fields.contains(&Field::PasswordFile));
 
         let mut files = Job::new("f", Kind::Files);
         files.path = Some("/srv".into());

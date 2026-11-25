@@ -15,7 +15,7 @@
 
 use std::{
     collections::{BTreeSet, HashMap},
-    io::Read,
+    io::{Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
     thread,
@@ -368,10 +368,7 @@ fn published_port(ports: &str, inner: u16) -> Option<u16> {
         let Some((host, container)) = mapping.trim().split_once("->") else {
             continue;
         };
-        let Some(host_port) = host
-            .rsplit_once(':')
-            .and_then(|(_, p)| p.parse::<u16>().ok())
-        else {
+        let Some(host_port) = host.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok()) else {
             continue;
         };
         let container_port: Option<u16> = container.split('/').next().and_then(|p| p.parse().ok());
@@ -597,14 +594,23 @@ fn capture(plan: &Plan, secret: Option<(&'static str, String)>) -> Result<String
     let mut command = Command::new(program);
     command
         .args(&plan.args)
-        .stdin(Stdio::null())
+        .stdin(if plan.secret_stdin {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some((name, value)) = secret {
+    if let (Some((name, value)), false) = (&secret, plan.secret_stdin) {
         command.env(name, value);
     }
 
-    let mut child = command.spawn().map_err(|e| spawn_error(&plan.program, e))?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| spawn_error(&plan.program, e))?;
+    if let (Some(mut stdin), Some((_, value))) = (child.stdin.take(), &secret) {
+        let _ = writeln!(stdin, "{value}");
+    }
     let stdout = child.stdout.take().expect("stdout is piped");
     let stderr = child.stderr.take().expect("stderr is piped");
     let out = thread::spawn(move || read_all(stdout));
@@ -625,10 +631,7 @@ fn capture(plan: &Plan, secret: Option<(&'static str, String)>) -> Result<String
             }
             Ok(None) => thread::sleep(Duration::from_millis(100)),
             Err(e) => {
-                return Err(BackupError::io(
-                    format!("{} did not finish", plan.program),
-                    e,
-                ));
+                return Err(BackupError::io(format!("{} did not finish", plan.program), e));
             }
         }
     };
@@ -657,6 +660,7 @@ pub fn scan(target: &Target) -> Result<Discovery, BackupError> {
                 program: "ssh".to_owned(),
                 args,
                 secret_env: None,
+                secret_stdin: false,
                 extension: "txt",
                 gzip: false,
             }
@@ -665,6 +669,7 @@ pub fn scan(target: &Target) -> Result<Discovery, BackupError> {
             program: "sh".to_owned(),
             args: vec!["-c".to_owned(), SCRIPT.to_owned()],
             secret_env: None,
+            secret_stdin: false,
             extension: "txt",
             gzip: false,
         },
@@ -683,17 +688,19 @@ const MYSQL_SYSTEM: [&str; 4] = ["information_schema", "performance_schema", "my
 /// connection, user and tools as the backup itself, so a failure here is a failure there.
 pub fn list_databases(job: &Job) -> Result<Vec<String>, BackupError> {
     job.validate()?;
+    let secret_name = if job.kind == Kind::Mysql {
+        "MYSQL_PWD"
+    } else {
+        "PGPASSWORD"
+    };
+    let secret_file = job
+        .password_file
+        .clone()
+        .map(|file| (secret_name, file));
     let secret = job
         .password_file
         .as_ref()
-        .map(|file| {
-            let name = if job.kind == Kind::Mysql {
-                "MYSQL_PWD"
-            } else {
-                "PGPASSWORD"
-            };
-            read_secret(file).map(|value| (name, value))
-        })
+        .map(|file| read_secret(file).map(|value| (secret_name, value)))
         .transpose()?;
 
     match job.kind {
@@ -713,7 +720,7 @@ pub fn list_databases(job: &Job) -> Result<Vec<String>, BackupError> {
                     "-c".to_owned(),
                     PG_LIST_SQL.to_owned(),
                 ]);
-                let plan = wrap(job, "psql", args, None, "txt", false)?;
+                let plan = wrap(job, "psql", args, secret_file.clone(), "txt", false)?;
                 match capture(&plan, secret.clone()) {
                     Ok(text) => return Ok(lines(&text, &[])),
                     Err(error) => last = Some(error),
@@ -727,7 +734,7 @@ pub fn list_databases(job: &Job) -> Result<Vec<String>, BackupError> {
             push_opt(&mut args, "-P", job.port);
             push_opt(&mut args, "-u", job.user.as_ref());
             args.extend(["-e".to_owned(), "SHOW DATABASES".to_owned()]);
-            let plan = wrap(job, "mysql", args, None, "txt", false)?;
+            let plan = wrap(job, "mysql", args, secret_file, "txt", false)?;
             Ok(lines(&capture(&plan, secret)?, &MYSQL_SYSTEM))
         }
         Kind::Sqlite | Kind::Files => Ok(Vec::new()),
@@ -784,10 +791,7 @@ mod tests {
         assert_eq!(main.len(), 1);
         assert!(main[0].online);
         assert_eq!(main[0].name.as_deref(), Some("main"));
-        assert_eq!(
-            main[0].bin_dir.as_deref(),
-            Some("/usr/lib/postgresql/18/bin")
-        );
+        assert_eq!(main[0].bin_dir.as_deref(), Some("/usr/lib/postgresql/18/bin"));
 
         // Port 5433: the stopped 16/main and the running bizpro-construction are two clusters.
         let on_5433 = by_port(5433);
@@ -802,10 +806,7 @@ mod tests {
         // A cluster outside pg_lsclusters, run by a different PostgreSQL version.
         let wellness = by_port(5434);
         assert_eq!(wellness[0].version.as_deref(), Some("16"));
-        assert_eq!(
-            wellness[0].bin_dir.as_deref(),
-            Some("/usr/lib/postgresql/16/bin")
-        );
+        assert_eq!(wellness[0].bin_dir.as_deref(), Some("/usr/lib/postgresql/16/bin"));
 
         // sshd is not a database; PgBouncer is listed but cannot be backed up.
         assert!(by_port(22).is_empty());
@@ -908,10 +909,7 @@ mod tests {
             .find(|c| c.container.as_deref() == Some("cache"))
             .unwrap();
         assert_eq!(cache.port, None);
-        assert_eq!(
-            cache.job("srv", &Target::local(), None).user.as_deref(),
-            Some("postgres")
-        );
+        assert_eq!(cache.job("srv", &Target::local(), None).user.as_deref(), Some("postgres"));
     }
 
     #[test]
@@ -933,32 +931,17 @@ mod tests {
 
     #[test]
     fn versions_are_read_from_paths_and_images() {
-        assert_eq!(
-            version_from_path("/usr/lib/postgresql/18/bin/postgres").as_deref(),
-            Some("18")
-        );
-        assert_eq!(
-            version_from_path("/usr/pgsql-16/bin/postgres").as_deref(),
-            Some("16")
-        );
-        assert_eq!(
-            version_from_path("/var/lib/postgresql/17/main").as_deref(),
-            Some("17")
-        );
+        assert_eq!(version_from_path("/usr/lib/postgresql/18/bin/postgres").as_deref(), Some("18"));
+        assert_eq!(version_from_path("/usr/pgsql-16/bin/postgres").as_deref(), Some("16"));
+        assert_eq!(version_from_path("/var/lib/postgresql/17/main").as_deref(), Some("17"));
         assert_eq!(version_from_path("/opt/pg/bin/postgres"), None);
-        assert_eq!(
-            version_from_image("postgres:16-alpine").as_deref(),
-            Some("16")
-        );
+        assert_eq!(version_from_image("postgres:16-alpine").as_deref(), Some("16"));
         assert_eq!(version_from_image("postgres"), None);
     }
 
     #[test]
     fn published_port_prefers_the_databases_own_port() {
-        assert_eq!(
-            published_port("0.0.0.0:8080->80/tcp, 0.0.0.0:5438->5432/tcp", 5432),
-            Some(5438)
-        );
+        assert_eq!(published_port("0.0.0.0:8080->80/tcp, 0.0.0.0:5438->5432/tcp", 5432), Some(5438));
         assert_eq!(published_port("0.0.0.0:8080->80/tcp", 5432), Some(8080));
         assert_eq!(published_port("5432/tcp", 5432), None);
         assert_eq!(published_port("", 5432), None);

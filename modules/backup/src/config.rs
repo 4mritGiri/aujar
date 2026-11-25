@@ -273,12 +273,6 @@ impl Job {
             }
         }
 
-        if self.ssh.is_some() && self.password_file.is_some() {
-            return bad(
-                "`password_file` cannot be sent over SSH; put the password in `~/.pgpass` \
-                 (or `~/.my.cnf`) on the server",
-            );
-        }
         if self.ssh.is_none() && (self.ssh_port.is_some() || self.ssh_key.is_some()) {
             return bad("`ssh_port` and `ssh_key` need `ssh`");
         }
@@ -504,7 +498,10 @@ impl Config {
         let defaults = &self.defaults;
 
         if job.dest.is_none() {
-            job.dest = defaults.backup_dir.as_ref().map(|dir| dir.join(&job.name));
+            job.dest = defaults
+                .backup_dir
+                .as_ref()
+                .map(|dir| dir.join(&job.name));
         }
         if job.schedule.is_none() {
             job.schedule.clone_from(&defaults.schedule);
@@ -646,11 +643,11 @@ mod tests {
     }
 
     #[test]
-    fn ssh_jobs_cannot_use_a_local_password_file() {
+    fn ssh_jobs_can_send_a_local_password_file() {
         let mut job = pg("x");
         job.ssh = Some("deploy@server".into());
         job.password_file = Some("/tmp/pw".into());
-        assert!(job.validate().is_err());
+        job.validate().unwrap();
     }
 
     #[test]
