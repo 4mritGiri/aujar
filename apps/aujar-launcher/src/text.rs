@@ -163,6 +163,7 @@ async fn extract(args: ExtractArgs, socket: PathBuf) -> Result<()> {
                 },
                 single_line: args.single_line || settings.single_line,
                 backend: aujar_text_extractor::Backend::Auto,
+                engine: settings.engine.parse().unwrap_or_default(),
             };
             let path = path.clone();
             let extracted = tokio::task::spawn_blocking(move || {

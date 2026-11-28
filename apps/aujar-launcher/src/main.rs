@@ -850,10 +850,16 @@ fn snip_report() -> String {
 
 /// One line on Text Extractor's Tesseract: version and languages, or how to install it.
 async fn ocr_report() -> String {
-    match tokio::task::spawn_blocking(aujar_text_extractor::ocr::status).await {
+    let tesseract = match tokio::task::spawn_blocking(aujar_text_extractor::ocr::status).await {
         Ok(Ok(status)) => format!("{} ({})", status.version, status.languages.join(", ")),
         Ok(Err(error)) => format!("{error:#}"),
         Err(error) => format!("could not check Tesseract: {error}"),
+    };
+
+    // Windows and macOS read most languages without Tesseract.
+    match aujar_text_extractor::native::native_name() {
+        Some(native) => format!("{native} built in; Tesseract: {tesseract}"),
+        None => tesseract,
     }
 }
 

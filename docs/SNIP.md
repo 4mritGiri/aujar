@@ -60,8 +60,8 @@ the backends:
 **Windows and macOS status:** the capture backends, the Windows daemon (named pipe, event
 stream, `CaptureScreen`) and the CLI build and pass their unit tests for those targets, but have
 not been run on real machines yet; the UI is built by CI there for the first time. Text
-recognition uses Tesseract on every platform for now (install it with `winget`/`choco` or
-`brew`); Windows OCR and Apple Vision are next. On Windows bind a shortcut to `aujar snip`
+recognition uses Windows OCR and Apple Vision there (Tesseract for other languages; see
+[TEXT_EXTRACTOR](TEXT_EXTRACTOR.md)). On Windows bind a shortcut to `aujar snip`
 yourself for now (global hotkeys are not built in there).
 
 The picture goes to an owner-only file in `$XDG_RUNTIME_DIR`, which the UI reads and deletes at

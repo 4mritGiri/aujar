@@ -16,5 +16,31 @@ regex.workspace = true
 tokio = { workspace = true }
 tracing.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# The OCR built into Windows 10/11 (Windows.Media.Ocr).
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Security_Cryptography",
+    "Storage_Streams",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Apple's Vision framework (VNRecognizeTextRequest).
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSEnumerator", "NSError", "NSRange", "NSString", "NSValue"] }
+objc2-vision = { version = "0.3", default-features = false, features = [
+    "std",
+    "objc2-core-foundation",
+    "VNObservation",
+    "VNRecognizeTextRequest",
+    "VNRequest",
+    "VNRequestHandler",
+    "VNTypes",
+] }
+
 [dev-dependencies]
 tempfile = "3"

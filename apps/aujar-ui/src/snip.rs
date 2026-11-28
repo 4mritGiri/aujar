@@ -947,6 +947,7 @@ impl SnipView {
 
         let settings = aujar_config::Settings::load_or_default().text_extractor;
         let options = aujar_text_extractor::Options {
+            engine: settings.engine.parse().unwrap_or_default(),
             languages: settings.languages,
             single_line: settings.single_line,
             backend: aujar_text_extractor::Backend::Auto,
@@ -1006,15 +1007,17 @@ impl SnipView {
         self.message = None;
         cx.notify();
 
-        let languages = aujar_config::Settings::load_or_default()
-            .text_extractor
-            .languages;
+        let settings = aujar_config::Settings::load_or_default().text_extractor;
+        let (languages, engine) = (
+            settings.languages,
+            settings.engine.parse().unwrap_or_default(),
+        );
 
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    aujar_text_extractor::redact_image(&picture, &languages)
+                    aujar_text_extractor::redact_image(&picture, &languages, engine)
                         .map_err(|error| format!("{error:#}"))
                 })
                 .await;

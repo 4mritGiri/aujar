@@ -658,6 +658,7 @@ async fn extract_text(request: aujar_ipc::ExtractTextRequest) -> Response {
         },
         single_line: request.single_line || settings.single_line,
         backend,
+        engine: settings.engine.parse().unwrap_or_default(),
     };
 
     match aujar_text_extractor::extract_from_screen(options).await {

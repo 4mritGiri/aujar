@@ -17,8 +17,23 @@ aujar text shortcut-install      # GNOME: Super+Shift+T runs `aujar text` (or --
 Started from a keyboard shortcut there is no terminal, so the result (or the reason it failed)
 comes as a desktop notification (`notify-send`).
 
-## Install
+## Engines
 
+| Platform | Default engine | Notes |
+|---|---|---|
+| Windows 10/11 | Windows OCR (`Windows.Media.Ocr`) | Built in; reads the languages whose OCR pack is installed (Settings > Time & language > Language). One language at a time |
+| macOS | Apple Vision | Built in; accurate mode with language correction |
+| Linux | Tesseract | Install below |
+
+`[text_extractor] engine = "auto"` (default) uses the built-in engine when it reads every
+requested language and falls back to Tesseract otherwise (Nepali, for one, is Tesseract's).
+`"native"` never falls back; `"tesseract"` always uses Tesseract. Language codes are Tesseract's
+(`eng`, `deu`, `chi_sim`); Aujar maps them to the built-in engines' tags. Every engine gives each
+word's box, so Auto-Redact works the same everywhere.
+
+## Install Tesseract
+
+Needed on Linux, and on Windows/macOS for languages the built-in engine does not read.
 Tesseract and at least one language:
 
 | Distribution | Command |
@@ -26,6 +41,8 @@ Tesseract and at least one language:
 | Debian / Ubuntu | `sudo apt install tesseract-ocr` (English included), more: `tesseract-ocr-nep`, `tesseract-ocr-deu`, ... |
 | Fedora | `sudo dnf install tesseract` (more: `tesseract-langpack-nep`, ...) |
 | Arch | `sudo pacman -S tesseract tesseract-data-eng` (more: `tesseract-data-nep`, ...) |
+| Windows | `winget install UB-Mannheim.TesseractOCR` (add it to `PATH`, or set `AUJAR_TESSERACT_BIN`) |
+| macOS | `brew install tesseract tesseract-lang` |
 
 `aujar doctor` shows whether Tesseract runs and which languages it has.
 

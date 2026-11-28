@@ -547,6 +547,9 @@ pub struct TextExtractor {
     pub single_line: bool,
     /// How the area is selected: `auto`, `portal`, `grim` (with slurp), `maim` or `scrot`.
     pub backend: String,
+    /// Which engine reads the text: `auto` (Windows OCR / Apple Vision when they read the
+    /// language, else Tesseract), `native` or `tesseract`.
+    pub engine: String,
     /// Keys for `aujar text shortcut-install`.
     pub shortcut: String,
 }
@@ -557,6 +560,7 @@ impl Default for TextExtractor {
             languages: vec!["eng".to_owned()],
             single_line: false,
             backend: "auto".to_owned(),
+            engine: "auto".to_owned(),
             shortcut: "SUPER+SHIFT+T".to_owned(),
         }
     }

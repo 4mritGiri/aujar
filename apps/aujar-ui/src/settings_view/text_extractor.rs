@@ -238,6 +238,34 @@ impl SettingsView {
             }))
         });
 
+        // Windows and macOS read text with the system's own OCR; Linux has only Tesseract.
+        if let Some(native) = aujar_text_extractor::native::native_name() {
+            let current: aujar_text_extractor::Engine = settings.engine.parse().unwrap_or_default();
+            let pills = aujar_text_extractor::Engine::ALL.into_iter().map(|engine| {
+                self.pill(
+                    SharedString::from(format!("ocr-engine-{}", engine.as_str())),
+                    engine.as_str(),
+                    engine == current,
+                )
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.mutate(cx, |settings| {
+                        settings.text_extractor.engine = engine.as_str().to_owned()
+                    });
+                }))
+            });
+
+            engine.insert(
+                0,
+                self.row(
+                    "Engine",
+                    &format!(
+                        "auto: {native} when it reads the language, else Tesseract (needed for Nepali and other languages {native} lacks)"
+                    ),
+                    div().flex().flex_row().flex_wrap().gap_2().children(pills),
+                ),
+            );
+        }
+
         let selection = vec![
             self.row(
                 "Area selection",
@@ -339,7 +367,14 @@ impl SettingsView {
         ]);
 
         vec![
-            self.section("Tesseract", engine),
+            self.section(
+                if aujar_text_extractor::native::native_name().is_some() {
+                    "Text recognition"
+                } else {
+                    "Tesseract"
+                },
+                engine,
+            ),
             self.section("Recognition", language_rows),
             self.section("Selecting an area", selection),
             self.section("Shortcut", shortcut),

@@ -39,7 +39,8 @@ See [SNIP](SNIP.md) and [TEXT_EXTRACTOR](TEXT_EXTRACTOR.md).
   - [x] Windows daemon: event stream, launcher broadcast, `CaptureScreen`, single instance
   - [x] CI: screen stack tested and daemon/CLI checked on macOS and Windows; UI built there
   - [ ] Run on real Windows and macOS machines; make the UI build green there
-  - [ ] Native OCR: Windows.Media.Ocr, Apple Vision (Tesseract stays the fallback)
+  - [x] Native OCR: Windows.Media.Ocr, Apple Vision, with word boxes (Tesseract stays the
+        fallback and the Linux engine)
   - [ ] Global hotkeys on Windows and macOS; ScreenCaptureKit on macOS
 - **P1 Overlay to blueprint:** command pill, cursor telemetry, delay timer, QR/barcode, CMYK
   eyedropper, more PII (phone, SSN, IP), pixelate vs solid, Pin, watermark and audit metadata,
