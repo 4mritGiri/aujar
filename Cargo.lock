@@ -659,6 +659,7 @@ dependencies = [
  "aujar-nexdesk",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

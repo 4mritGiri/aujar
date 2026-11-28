@@ -200,6 +200,8 @@ pub struct Plugins {
     pub system: bool,
     /// `> command` runs a shell command. Off by default: it runs arbitrary commands.
     pub shell: bool,
+    /// `htop` runs a program found on `PATH` in a terminal, without arguments.
+    pub commands: bool,
     /// `define word`. Only the word you typed is sent, to dictionaryapi.dev.
     pub dictionary: bool,
     /// `weather city`. Only the place you typed is sent, to Open-Meteo.
@@ -231,6 +233,7 @@ impl Default for Plugins {
             files: true,
             system: true,
             shell: false,
+            commands: true,
             dictionary: true,
             weather: true,
             stocks: true,

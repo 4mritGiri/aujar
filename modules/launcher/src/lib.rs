@@ -1,5 +1,6 @@
 mod apps;
 mod calculator;
+mod commands;
 mod currency;
 mod dictionary;
 mod files;
@@ -21,6 +22,7 @@ mod windows;
 
 pub use apps::{AppsProvider, DesktopEntry, default_dirs, parse_desktop_entry, parse_exec};
 pub use calculator::{CalculatorProvider, evaluate};
+pub use commands::CommandsProvider;
 pub use currency::CurrencyProvider;
 pub use dictionary::DictionaryProvider;
 pub use files::FilesProvider;
@@ -50,6 +52,8 @@ pub struct LauncherOptions {
     pub system: bool,
     /// Runs arbitrary commands, so it is opt-in.
     pub shell: bool,
+    /// `htop`: run a program on `PATH` in a terminal (no arguments; only indexed programs).
+    pub commands: bool,
     /// `define word`. Sends the word to dictionaryapi.dev, only when you ask.
     pub dictionary: bool,
     /// `weather city`. Sends the place to Open-Meteo, only when you ask.
@@ -85,6 +89,7 @@ impl Default for LauncherOptions {
             files: true,
             system: true,
             shell: false,
+            commands: true,
             dictionary: true,
             weather: true,
             imperial: false,
@@ -149,8 +154,17 @@ impl Launcher {
             launcher.register(Box::new(CurrencyProvider::new()));
         }
 
+        let mut app_programs = std::collections::HashSet::new();
+
         if options.applications {
-            launcher.register(Box::new(AppsProvider::from_env()));
+            let apps = AppsProvider::from_env();
+            app_programs = apps.program_names();
+            launcher.register(Box::new(apps));
+        }
+
+        if options.commands {
+            // Programs with a desktop entry are found (with their icon) by the apps provider.
+            launcher.register(Box::new(CommandsProvider::new(app_programs)));
         }
 
         if options.files {

@@ -355,7 +355,7 @@ fn on_path(program: &str) -> bool {
 }
 
 /// Wrap `program args` so it runs inside a terminal emulator.
-fn in_terminal(program: String, args: Vec<String>) -> Option<(String, Vec<String>)> {
+pub(crate) fn in_terminal(program: String, args: Vec<String>) -> Option<(String, Vec<String>)> {
     let preferred = std::env::var("TERMINAL").ok().filter(|name| {
         // Only a bare program name: this value ends up as the command that is executed.
         !name.is_empty()
@@ -424,6 +424,22 @@ impl AppsProvider {
 
     pub fn len(&self) -> usize {
         self.read().entries.len()
+    }
+
+    /// The program names (`firefox`, `code`) that the indexed desktop entries start, so other
+    /// providers can leave them to this one.
+    pub fn program_names(&self) -> std::collections::HashSet<String> {
+        self.read()
+            .entries
+            .iter()
+            .filter_map(|entry| parse_exec(&entry.exec).into_iter().next())
+            .filter_map(|program| {
+                Path::new(&program)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+            })
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {
