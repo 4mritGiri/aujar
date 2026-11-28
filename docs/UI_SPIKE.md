@@ -49,8 +49,9 @@ cargo run -p aujar-launcher-app -- launcher toggle            # window closes
 
 - Closing the window removes it; reopening creates a new one (no true hide yet).
 - GNOME on Wayland has no layer-shell, so the launcher is a normal, decorated window there.
-- Keyboard input uses plain key events (`key_char`): no IME/composition, no cursor movement or
-  selection inside the query. IME needs an `EntityInputHandler` implementation (a later step).
+- The search field implements `EntityInputHandler` (`apps/aujar-ui/src/ime.rs`), so input methods,
+  dead keys and compose sequences work; text being composed is underlined and not searched until
+  committed. Verified by unit tests only: try an input method (IBus/Fcitx) on each desktop.
 - If `launcher toggle` reports 0 subscribers right after starting the UI, the UI had not yet finished
   subscribing (or the daemon had just restarted and the UI was in its 1 s reconnect delay).
 - The window looked very slightly translucent in a screenshot (a terminal border line showed through).

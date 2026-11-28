@@ -24,7 +24,7 @@ the current target's machine-readable feature support report.
 |---|---|---|---|
 | Module runtime (lifecycle, registry, API versioning) | `aujar-runtime` | ✅ | Only `core` module registered so far |
 | Capability model | `aujar-runtime` / `aujar-ipc` | 🚧 | Each request maps to a capability; admin policy can deny capabilities ([POLICY](POLICY.md)). Per-client grants 📅 |
-| Versioned Unix-socket IPC | `aujar-ipc` | ✅ | JSON line protocol v1 (additive variants: `Modules`, `Search`); 64 KB request cap |
+| Versioned Unix-socket IPC | `aujar-ipc` | ✅ | JSON line protocol v1 with a supported version range and a `Version` request ([IPC](IPC.md#versioning)); 64 KB request cap |
 | Daemon (graceful shutdown, 0600 socket) | `aujar-daemon` | ✅ | SIGTERM + Ctrl-C |
 | IPC peer authentication (peer-uid check) | `aujar-daemon` | ✅ | Per-client capability grants 📅 |
 | Typed configuration (TOML) | `aujar-config` | 🚧 | Load only; no hot-reload/validation |
@@ -40,7 +40,7 @@ the current target's machine-readable feature support report.
 
 | Module | PowerToys analogue | Crate | Status | X11 | Wayland: Sway / Hyprland | Wayland: KDE | Wayland: GNOME | Backend |
 |---|---|---|---|---|---|---|---|---|
-| Launcher engine | PowerToys Run | `modules/launcher` | 🚧 engine done: apps + calculator providers, ranking, IPC `Search` and `Execute` (apps only); no UI yet | ✅ | ✅ | ✅ | ✅ | Session-independent; files, commands, terminal apps ✅ |
+| Launcher engine | PowerToys Run | `modules/launcher` | ✅ apps, files, `PATH` commands, `>` shell (opt-in), system, calculator, units and online lookups; ranking; IPC `Search` and `Execute` (indexed results only); GPUI UI | ✅ | ✅ | ✅ | ✅ | Session-independent; files, commands, terminal apps ✅ |
 | Batch Rename | PowerRename | `modules/rename` | ✅ engine + CLI | ✅ | ✅ | ✅ | ✅ | Pure filesystem; GUI/file-manager integration 📅 |
 | Window switching (launcher `< name`) | — | `modules/launcher` | 🚧 list + focus via per-session backends; untested on real desktops ([LOOKUPS_AND_WINDOWS](LOOKUPS_AND_WINDOWS.md)) | ✅ (`wmctrl`) | ✅ (`swaymsg` / `hyprctl`) | 📅 | ✅ (Aujar Shell extension) | |
 | Dictionary, weather, stocks, sports (launcher) | Spotlight | `modules/launcher` | ✅ on-demand lookups, tested against sample data; live services need internet | ✅ | ✅ | ✅ | ✅ | `curl` + public APIs ([LOOKUPS_AND_WINDOWS](LOOKUPS_AND_WINDOWS.md)) |
@@ -68,7 +68,7 @@ the current target's machine-readable feature support report.
 |---|---|---|
 | CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `launcher`, `events`, `color`, `doctor`, `shortcut`, `rename`, `daemon` |
 | Settings app | 📅 | v0.4+; GPUI (proposed, [ADR 0002](adr/0002-ui-framework-gpui.md)) |
-| Launcher UI | 🚧 spike in `apps/aujar-ui` (`gpui-pre` snapshot of Zed `main`): window + daemon events + typing, selection, launch (no IME yet) | See [UI_SPIKE](UI_SPIKE.md), [UI_UX](UI_UX.md) |
+| Launcher UI | 🚧 spike in `apps/aujar-ui` (`gpui-pre` snapshot of Zed `main`): window + daemon events, search field with selection, undo and IME (composed text), launch; cross-desktop checklist still open | See [UI_SPIKE](UI_SPIKE.md), [UI_UX](UI_UX.md) |
 | Tray / status indicator | 📅 | StatusNotifierItem |
 | IPC event stream (daemon → UI) | ✅ | `Subscribe`, `Launcher` show/hide/toggle, `Shutdown`; see [IPC](IPC.md) |
 | GPU renderer selection / software fallback | 📅 | Part of the UI spike |

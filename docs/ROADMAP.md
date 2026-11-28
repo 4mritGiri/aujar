@@ -10,22 +10,22 @@
 - [x] X11/Wayland session detection
 - [x] Module boundaries
 - [x] Automated CI on Linux (configured; verify first run)
-- [ ] Protocol versioning
+- [x] Protocol versioning (supported range, answers in the client's version, readable mismatch errors, `Version` request; see [IPC](IPC.md#versioning))
 - [x] Persistent daemon state (`state.toml`, crash-safe; used by Awake so far, see `aujar_config::State`)
 - [x] Mouse without borders (Mouse without borders is a quick and easy way to move your cursor across multiple devices): `modules/mouse-borders`, see [MOUSE_BORDERS](MOUSE_BORDERS.md). Still open: Wayland edge switching (InputCapture portal), drag-and-drop in the layout editor and for file transfer
 
 ## v0.2 — Launcher
-- GPUI spike across X11/KDE/GNOME/Sway/Hyprland (ADR 0002)
+- [ ] GPUI spike across X11/KDE/GNOME/Sway/Hyprland (ADR 0002): needs a run on each desktop, checklist in [UI_SPIKE](UI_SPIKE.md)
 - [x] IPC event stream (subscribe, launcher commands, shutdown)
 - [x] IPC execute request (indexed apps only, policy-gated)
 - [x] IPC search request
 - [x] Application discovery (`.desktop`, XDG + Flatpak dirs)
-- [ ] File provider
+- [x] File provider (name index, `kind:` / `ext:` filters, recent files)
 - [x] Calculator provider
-- [ ] Command provider
+- [x] Command provider (programs on `PATH` run in a terminal; `>` shell commands, opt-in; system actions)
 - [x] Keyboard shortcut integration (native via `GlobalShortcuts` portal; manual fallback `aujar launcher toggle`)
 - [x] Search ranking (tiered match scoring)
-- [ ] Native desktop UI
+- [x] Native desktop UI (`aujar-ui`, GPUI: search field with selection, undo and IME, results, previews, settings window)
 
 ## v0.3 — Window & Workspace
 - X11 window backend
