@@ -498,10 +498,7 @@ impl Config {
         let defaults = &self.defaults;
 
         if job.dest.is_none() {
-            job.dest = defaults
-                .backup_dir
-                .as_ref()
-                .map(|dir| dir.join(&job.name));
+            job.dest = defaults.backup_dir.as_ref().map(|dir| dir.join(&job.name));
         }
         if job.schedule.is_none() {
             job.schedule.clone_from(&defaults.schedule);

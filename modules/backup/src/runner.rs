@@ -57,8 +57,7 @@ pub(crate) fn push_opt(args: &mut Vec<String>, flag: &str, value: Option<impl To
 pub fn plan(job: &Job) -> Result<Plan, BackupError> {
     job.validate()?;
 
-    let (tool, args, extension, gzip): (&str, Vec<String>, &'static str, bool) = match job.kind
-    {
+    let (tool, args, extension, gzip): (&str, Vec<String>, &'static str, bool) = match job.kind {
         Kind::Postgres => {
             let mut args = vec!["--no-password".to_owned()];
             push_opt(&mut args, "-h", job.host.as_ref());
@@ -133,7 +132,8 @@ pub fn plan(job: &Job) -> Result<Plan, BackupError> {
 const AS_USER: &str = r#"if [ "$(id -u)" = 0 ] && command -v runuser >/dev/null 2>&1; then exec runuser -u "$0" -- "$@"; else exec sudo -n -u "$0" -- "$@"; fi"#;
 
 /// Inside a MySQL/MariaDB container the root password is in the container's own environment.
-const IN_CONTAINER_MYSQL: &str = r#"MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}" exec "$0" "$@""#;
+const IN_CONTAINER_MYSQL: &str =
+    r#"MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}" exec "$0" "$@""#;
 
 /// The options every SSH run uses: key login only, no prompts, no forwarding, keep-alives.
 pub(crate) fn ssh_base_args(port: Option<u16>, key: Option<&Path>) -> Vec<String> {
@@ -181,7 +181,11 @@ pub(crate) fn wrap(
         argv.extend(["docker", "exec", "-i"].map(str::to_owned));
         argv.push(container.clone());
         if job.kind == Kind::Mysql {
-            argv.extend(["sh".to_owned(), "-c".to_owned(), IN_CONTAINER_MYSQL.to_owned()]);
+            argv.extend([
+                "sh".to_owned(),
+                "-c".to_owned(),
+                IN_CONTAINER_MYSQL.to_owned(),
+            ]);
         }
         argv.push(tool.to_owned());
     } else if let Some(dir) = &job.bin_dir {
@@ -209,7 +213,12 @@ pub(crate) fn wrap(
     }
 
     if let Some(user) = &job.run_as {
-        let mut wrapped = vec!["sh".to_owned(), "-c".to_owned(), AS_USER.to_owned(), user.clone()];
+        let mut wrapped = vec![
+            "sh".to_owned(),
+            "-c".to_owned(),
+            AS_USER.to_owned(),
+            user.clone(),
+        ];
         wrapped.append(&mut argv);
         argv = wrapped;
     }
