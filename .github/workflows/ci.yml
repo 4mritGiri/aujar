@@ -67,7 +67,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p aujar-config -p aujar-mouse-borders -p aujar-mwb-cli -p aujar-mwb
       # Screen capture, OCR/redaction and the IPC protocol; the daemon and CLI must build.
-      - run: cargo test -p aujar-screen -p aujar-text-extractor -p aujar-ipc
+      - run: cargo test -p aujar-screen -p aujar-text-extractor -p aujar-ipc -p aujar-hotkeys
       - run: cargo check -p aujar-daemon -p aujar-launcher-app --all-targets
       - run: cargo build --release -p aujar-mwb
       - uses: actions/upload-artifact@v4

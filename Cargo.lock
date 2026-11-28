@@ -626,9 +626,12 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "ashpd",
+ "core-foundation 0.10.1",
+ "core-graphics 0.25.0",
  "futures-util",
  "tokio",
  "tracing",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -4,6 +4,7 @@
 //! On Windows, uses named pipes.
 
 mod screen;
+mod shortcuts;
 
 #[cfg(windows)]
 mod windows;

@@ -1,10 +1,9 @@
 use anyhow::{Context, Result};
 use aujar_core::{Capability, Health, Platform, WindowId};
-use aujar_hotkeys::{HotkeyEvent, ShortcutSpec};
+use aujar_hotkeys::HotkeyEvent;
 use aujar_ipc::{
-    ColorResponse, Event, ExecuteResponse, Incoming, LauncherCommand, ModuleInfo, ModulesResponse,
-    RenameResponse, Request, Response, SearchHit, SearchResponse, StatusResponse, VersionResponse,
-    encode_line_as,
+    ColorResponse, Event, ExecuteResponse, Incoming, ModuleInfo, ModulesResponse, RenameResponse,
+    Request, Response, SearchHit, SearchResponse, StatusResponse, VersionResponse, encode_line_as,
 };
 use aujar_launcher::{LaunchSpec, Launcher};
 use aujar_platform::detect_session;
@@ -203,9 +202,8 @@ fn load_denied_capabilities() -> Result<HashSet<Capability>> {
         .collect()
 }
 
-const TOGGLE_LAUNCHER_SHORTCUT: &str = "toggle-launcher";
-
-/// Ask the desktop portal for global shortcuts and turn presses into launcher events.
+/// Bind the global shortcuts (launcher, Aujar Snip, Text Extractor) and turn presses into
+/// launcher events.
 fn start_hotkeys(shared: Arc<Shared>) {
     if shared.denied.contains(&Capability::GlobalHotkeys) {
         tracing::info!("global hotkeys are disabled by policy");
@@ -214,32 +212,33 @@ fn start_hotkeys(shared: Arc<Shared>) {
         return;
     }
 
-    let mut events = aujar_hotkeys::start(vec![ShortcutSpec {
-        id: TOGGLE_LAUNCHER_SHORTCUT,
-        description: "Show or hide the Aujar launcher",
-        preferred_trigger: "CTRL+ALT+space",
-    }]);
+    let settings = aujar_config::Settings::load_or_default();
+    let mut events = aujar_hotkeys::start(crate::shortcuts::specs(&settings));
 
     tokio::spawn(async move {
+        let mut status = crate::shortcuts::Status::default();
+
         while let Some(event) = events.recv().await {
+            if status.record(&event) {
+                set_hotkey_status(&shared, status.text());
+            }
+
             match event {
                 HotkeyEvent::Bound { id, trigger } => {
                     tracing::info!(%id, %trigger, "global shortcut bound");
-                    set_hotkey_status(&shared, format!("bound: {id} = {trigger}"));
                 }
-                HotkeyEvent::Activated(id) if id == TOGGLE_LAUNCHER_SHORTCUT => {
-                    let subscribers = shared
-                        .events
-                        .send(Event::Launcher(LauncherCommand::Toggle))
-                        .unwrap_or(0);
+                HotkeyEvent::Activated(id) => match crate::shortcuts::command(&id) {
+                    Some(command) => {
+                        let subscribers = shared.events.send(Event::Launcher(command)).unwrap_or(0);
 
-                    tracing::info!(subscribers, "global shortcut pressed");
-                }
-                HotkeyEvent::Activated(id) => {
-                    tracing::debug!(%id, "unknown global shortcut activated");
+                        tracing::info!(%id, subscribers, "global shortcut pressed");
+                    }
+                    None => tracing::debug!(%id, "unknown global shortcut activated"),
+                },
+                HotkeyEvent::Failed { id, reason } => {
+                    tracing::warn!(%id, %reason, "global shortcut not bound");
                 }
                 HotkeyEvent::Unavailable(reason) => {
-                    set_hotkey_status(&shared, format!("unavailable: {reason}"));
                     tracing::warn!(
                         %reason,
                         "global shortcuts unavailable; bind `aujar launcher toggle` in your desktop settings instead"

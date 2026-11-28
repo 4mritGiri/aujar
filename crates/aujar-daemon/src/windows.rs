@@ -54,6 +54,8 @@ pub const EXIT_ALREADY_RUNNING: i32 = 75;
 struct Shared {
     events: broadcast::Sender<Event>,
     subscribers: AtomicUsize,
+    /// What `aujar doctor` shows about the global shortcuts.
+    hotkeys: std::sync::Mutex<String>,
 }
 
 fn create(pipe: &Path, first: bool) -> std::io::Result<NamedPipeServer> {
@@ -84,7 +86,10 @@ pub async fn run(pipe: impl AsRef<Path>) -> Result<()> {
     let shared = Arc::new(Shared {
         events,
         subscribers: AtomicUsize::new(0),
+        hotkeys: std::sync::Mutex::new("starting".to_owned()),
     });
+
+    start_hotkeys(shared.clone());
 
     tracing::info!(pipe = %pipe.display(), "Aujar daemon listening");
 
@@ -207,6 +212,31 @@ where
     result
 }
 
+/// Register the global shortcuts (launcher, Aujar Snip, Text Extractor); presses become launcher
+/// events for the UI.
+fn start_hotkeys(shared: Arc<Shared>) {
+    let settings = aujar_config::Settings::load_or_default();
+    let mut events = aujar_hotkeys::start(crate::shortcuts::specs(&settings));
+
+    tokio::spawn(async move {
+        let mut status = crate::shortcuts::Status::default();
+
+        while let Some(event) = events.recv().await {
+            if status.record(&event)
+                && let Ok(mut text) = shared.hotkeys.lock()
+            {
+                *text = status.text();
+            }
+
+            if let aujar_hotkeys::HotkeyEvent::Activated(id) = &event
+                && let Some(command) = crate::shortcuts::command(id)
+            {
+                let _ = shared.events.send(Event::Launcher(command));
+            }
+        }
+    });
+}
+
 async fn dispatch(request: Request, shared: &Shared) -> Response {
     match request {
         Request::Ping => Response::Pong,
@@ -219,9 +249,11 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
         }),
         Request::Status => Response::Status(StatusResponse {
             subscribers: shared.subscribers.load(Ordering::SeqCst),
-            hotkeys:
-                "Windows: bind a shortcut to `aujar snip` (global hotkeys are not built in yet)"
-                    .into(),
+            hotkeys: shared
+                .hotkeys
+                .lock()
+                .map(|status| status.clone())
+                .unwrap_or_default(),
         }),
         Request::Launcher(command) => Response::Delivered {
             subscribers: shared.events.send(Event::Launcher(command)).unwrap_or(0),

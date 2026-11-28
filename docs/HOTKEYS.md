@@ -1,5 +1,30 @@
 # Keyboard Shortcuts
 
+The daemon binds three global shortcuts:
+
+| Shortcut | Linux | Windows | macOS | Setting |
+|---|---|---|---|---|
+| Launcher | Ctrl+Alt+Space | Ctrl+Alt+Space | Ctrl+Option+Space | — |
+| Aujar Snip | Super+Shift+S | Win+Shift+X | Ctrl+Shift+S | `[snip] shortcut` |
+| Text Extractor | Super+Shift+T | Win+Shift+T | Ctrl+Shift+T | `[text_extractor] shortcut` |
+
+Windows keeps Win+Shift+S for its own Snipping Tool, and macOS uses Cmd+Shift+S for Save As, hence
+the different defaults there. Write keys as `CTRL`, `ALT` (Option), `SHIFT`, `SUPER` (Win, Cmd)
+plus a letter, digit, `space`, `F1`–`F12` or `.` `,` `/` `-` `=`; at least Ctrl, Alt or Super (or
+an F key), so a shortcut never fires while you type. Restart the daemon after changing one.
+`aujar doctor` shows which shortcuts are bound and which failed.
+
+## Windows and macOS
+
+- **Windows:** registered with `RegisterHotKey`; no permission needed. A combination another
+  program (or Windows) already uses is refused and reported as `failed` in `aujar doctor`; pick
+  another key in the settings.
+- **macOS:** a keyboard event tap, which needs **Accessibility** permission (System Settings >
+  Privacy & Security > Accessibility; add the `aujar` binary). The matching key press is
+  swallowed so the app in front does not also get it.
+
+The rest of this page is about Linux.
+
 ## GNOME: one command
 
 ```bash

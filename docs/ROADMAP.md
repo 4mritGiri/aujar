@@ -41,7 +41,9 @@ See [SNIP](SNIP.md) and [TEXT_EXTRACTOR](TEXT_EXTRACTOR.md).
   - [ ] Run on real Windows and macOS machines; make the UI build green there
   - [x] Native OCR: Windows.Media.Ocr, Apple Vision, with word boxes (Tesseract stays the
         fallback and the Linux engine)
-  - [ ] Global hotkeys on Windows and macOS; ScreenCaptureKit on macOS
+  - [x] Global hotkeys on Windows (`RegisterHotKey`) and macOS (event tap); the launcher, Snip
+        and Text Extractor shortcuts on every platform, from the settings
+  - [ ] ScreenCaptureKit on macOS
 - **P1 Overlay to blueprint:** command pill, cursor telemetry, delay timer, QR/barcode, CMYK
   eyedropper, more PII (phone, SSN, IP), pixelate vs solid, Pin, watermark and audit metadata,
   ephemeral clipboard

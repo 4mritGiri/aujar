@@ -61,8 +61,7 @@ the backends:
 stream, `CaptureScreen`) and the CLI build and pass their unit tests for those targets, but have
 not been run on real machines yet; the UI is built by CI there for the first time. Text
 recognition uses Windows OCR and Apple Vision there (Tesseract for other languages; see
-[TEXT_EXTRACTOR](TEXT_EXTRACTOR.md)). On Windows bind a shortcut to `aujar snip`
-yourself for now (global hotkeys are not built in there).
+[TEXT_EXTRACTOR](TEXT_EXTRACTOR.md)).
 
 The picture goes to an owner-only file in `$XDG_RUNTIME_DIR`, which the UI reads and deletes at
 once; the overlay keeps it in memory only. The portal itself first saves it in your Pictures

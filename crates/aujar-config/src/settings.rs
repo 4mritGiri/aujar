@@ -529,7 +529,16 @@ pub struct Snip {
 impl Default for Snip {
     fn default() -> Self {
         Self {
-            shortcut: "SUPER+SHIFT+S".to_owned(),
+            // Windows keeps Win+Shift+S for its own Snipping Tool; macOS uses Cmd+Shift+S for
+            // Save As.
+            shortcut: if cfg!(windows) {
+                "SUPER+SHIFT+X"
+            } else if cfg!(target_os = "macos") {
+                "CTRL+SHIFT+S"
+            } else {
+                "SUPER+SHIFT+S"
+            }
+            .to_owned(),
             folder: String::new(),
             text_extractor: true,
         }
@@ -561,7 +570,13 @@ impl Default for TextExtractor {
             single_line: false,
             backend: "auto".to_owned(),
             engine: "auto".to_owned(),
-            shortcut: "SUPER+SHIFT+T".to_owned(),
+            // macOS: Cmd+Shift+T reopens a closed tab in browsers.
+            shortcut: if cfg!(target_os = "macos") {
+                "CTRL+SHIFT+T"
+            } else {
+                "SUPER+SHIFT+T"
+            }
+            .to_owned(),
         }
     }
 }

@@ -1,4 +1,12 @@
-//! Native global hotkeys through the `org.freedesktop.portal.GlobalShortcuts` portal.
+//! Native global hotkeys.
+//!
+//! | Platform | How | Needs |
+//! |---|---|---|
+//! | Linux | `org.freedesktop.portal.GlobalShortcuts` (below) | a desktop with the portal |
+//! | Windows | `RegisterHotKey` on a thread with its own message loop | nothing; a key another program owns is reported |
+//! | macOS | a Quartz event tap on a thread with its own run loop | Accessibility permission |
+//!
+//! Triggers are written as in the settings (`CTRL+ALT+space`, [`Trigger`]).
 //!
 //! The portal is the only cross-compositor way to receive global shortcuts on
 //! Wayland. It is available on KDE Plasma, GNOME 48+ and Hyprland (via their
@@ -9,6 +17,14 @@
 //! Everything runs on a dedicated thread with its own tokio runtime, so the
 //! daemon's runtime never depends on the portal's futures being `Send`.
 
+#[cfg(target_os = "macos")]
+mod macos;
+mod trigger;
+#[cfg(windows)]
+mod windows;
+
+pub use trigger::{Key, Trigger};
+
 #[cfg(target_os = "linux")]
 use anyhow::{Context, Result};
 #[cfg(target_os = "linux")]
@@ -18,7 +34,7 @@ use ashpd::{
 };
 #[cfg(target_os = "linux")]
 use futures_util::StreamExt;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
@@ -30,12 +46,12 @@ pub const APP_ID: &str = "dev.aujar.Aujar";
 #[derive(Debug, Clone)]
 pub struct ShortcutSpec {
     /// Stable identifier reported back when the shortcut fires.
-    pub id: &'static str,
+    pub id: String,
     /// Human-readable description shown in the desktop's shortcut settings.
-    pub description: &'static str,
-    /// Suggested trigger in XDG shortcuts syntax, e.g. `CTRL+ALT+space`. The user can
-    /// change or reject it in the desktop's UI.
-    pub preferred_trigger: &'static str,
+    pub description: String,
+    /// The trigger as written in the settings (`CTRL+ALT+space`, `SUPER+SHIFT+S`). On Linux the
+    /// portal only takes it as a suggestion; the user can change it in the desktop's UI.
+    pub trigger: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,23 +60,39 @@ pub enum HotkeyEvent {
     Bound { id: String, trigger: String },
     /// The shortcut with this id was pressed.
     Activated(String),
+    /// This one shortcut could not be bound (taken by another program, or not a valid key).
+    Failed { id: String, reason: String },
     /// Global shortcuts cannot be used; the reason is meant for logs.
     Unavailable(String),
 }
 
 /// Start listening for the given shortcuts on a background thread.
+#[cfg(any(windows, target_os = "macos"))]
 pub fn start(specs: Vec<ShortcutSpec>) -> UnboundedReceiver<HotkeyEvent> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        let (tx, rx) = unbounded_channel();
-        let _ = specs;
-        let _ = tx.send(HotkeyEvent::Unavailable(
-            "native global hotkeys are not implemented for this platform yet".to_owned(),
-        ));
-        return rx;
-    }
+    let (tx, rx) = unbounded_channel();
+    let parsed = parse_all(specs, &tx);
 
-    #[cfg(target_os = "linux")]
+    #[cfg(windows)]
+    windows::start(parsed, tx);
+    #[cfg(target_os = "macos")]
+    macos::start(parsed, tx);
+
+    rx
+}
+
+/// Start listening for the given shortcuts on a background thread.
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+pub fn start(_specs: Vec<ShortcutSpec>) -> UnboundedReceiver<HotkeyEvent> {
+    let (tx, rx) = unbounded_channel();
+    let _ = tx.send(HotkeyEvent::Unavailable(
+        "native global hotkeys are not implemented for this platform yet".to_owned(),
+    ));
+    rx
+}
+
+/// Start listening for the given shortcuts on a background thread.
+#[cfg(target_os = "linux")]
+pub fn start(specs: Vec<ShortcutSpec>) -> UnboundedReceiver<HotkeyEvent> {
     {
         let (tx, rx) = unbounded_channel();
         let thread_tx = tx.clone();
@@ -92,6 +124,27 @@ pub fn start(specs: Vec<ShortcutSpec>) -> UnboundedReceiver<HotkeyEvent> {
     }
 }
 
+/// The specs whose triggers parse; the others are reported as [`HotkeyEvent::Failed`].
+#[cfg(any(target_os = "linux", windows, target_os = "macos"))]
+fn parse_all(
+    specs: Vec<ShortcutSpec>,
+    tx: &UnboundedSender<HotkeyEvent>,
+) -> Vec<(ShortcutSpec, Trigger)> {
+    specs
+        .into_iter()
+        .filter_map(|spec| match spec.trigger.parse::<Trigger>() {
+            Ok(trigger) => Some((spec, trigger)),
+            Err(reason) => {
+                let _ = tx.send(HotkeyEvent::Failed {
+                    id: spec.id,
+                    reason,
+                });
+                None
+            }
+        })
+        .collect()
+}
+
 #[cfg(target_os = "linux")]
 async fn listen(specs: &[ShortcutSpec], tx: &UnboundedSender<HotkeyEvent>) -> Result<()> {
     // Host (non-Flatpak) apps have no app id unless they register one. Best effort:
@@ -114,10 +167,11 @@ async fn listen(specs: &[ShortcutSpec], tx: &UnboundedSender<HotkeyEvent>) -> Re
         .await
         .context("failed to create a global shortcuts session")?;
 
-    let shortcuts: Vec<NewShortcut> = specs
+    let shortcuts: Vec<NewShortcut> = parse_all(specs.to_vec(), tx)
         .iter()
-        .map(|spec| {
-            NewShortcut::new(spec.id, spec.description).preferred_trigger(spec.preferred_trigger)
+        .map(|(spec, trigger)| {
+            NewShortcut::new(spec.id.as_str(), spec.description.as_str())
+                .preferred_trigger(trigger.xdg().as_str())
         })
         .collect();
 
@@ -172,9 +226,25 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "linux"))]
-    fn unsupported_platform_reports_a_clear_status() {
-        let mut events = start(Vec::new());
-        assert!(matches!(events.try_recv(), Ok(HotkeyEvent::Unavailable(_))));
+    fn invalid_triggers_are_reported_per_shortcut() {
+        let (tx, mut rx) = unbounded_channel();
+        let parsed = parse_all(
+            vec![
+                ShortcutSpec {
+                    id: "good".into(),
+                    description: String::new(),
+                    trigger: "CTRL+ALT+space".into(),
+                },
+                ShortcutSpec {
+                    id: "bad".into(),
+                    description: String::new(),
+                    trigger: "S".into(),
+                },
+            ],
+            &tx,
+        );
+
+        assert_eq!(parsed.len(), 1);
+        assert!(matches!(rx.try_recv(), Ok(HotkeyEvent::Failed { id, .. }) if id == "bad"));
     }
 }
