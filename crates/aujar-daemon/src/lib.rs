@@ -3,6 +3,8 @@
 //! On Unix platforms, uses Unix domain sockets.
 //! On Windows, uses named pipes.
 
+mod screen;
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]

@@ -6,6 +6,8 @@
 //!
 //! This file holds a single test on purpose: it sets process-wide environment variables, which
 //! is only sound while nothing else in the process is reading them.
+// These test the Unix socket daemon (`run_with`); Windows has its own named-pipe transport.
+#![cfg(unix)]
 
 use aujar_ipc::{Request, Response, SearchRequest, send};
 use std::{path::PathBuf, time::Duration};

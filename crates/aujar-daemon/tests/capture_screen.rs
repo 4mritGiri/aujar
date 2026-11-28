@@ -1,10 +1,18 @@
 //! `CaptureScreen` (the frozen picture behind Aujar Snip) through the daemon, with a stand-in
 //! `grim` as on Sway. One test per binary: it changes the process environment.
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 
 use std::{os::unix::fs::PermissionsExt, time::Duration};
 
 use aujar_ipc::{Request, Response, send};
+
+#[test]
+fn the_screenshot_permission_is_for_the_app_id_the_daemon_registers() {
+    assert_eq!(
+        aujar_text_extractor::permission::PORTAL_APP_ID,
+        aujar_hotkeys::APP_ID
+    );
+}
 
 #[tokio::test]
 async fn captures_the_screen_into_a_private_file() {
@@ -60,10 +68,20 @@ async fn captures_the_screen_into_a_private_file() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
-    let Response::Screen { path } = send(&socket, Request::CaptureScreen).await.unwrap() else {
+    let Response::Screen {
+        path,
+        windows,
+        monitors,
+    } = send(&socket, Request::CaptureScreen).await.unwrap()
+    else {
         panic!("expected a screen picture");
     };
     let path = std::path::PathBuf::from(path);
+
+    // A Sway session without `swaymsg`: no windows, not an error.
+    assert!(windows.is_empty());
+    // Linux tools do not say where the monitors are; the UI matches its own displays.
+    assert!(monitors.is_empty());
 
     assert!(path.starts_with(&runtime), "{}", path.display());
     assert_eq!(

@@ -1,5 +1,7 @@
 //! Mouse Borders through the daemon: IPC socket, supervisor and engine together. Runs with
 //! the real Linux backends, which degrade gracefully where devices are not accessible.
+// These test the Unix socket daemon (`run_with`); Windows has its own named-pipe transport.
+#![cfg(unix)]
 
 use std::{path::PathBuf, time::Duration};
 

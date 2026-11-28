@@ -642,29 +642,6 @@ async fn stream_events(
 }
 
 /// A frozen picture of the screen for the snipping overlay.
-async fn capture_screen() -> Response {
-    let backend = aujar_config::Settings::load_or_default()
-        .text_extractor
-        .backend;
-
-    let backend = match backend.parse::<aujar_text_extractor::Backend>() {
-        Ok(backend) => backend,
-        Err(error) => return Response::Error(format!("text_extractor.backend: {error}")),
-    };
-
-    match tokio::task::spawn_blocking(move || {
-        aujar_text_extractor::capture::capture_screen(backend)
-    })
-    .await
-    {
-        Ok(Ok(path)) => Response::Screen {
-            path: path.to_string_lossy().into_owned(),
-        },
-        Ok(Err(error)) => Response::Error(format!("{error:#}")),
-        Err(error) => Response::Error(format!("the screen capture task failed: {error}")),
-    }
-}
-
 /// Text Extractor: the request's options over the saved settings.
 async fn extract_text(request: aujar_ipc::ExtractTextRequest) -> Response {
     let settings = aujar_config::Settings::load_or_default().text_extractor;
@@ -769,7 +746,7 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
 
         Request::ExtractText(request) => extract_text(request).await,
 
-        Request::CaptureScreen => capture_screen().await,
+        Request::CaptureScreen => crate::screen::capture().await,
 
         Request::Subscribe => {
             Response::Error("Subscribe is handled by the connection layer".into())

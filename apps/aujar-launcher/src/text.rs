@@ -118,6 +118,39 @@ pub async fn run(args: TextArgs, socket: PathBuf) -> Result<()> {
     }
 }
 
+/// Whether the overlay's silent screenshot will work: always without the portal (wlroots,
+/// X11), and on GNOME once `aujar snip allow` was run. Otherwise the desktop's own selection is
+/// used, which needs no permission.
+fn overlay_can_capture() -> bool {
+    use aujar_text_extractor::{Backend, capture, permission};
+
+    let backend = aujar_config::Settings::load_or_default()
+        .text_extractor
+        .backend
+        .parse::<Backend>()
+        .unwrap_or_default();
+
+    if !matches!(
+        capture::resolve_full(backend, &capture::Session::detect()),
+        Ok(Backend::Portal)
+    ) {
+        return true;
+    }
+
+    match permission::status() {
+        Ok(Some(true)) => true,
+        // No GNOME permission store (KDE, ...): try the overlay.
+        Err(_) => true,
+        Ok(_) => {
+            eprintln!(
+                "Using the desktop's selection. For Aujar's own overlay, allow screenshots once: \
+                 aujar snip allow"
+            );
+            false
+        }
+    }
+}
+
 async fn extract(args: ExtractArgs, socket: PathBuf) -> Result<()> {
     let (text, languages) = match &args.file {
         Some(path) => {
@@ -148,6 +181,7 @@ async fn extract(args: ExtractArgs, socket: PathBuf) -> Result<()> {
                 && aujar_config::Settings::load_or_default()
                     .snip
                     .text_extractor
+                && overlay_can_capture()
             {
                 let overlay = send(
                     &socket,

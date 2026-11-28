@@ -27,6 +27,30 @@
 - [x] Search ranking (tiered match scoring)
 - [x] Native desktop UI (`aujar-ui`, GPUI: search field with selection, undo and IME, results, previews, settings window)
 
+## Screen suite (Aujar Snip, Text Extractor) — all platforms
+
+See [SNIP](SNIP.md) and [TEXT_EXTRACTOR](TEXT_EXTRACTOR.md).
+
+- **P0 Cross-platform foundation**
+  - [x] `aujar-screen`: capture, monitor layout and window positions behind one API; Linux
+        (portal, grim, maim/scrot), Windows (GDI, DWM, per-monitor DPI), macOS (CoreGraphics,
+        window server, Screen Recording permission)
+  - [x] Mixed-DPI: monitors' rectangles in the picture travel with `CaptureScreen`
+  - [x] Windows daemon: event stream, launcher broadcast, `CaptureScreen`, single instance
+  - [x] CI: screen stack tested and daemon/CLI checked on macOS and Windows; UI built there
+  - [ ] Run on real Windows and macOS machines; make the UI build green there
+  - [ ] Native OCR: Windows.Media.Ocr, Apple Vision (Tesseract stays the fallback)
+  - [ ] Global hotkeys on Windows and macOS; ScreenCaptureKit on macOS
+- **P1 Overlay to blueprint:** command pill, cursor telemetry, delay timer, QR/barcode, CMYK
+  eyedropper, more PII (phone, SSN, IP), pixelate vs solid, Pin, watermark and audit metadata,
+  ephemeral clipboard
+- **P2 Annotation Studio:** vector layers (arrow, box, text, steps, marker, blur/redact, zoom),
+  undo/redo, history strip
+- **P3 Screen intelligence:** table to CSV, code formatter, scrolling capture
+- **P4 Recording:** GIF/MP4 up to 60 s with audio
+- **P5 Enterprise:** Jira/Linear/GitHub/ServiceNow/Zendesk, S3/Drive/SharePoint links, policy
+  (`/etc/aujar/policy.toml`, Windows GPO, macOS MDM)
+
 ## v0.3 — Window & Workspace
 - X11 window backend
 - KDE integration

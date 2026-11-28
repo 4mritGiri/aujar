@@ -61,6 +61,14 @@ impl From<LauncherAction> for LauncherCommand {
 
 #[derive(Debug, Subcommand)]
 enum SnipAction {
+    /// Let Aujar take screenshots without asking (GNOME): what "Allow" in GNOME's dialog
+    /// stores, which cannot open for the background daemon. Needed for the snip overlay.
+    Allow {
+        /// Remove the permission again.
+        #[arg(long)]
+        revoke: bool,
+    },
+
     /// Register the Aujar Snip shortcut in GNOME Keyboard Shortcuts.
     ShortcutInstall {
         /// Modifier names followed by one key (default: the settings, SUPER+SHIFT+S).
@@ -440,6 +448,27 @@ async fn main() -> Result<()> {
         }
 
         Command::Snip {
+            action: Some(SnipAction::Allow { revoke }),
+        } => {
+            use aujar_text_extractor::permission;
+
+            permission::set(!revoke)?;
+
+            if revoke {
+                println!(
+                    "Removed: {} must be allowed again before Aujar Snip can freeze the screen.",
+                    permission::PORTAL_APP_ID
+                );
+            } else {
+                println!(
+                    "Allowed: {} may take screenshots without asking (portal permission store, \
+                     table `screenshot`). Undo with `aujar snip allow --revoke`.",
+                    permission::PORTAL_APP_ID
+                );
+            }
+        }
+
+        Command::Snip {
             action: Some(SnipAction::ShortcutInstall { keys }),
         } => {
             let keys =
@@ -756,6 +785,7 @@ async fn doctor_report() -> anyhow::Result<()> {
     println!("socket:     {}", socket.display());
     // Local: Text Extractor's Tesseract does not depend on the daemon running.
     println!("ocr:        {}", ocr_report().await);
+    println!("snip:       {}", snip_report());
 
     let health = match send(&socket, Request::Health).await {
         Ok(Response::Health(health)) => health,
@@ -806,6 +836,16 @@ async fn doctor_report() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Whether the desktop lets Aujar take the snip overlay's screenshot without asking.
+fn snip_report() -> String {
+    match aujar_text_extractor::permission::status() {
+        Ok(Some(true)) => "screenshots allowed without asking".to_owned(),
+        Ok(Some(false)) => "screenshots refused; run `aujar snip allow` to allow them".to_owned(),
+        Ok(None) => "screenshots not allowed yet (GNOME); run `aujar snip allow` once".to_owned(),
+        Err(error) => format!("could not read the permission ({error:#}); fine outside GNOME"),
+    }
 }
 
 /// One line on Text Extractor's Tesseract: version and languages, or how to install it.

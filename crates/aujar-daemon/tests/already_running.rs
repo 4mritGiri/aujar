@@ -1,4 +1,6 @@
 //! A second daemon must not take the socket of a running one.
+// These test the Unix socket daemon (`run_with`); Windows has its own named-pipe transport.
+#![cfg(unix)]
 
 use std::time::Duration;
 

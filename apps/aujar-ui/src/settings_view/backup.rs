@@ -1718,7 +1718,7 @@ impl SettingsView {
                 controls.push(
                     self.pill(SharedString::from("bk-folder"), "Open folder", false)
                         .on_click(cx.listener(move |_this, _event, _window, _cx| {
-                            let _ = Command::new("xdg-open").arg(&folder).spawn();
+                            crate::open_path(&folder);
                         })),
                 );
             }

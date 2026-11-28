@@ -33,7 +33,8 @@ Tesseract and at least one language:
 
 When the Aujar UI is running, `aujar text` (without options) opens Aujar's own overlay,
 [Aujar Snip](SNIP.md), in text mode: the screen freezes, you drag, and the text is copied when you
-let go. Set `[snip] text_extractor = false` to always use the desktop's selection below.
+let go. On GNOME this needs `aujar snip allow` once (see [SNIP](SNIP.md)); until then the desktop's
+selection is used. Set `[snip] text_extractor = false` to always use the desktop's selection below.
 
 Otherwise (no UI, or with `--lang`, `--single-line` or `--no-copy`) Aujar uses the desktop's own
 area selection:

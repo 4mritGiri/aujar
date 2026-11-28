@@ -20,7 +20,7 @@ use gpui::{
     ResizeEdge, SharedString, Stateful, Window, WindowBackgroundAppearance, div, prelude::*, px,
     rgb, rgba, svg,
 };
-use std::{fs, process::Command};
+use std::fs;
 
 /// What the inline text editor is changing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +64,7 @@ fn valid_nepse_key(key: &str) -> bool {
 /// Save the key with owner-only permissions; an empty key removes the file.
 fn save_nepse_key(key: &str) -> Result<(), String> {
     use std::io::Write;
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
     let path = nepse_key_path();
@@ -87,11 +88,14 @@ fn save_nepse_key(key: &str) -> Result<(), String> {
     }
 
     let temp = path.with_extension("key.tmp");
-    let written = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
+    let mut options = fs::OpenOptions::new();
+
+    options.write(true).create(true).truncate(true);
+    // Owner-only on Unix; on Windows the file inherits the user profile's private ACL.
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let written = options
         .open(&temp)
         .and_then(|mut file| writeln!(file, "{key}"))
         .and_then(|()| fs::rename(&temp, &path));
@@ -560,7 +564,7 @@ impl SettingsView {
                 // Make sure the file exists so the editor has something to open.
                 self.mutate(cx, |_| {});
 
-                let _ = Command::new("xdg-open").arg(Settings::path()).spawn();
+                crate::open_path(&Settings::path());
             }
             MenuAction::ClearHistory => {
                 self.status = Some(match aujar_config::History::default().save() {

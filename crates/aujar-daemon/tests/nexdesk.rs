@@ -1,5 +1,7 @@
 //! NexDesk through the daemon: IPC socket, runtime registration and policy-free status.
 //! The real NexDesk is never started: the executable override points nowhere.
+// These test the Unix socket daemon (`run_with`); Windows has its own named-pipe transport.
+#![cfg(unix)]
 
 use std::time::Duration;
 

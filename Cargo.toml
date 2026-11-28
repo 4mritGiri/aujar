@@ -31,6 +31,7 @@ members = [
     "modules/image-resizer",
     "modules/ruler",
     "modules/rename",
+    "modules/screen",
     "modules/text-extractor",
     "modules/mouse-borders",
     "modules/nexdesk",
@@ -58,6 +59,7 @@ default-members = [
     "modules/image-resizer",
     "modules/ruler",
     "modules/rename",
+    "modules/screen",
     "modules/text-extractor",
     "modules/mouse-borders",
     "modules/nexdesk",
@@ -110,6 +112,7 @@ aujar-core = { path = "crates/aujar-core", version = "0.1.1" }
 aujar-daemon = { path = "crates/aujar-daemon", version = "0.1.1" }
 aujar-hotkeys = { path = "crates/aujar-hotkeys", version = "0.1.1" }
 aujar-image-resizer = { path = "modules/image-resizer", version = "0.1.1" }
+aujar-screen = { path = "modules/screen", version = "0.1.1" }
 aujar-text-extractor = { path = "modules/text-extractor", version = "0.1.1" }
 aujar-ipc = { path = "crates/aujar-ipc", version = "0.1.1" }
 aujar-log = { path = "crates/aujar-log", version = "0.1.1" }

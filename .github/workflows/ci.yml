@@ -51,10 +51,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace --exclude aujar-ui
 
-  # Mouse Borders runs on Linux, macOS and Windows. These are the crates that build there; the
-  # rest of Aujar (launcher, UI, daemon) is Linux-only. Windows and macOS backends were
-  # type-checked and unit-tested but never run on real hardware before this job existed:
-  # a failure here is a real finding, not noise.
+  # Mouse Borders, the screen/snip stack, the daemon and the CLI on Linux, macOS and Windows.
+  # Windows and macOS backends are type-checked and unit-tested here but have not all run on
+  # real hardware: a failure here is a real finding, not noise.
   cross-platform:
     name: mouse-borders (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -67,6 +66,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p aujar-config -p aujar-mouse-borders -p aujar-mwb-cli -p aujar-mwb
+      # Screen capture, OCR/redaction and the IPC protocol; the daemon and CLI must build.
+      - run: cargo test -p aujar-screen -p aujar-text-extractor -p aujar-ipc
+      - run: cargo check -p aujar-daemon -p aujar-launcher-app --all-targets
       - run: cargo build --release -p aujar-mwb
       - uses: actions/upload-artifact@v4
         with:
@@ -75,6 +77,24 @@ jobs:
             target/release/aujar-mwb
             target/release/aujar-mwb.exe
           if-no-files-found: ignore
+
+  # The GPUI launcher/snip UI on macOS and Windows (GPUI's build scripts need the native
+  # toolchains, so this cannot be checked from Linux). Never built there before P0 of the screen
+  # suite: allowed to fail until it is green, so it reports without blocking.
+  ui-cross-platform:
+    name: aujar-ui (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p aujar-ui
+      - run: cargo test -p aujar-ui
 
   msrv:
     runs-on: ubuntu-latest

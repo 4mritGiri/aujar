@@ -1,6 +1,8 @@
 //! Awake end to end: a real daemon on a real socket, a real client, and a lock that only writes
 //! down what it is asked (so nothing touches the desktop, and the saved mode lives in a scratch
 //! directory, not in your home).
+// These test the Unix socket daemon (`run_with`); Windows has its own named-pipe transport.
+#![cfg(unix)]
 
 use std::{
     path::{Path, PathBuf},

@@ -216,6 +216,14 @@ pub enum Response {
     /// Answer to [`Request::CaptureScreen`]: an owner-only PNG for the client to read and delete.
     Screen {
         path: String,
+        /// The visible windows at that moment, topmost first, in the desktop's logical pixels
+        /// (for the overlay's window mode). Empty when the desktop does not say.
+        #[serde(default)]
+        windows: Vec<ScreenWindow>,
+        /// Where each monitor is in the picture and on the desktop. Windows and macOS say;
+        /// empty on Linux, where the client matches the picture to its own display list.
+        #[serde(default)]
+        monitors: Vec<ScreenMonitor>,
     },
     /// The request failed. This variant's shape is frozen across protocol versions, so a client
     /// of any version can read why the daemon refused it.
@@ -243,6 +251,32 @@ pub struct ExtractTextResponse {
     /// The user closed the selection without choosing an area (not an error).
     #[serde(default)]
     pub cancelled: bool,
+}
+
+/// A monitor in a [`Response::Screen`] picture.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenMonitor {
+    /// Logical bounds on the desktop (the layout the desktop shows).
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    /// Its rectangle in the picture, in physical pixels.
+    pub picture_x: u32,
+    pub picture_y: u32,
+    pub picture_width: u32,
+    pub picture_height: u32,
+}
+
+/// A window on screen when it was captured ([`Response::Screen`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenWindow {
+    pub title: String,
+    pub app: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
 }
 
 /// Answer to [`Request::Version`].

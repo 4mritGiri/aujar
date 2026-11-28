@@ -11,6 +11,7 @@ aujar-config = { workspace = true }
 aujar-core = { workspace = true }
 aujar-color = { workspace = true }
 aujar-text-extractor = { workspace = true }
+aujar-screen = { workspace = true }
 aujar-hotkeys = { workspace = true }
 aujar-ipc = { workspace = true }
 aujar-log = { workspace = true }
@@ -27,6 +28,8 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+aujar-hotkeys = { workspace = true }
+aujar-text-extractor = { workspace = true }
 image.workspace = true
 tempfile = "3"
 

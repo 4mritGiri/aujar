@@ -181,6 +181,12 @@ pub fn scale_factor(width: u32, height: u32) -> u32 {
 
 /// Grayscale, enlarged PNG bytes ready for Tesseract.
 pub fn prepare(image: &DynamicImage) -> Result<Vec<u8>> {
+    prepare_scaled(image).map(|(png, _)| png)
+}
+
+/// Like [`prepare`], with the factor the picture was enlarged by (word boxes come back in the
+/// enlarged picture's pixels).
+pub fn prepare_scaled(image: &DynamicImage) -> Result<(Vec<u8>, u32)> {
     let (width, height) = image.dimensions();
 
     if width == 0 || height == 0 {
@@ -200,7 +206,7 @@ pub fn prepare(image: &DynamicImage) -> Result<Vec<u8>> {
         .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .context("could not encode the picture for Tesseract")?;
 
-    Ok(png)
+    Ok((png, factor))
 }
 
 fn last_line(bytes: &[u8]) -> String {
@@ -214,15 +220,67 @@ fn last_line(bytes: &[u8]) -> String {
 
 /// Recognise the text in `png` (Tesseract page segmentation mode `psm`).
 pub fn recognize(png: &[u8], languages: &[String], psm: u8) -> Result<String> {
+    run_tesseract(png, languages, psm, None)
+}
+
+/// One recognised word and where it is, in the recognised picture's pixels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Word {
+    pub left: u32,
+    pub top: u32,
+    pub width: u32,
+    pub height: u32,
+    /// Block, paragraph and line number: words with the same `line` are on one line.
+    pub line: (u32, u32, u32),
+    pub text: String,
+}
+
+/// Recognise the words in `png`, with their boxes (Tesseract's TSV output).
+pub fn recognize_words(png: &[u8], languages: &[String], psm: u8) -> Result<Vec<Word>> {
+    run_tesseract(png, languages, psm, Some("tsv")).map(|tsv| parse_tsv(&tsv))
+}
+
+/// Parse Tesseract's TSV: `level page block par line word left top width height conf text`,
+/// keeping the words (level 5) that have text.
+pub fn parse_tsv(tsv: &str) -> Vec<Word> {
+    tsv.lines()
+        .skip(1)
+        .filter_map(|row| {
+            let columns: Vec<&str> = row.splitn(12, '\t').collect();
+
+            if columns.len() < 12 || columns[0] != "5" {
+                return None;
+            }
+
+            let n = |i: usize| columns[i].trim().parse::<u32>().ok();
+            let text = columns[11].trim();
+
+            (!text.is_empty()).then(|| Word {
+                left: n(6).unwrap_or(0),
+                top: n(7).unwrap_or(0),
+                width: n(8).unwrap_or(0),
+                height: n(9).unwrap_or(0),
+                line: (n(2).unwrap_or(0), n(3).unwrap_or(0), n(4).unwrap_or(0)),
+                text: text.to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn run_tesseract(
+    png: &[u8],
+    languages: &[String],
+    psm: u8,
+    config: Option<&str>,
+) -> Result<String> {
+    let languages = languages.join("+");
+    let psm = psm.to_string();
+    let mut args = vec!["stdin", "stdout", "-l", &languages, "--psm", &psm];
+
+    args.extend(config);
+
     let mut child = Command::new(program())
-        .args([
-            "stdin",
-            "stdout",
-            "-l",
-            &languages.join("+"),
-            "--psm",
-            &psm.to_string(),
-        ])
+        .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -299,6 +357,25 @@ pub fn recognize(png: &[u8], languages: &[String], psm: u8) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_word_boxes_from_tsv() {
+        let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
+                   4\t1\t1\t1\t1\t0\t10\t20\t300\t30\t-1\t\n\
+                   5\t1\t1\t1\t1\t1\t10\t20\t90\t30\t96.1\tSECRET:\n\
+                   5\t1\t1\t1\t1\t2\t110\t20\t200\t30\t91.0\tsk_live_abc\n\
+                   5\t1\t1\t1\t2\t1\t10\t60\t50\t30\t95.0\t \n";
+
+        let words = parse_tsv(tsv);
+
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[1].text, "sk_live_abc");
+        assert_eq!(
+            (words[1].left, words[1].top, words[1].width),
+            (110, 20, 200)
+        );
+        assert_eq!(words[0].line, words[1].line);
+    }
 
     #[test]
     fn parses_list_langs_output() {

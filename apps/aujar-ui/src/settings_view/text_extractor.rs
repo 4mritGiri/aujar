@@ -4,7 +4,7 @@
 //! Tesseract runs on this computer, so its status is read here directly (off the UI thread),
 //! without the daemon. Extracting goes through `aujar text`, like the shortcut does.
 
-use aujar_text_extractor::{Backend, ocr};
+use aujar_text_extractor::{Backend, ocr, permission};
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px, rgb, rgba};
 use std::path::PathBuf;
 
@@ -13,6 +13,8 @@ use super::SettingsView;
 #[derive(Default)]
 pub(super) struct State {
     status: Option<Result<ocr::Status, String>>,
+    /// Whether GNOME lets Aujar take the snip overlay's screenshot without asking.
+    allowed: Option<Result<Option<bool>, String>>,
     checking: bool,
 }
 
@@ -66,15 +68,41 @@ impl SettingsView {
         self.text_extractor.checking = true;
 
         cx.spawn(async move |this, cx| {
-            let status = cx
+            let (status, allowed) = cx
                 .background_executor()
-                .spawn(async { ocr::status().map_err(|error| format!("{error:#}")) })
+                .spawn(async {
+                    (
+                        ocr::status().map_err(|error| format!("{error:#}")),
+                        permission::status().map_err(|error| format!("{error:#}")),
+                    )
+                })
                 .await;
 
             let _ = this.update(cx, |this, cx| {
                 this.text_extractor.checking = false;
                 this.text_extractor.status = Some(status);
+                this.text_extractor.allowed = Some(allowed);
                 cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Grant or remove the screenshot permission, then show the new state. Only on a click.
+    fn set_screenshot_permission(&mut self, allow: bool, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { permission::set(allow).map_err(|error| format!("{error:#}")) })
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                this.status = Some(match result {
+                    Ok(()) if allow => "Aujar may now take screenshots without asking".to_owned(),
+                    Ok(()) => "Aujar must ask again before taking screenshots".to_owned(),
+                    Err(error) => error,
+                });
+                this.refresh_text_extractor(cx);
             });
         })
         .detach();
@@ -254,7 +282,37 @@ impl SettingsView {
                 cx.notify();
             }));
 
-        let shortcut = vec![
+        let allowed = match &self.text_extractor.allowed {
+            Some(Ok(Some(true))) => Some(true),
+            Some(Ok(_)) => Some(false),
+            // Not GNOME, or no permission store: nothing to set.
+            Some(Err(_)) | None => None,
+        };
+        let permission_row = allowed.map(|allowed| {
+            let button = self
+                .pill(
+                    "snip-allow".into(),
+                    if allowed { "Revoke" } else { "Allow" },
+                    !allowed,
+                )
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.set_screenshot_permission(!allowed, cx);
+                }));
+
+            self.row(
+                "Screenshots without asking",
+                if allowed {
+                    "Allowed: the snip overlay can freeze the screen"
+                } else {
+                    "Needed by the snip overlay (Super+Shift+S, and T here). GNOME's own dialog cannot open for the background daemon"
+                },
+                button,
+            )
+        });
+
+        let mut shortcut = vec![];
+        shortcut.extend(permission_row);
+        shortcut.extend([
             self.row(
                 "Activation shortcut",
                 "Uses GNOME custom shortcuts; on other desktops bind `aujar text` yourself",
@@ -278,7 +336,7 @@ impl SettingsView {
                 "Drag over some text on screen; it lands on the clipboard",
                 try_now,
             ),
-        ];
+        ]);
 
         vec![
             self.section("Tesseract", engine),

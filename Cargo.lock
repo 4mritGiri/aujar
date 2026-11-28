@@ -610,6 +610,7 @@ dependencies = [
  "aujar-platform",
  "aujar-rename",
  "aujar-runtime",
+ "aujar-screen",
  "aujar-text-extractor",
  "image",
  "serde",
@@ -818,14 +819,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "aujar-text-extractor"
+name = "aujar-screen"
 version = "0.1.1"
 dependencies = [
  "anyhow",
  "ashpd",
+ "core-foundation 0.10.1",
+ "core-graphics 0.25.0",
+ "image",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "aujar-text-extractor"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
  "async-trait",
  "aujar-runtime",
+ "aujar-screen",
  "image",
+ "regex",
  "tempfile",
  "tokio",
  "tracing",

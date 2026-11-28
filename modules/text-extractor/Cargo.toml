@@ -10,13 +10,11 @@ description = "Text Extractor: select part of the screen and copy the text in it
 anyhow.workspace = true
 async-trait.workspace = true
 aujar-runtime = { workspace = true }
+aujar-screen = { workspace = true }
 image.workspace = true
+regex.workspace = true
 tokio = { workspace = true }
 tracing.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# The desktop's screenshot portal, with its own area selection (GNOME, KDE).
-ashpd = { workspace = true, features = ["screenshot"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,3 +1,5 @@
+// These test the Unix socket daemon (`run_with`); Windows has its own named-pipe transport.
+#![cfg(unix)]
 use aujar_ipc::{Event, LauncherCommand, Request, Response, send, subscribe};
 use std::{path::PathBuf, time::Duration};
 

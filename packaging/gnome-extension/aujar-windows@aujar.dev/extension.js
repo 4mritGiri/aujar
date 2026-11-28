@@ -2,7 +2,8 @@
 //
 //   bus name     dev.aujar.Windows
 //   object path  /dev/aujar/Windows
-//   List()       -> s    JSON array: [{id, title, app, app_id, wm_class, workspace, focused}]
+//   List()       -> s    JSON array: [{id, title, app, app_id, wm_class, workspace, focused,
+//                          x, y, width, height, visible, stack}]
 //   Activate(u)  -> b    raise and focus the window with that id
 //
 //   object path  /dev/aujar/Pointer       (interface dev.aujar.Pointer, same bus name)
@@ -129,10 +130,15 @@ export default class AujarWindows extends Extension {
     List() {
         const tracker = Shell.WindowTracker.get_default();
         const focused = global.display.focus_window;
+        const windows = this._windows();
+        const active = global.workspace_manager.get_active_workspace();
+        // Bottom to top, so a higher `stack` is drawn over a lower one (Aujar Snip's window mode).
+        const stacking = global.display.sort_windows_by_stacking(windows);
 
-        const list = this._windows().map(window => {
+        const list = windows.map(window => {
             const app = tracker.get_window_app(window);
             const workspace = window.get_workspace();
+            const frame = window.get_frame_rect();
 
             return {
                 id: window.get_id(),
@@ -142,6 +148,14 @@ export default class AujarWindows extends Extension {
                 wm_class: window.get_wm_class() ?? null,
                 workspace: workspace ? workspace.index() : -1,
                 focused: window === focused,
+                // Where it is on screen (logical pixels) and whether it can be seen now.
+                x: frame.x,
+                y: frame.y,
+                width: frame.width,
+                height: frame.height,
+                visible: !window.minimized &&
+                    (window.is_on_all_workspaces() || workspace === active),
+                stack: stacking.indexOf(window),
             };
         });
 

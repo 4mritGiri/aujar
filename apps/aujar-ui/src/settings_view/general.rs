@@ -12,9 +12,7 @@ impl SettingsView {
                 // Make sure the file exists so the editor has something to open.
                 this.mutate(cx, |_| {});
 
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(Settings::path())
-                    .spawn();
+                crate::open_path(&Settings::path());
             }));
 
         vec![

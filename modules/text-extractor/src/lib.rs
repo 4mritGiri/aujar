@@ -6,11 +6,13 @@
 //! the result ([`tidy`]). [`extract_from_file`] does the same for a picture on disk.
 //! Copying to the clipboard is left to the caller, which runs in the user's session.
 
-pub mod capture;
 pub mod ocr;
+pub mod redact;
 mod text;
 
-pub use capture::{Backend, Cancelled};
+/// Screen capture, window positions and the capture permission now live in `aujar-screen`;
+/// they are re-exported here for existing callers.
+pub use aujar_screen::{Backend, Cancelled, capture, permission, windows};
 pub use text::tidy;
 
 use anyhow::{Context, Result};
@@ -66,6 +68,44 @@ pub fn extract_from_image(picture: &DynamicImage, options: &Options) -> Result<E
         text: tidy(&raw, options.single_line),
         languages,
     })
+}
+
+/// Cover what looks like secrets or personal data in `picture` ([`redact`]). Returns the
+/// covered copy and how many words were covered. Blocking.
+pub fn redact_image(
+    picture: &image::RgbaImage,
+    languages: &[String],
+) -> Result<(image::RgbaImage, usize)> {
+    let languages = ocr::resolve_languages(languages, &ocr::languages()?)?;
+    let dynamic = DynamicImage::ImageRgba8(picture.clone());
+    let (png, factor) = ocr::prepare_scaled(&dynamic)?;
+
+    let mut words = ocr::recognize_words(&png, &languages, 3)?;
+
+    if words.is_empty() {
+        // Sparse text: find as much as possible in no particular order.
+        words = ocr::recognize_words(&png, &languages, 11)?;
+    }
+
+    let covers = redact::covers(&words);
+    let mut covered = picture.clone();
+    let (width, height) = covered.dimensions();
+
+    for cover in &covers {
+        // Word boxes are in the enlarged picture's pixels.
+        let left = (cover.left / factor).min(width);
+        let top = (cover.top / factor).min(height);
+        let right = (cover.left + cover.width).div_ceil(factor).min(width);
+        let bottom = (cover.top + cover.height).div_ceil(factor).min(height);
+
+        for y in top..bottom {
+            for x in left..right {
+                covered.put_pixel(x, y, image::Rgba([17, 17, 17, 255]));
+            }
+        }
+    }
+
+    Ok((covered, covers.len()))
 }
 
 /// Recognise the text in a picture file (PNG, JPEG, WebP, ...). Blocking.

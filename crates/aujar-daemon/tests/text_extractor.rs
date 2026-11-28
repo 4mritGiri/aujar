@@ -1,7 +1,7 @@
 //! Text Extractor through the daemon: a real socket and request, with stand-ins for the
 //! desktop's area selection (`slurp` and `grim`, as on Sway) and for Tesseract. Nothing touches
 //! the real screen. One test per binary: it changes the process environment.
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 
 use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
 

@@ -494,7 +494,7 @@ fn clip_view(clip: &ClipEntry) -> ClipView<'_> {
 }
 
 /// Open a file or folder with the desktop's default program.
-fn open_path(path: &Path) {
+pub(crate) fn open_path(path: &Path) {
     #[cfg(target_os = "macos")]
     let mut command = Command::new("open");
 
@@ -539,21 +539,27 @@ struct Stamp {
     minute: u32,
 }
 
-/// The local time of a Unix time, or `None` when the C library cannot say.
-fn local_stamp(secs: u64) -> Option<Stamp> {
+/// The C library's broken-down local time for a Unix time.
+pub(crate) fn local_tm(secs: u64) -> Option<libc::tm> {
     let time = libc::time_t::try_from(secs).ok()?;
 
-    // SAFETY: `localtime_r` only reads `time` and fills in the `tm` we give it; an all-zero
+    // SAFETY: both functions only read `time` and fill in the `tm` we give them; an all-zero
     // `tm` is a valid value.
-    let tm = unsafe {
+    unsafe {
         let mut tm: libc::tm = std::mem::zeroed();
 
-        if libc::localtime_r(&time, &mut tm).is_null() {
-            return None;
-        }
+        #[cfg(unix)]
+        let ok = !libc::localtime_r(&time, &mut tm).is_null();
+        #[cfg(windows)]
+        let ok = libc::localtime_s(&mut tm, &time) == 0;
 
-        tm
-    };
+        ok.then_some(tm)
+    }
+}
+
+/// The local time of a Unix time, or `None` when the C library cannot say.
+fn local_stamp(secs: u64) -> Option<Stamp> {
+    let tm = local_tm(secs)?;
 
     Some(Stamp {
         year: tm.tm_year + 1900,
@@ -5859,6 +5865,11 @@ fn socket_path() -> PathBuf {
         return PathBuf::from(socket);
     }
 
+    // The daemon's named pipe (see `aujar-daemon`'s Windows transport).
+    if cfg!(windows) {
+        return PathBuf::from(r"\\.\pipe\aujar");
+    }
+
     match std::env::var_os("XDG_RUNTIME_DIR") {
         Some(dir) => PathBuf::from(dir).join("aujar.sock"),
         None => PathBuf::from("/tmp/aujar.sock"),
@@ -6086,6 +6097,12 @@ fn background_clipboard_is_safe(
 /// GNOME's Wayland session does not allow background clipboard reads, so there the watcher
 /// does not run at all and history only gets what is on the clipboard when the launcher opens.
 fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
+    // The watcher reads the clipboard with `wl-paste` / `xclip`; elsewhere the history still
+    // gains what is on the clipboard each time the launcher opens.
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
     let current_desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
     let session_desktop = std::env::var("XDG_SESSION_DESKTOP").ok();
@@ -6172,6 +6189,14 @@ fn spawn_clipboard_watcher(tx: async_channel::Sender<UiMessage>) {
 /// Only one UI per user session. A second one (say, the installed service plus a dev build)
 /// would also subscribe to the daemon, so every shortcut press opened two launchers that
 /// fought over focus and closed each other.
+#[cfg(not(unix))]
+fn ensure_single_instance() -> Option<()> {
+    // TODO(windows, macos-only builds without unix sockets): a named mutex. Two UIs would both
+    // react to a shortcut, which is annoying but harmless.
+    Some(())
+}
+
+#[cfg(unix)]
 fn ensure_single_instance() -> Option<std::os::unix::net::UnixListener> {
     use std::os::unix::net::{UnixListener, UnixStream};
 

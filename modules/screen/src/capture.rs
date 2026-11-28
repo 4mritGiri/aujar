@@ -255,6 +255,13 @@ pub fn parse_geometry(output: &str) -> Option<String> {
 ///
 /// Blocking: call from a blocking thread. `requested` is resolved against the session first.
 pub fn select_area(requested: Backend) -> Result<DynamicImage> {
+    if !cfg!(target_os = "linux") {
+        bail!(
+            "this platform has no desktop area selection to borrow; use Aujar Snip's overlay \
+             (`aujar snip`, or `aujar text` with the Aujar UI running)"
+        );
+    }
+
     let backend = resolve(requested, &Session::detect())?;
 
     tracing::debug!(
@@ -351,9 +358,10 @@ pub fn capture_screen(requested: Backend) -> Result<PathBuf> {
             let saved = Removed(portal(false).map_err(|error| {
                 if error.downcast_ref::<Cancelled>().is_some() {
                     anyhow::anyhow!(
-                        "the desktop refused to take a screenshot. GNOME asks once for programs \
-                         it does not know: allow Aujar, or run the UI as its service \
-                         (`systemctl --user start aujar-ui`)"
+                        "the desktop has not allowed Aujar to take screenshots without asking. \
+                         Allow it once with `aujar snip allow` (or Settings > Text Extractor), \
+                         the same as Allow in GNOME's dialog, which cannot open for the \
+                         background daemon"
                     )
                 } else {
                     error
@@ -368,6 +376,56 @@ pub fn capture_screen(requested: Backend) -> Result<PathBuf> {
     let _ = restrict(&target);
 
     Ok(target)
+}
+
+/// Capture every monitor into a new owner-only PNG (the caller reads and deletes it), with
+/// where each monitor is in it. Blocking.
+///
+/// Windows and macOS capture natively and know their monitors (also with mixed scale factors);
+/// on Linux `requested` picks the tool and the monitor list is empty (the UI matches the picture
+/// to its own display list).
+pub fn capture_screen_with_monitors(requested: Backend) -> Result<(PathBuf, Vec<crate::Monitor>)> {
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        let _ = requested;
+
+        #[cfg(windows)]
+        let screen = crate::win::capture()?;
+        #[cfg(target_os = "macos")]
+        let screen = crate::macos::capture()?;
+
+        let target = private_path();
+
+        write_png_fast(&screen.picture, &target)?;
+        let _ = restrict(&target);
+
+        Ok((target, screen.monitors))
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        capture_screen(requested).map(|path| (path, Vec::new()))
+    }
+}
+
+/// Speed over size: the file lives for a moment, on the same machine.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+fn write_png_fast(picture: &image::RgbaImage, path: &Path) -> Result<()> {
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+
+    let file = std::fs::File::create(path)
+        .with_context(|| format!("could not write the screen picture {}", path.display()))?;
+    let encoder = PngEncoder::new_with_quality(
+        std::io::BufWriter::new(file),
+        CompressionType::Fast,
+        FilterType::NoFilter,
+    );
+
+    picture
+        .write_with_encoder(encoder)
+        .context("could not encode the screen picture")?;
+
+    Ok(())
 }
 
 /// Move a file, also across file systems (`~/Pictures` to the runtime tmpfs).
