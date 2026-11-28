@@ -29,6 +29,7 @@ aujar-log = { workspace = true }
 aujar-mouse-borders = { workspace = true }
 aujar-mwb-cli = { workspace = true }
 aujar-rename = { workspace = true }
+aujar-text-extractor = { workspace = true }
 aujar-platform = { workspace = true }
 tokio.workspace = true
 tracing.workspace = true
@@ -50,8 +51,9 @@ maintainer-scripts = "debian"
 priority = "optional"
 depends = "$auto"
 # Everything optional: remote desktop connections (NexDesk, see docs/NEXDESK.md), video and PDF
-# previews, document previews, and the GNOME Settings pages behind `wifi`, `bluetooth`, ...
-suggests = "nexdesk, ffmpegthumbnailer, poppler-utils, libgsf-bin, gnome-control-center"
+# previews, document previews, the GNOME Settings pages behind `wifi`, `bluetooth`, ..., and
+# Text Extractor (Tesseract, plus grim/slurp on wlroots or maim on X11 for selecting an area).
+suggests = "nexdesk, ffmpegthumbnailer, poppler-utils, libgsf-bin, gnome-control-center, tesseract-ocr, grim, slurp, maim"
 assets = [
     ["target/release/aujar", "usr/bin/", "755"],
     ["target/release/aujar-ui", "usr/bin/", "755"],

@@ -14,6 +14,7 @@ mod gnome_extension;
 mod mouse_borders;
 mod nexdesk;
 mod shortcut;
+mod text;
 
 #[cfg(not(windows))]
 const DEFAULT_SOCKET_NAME: &str = "aujar.sock";
@@ -56,6 +57,16 @@ impl From<LauncherAction> for LauncherCommand {
             LauncherAction::Settings => Self::Settings,
         }
     }
+}
+
+#[derive(Debug, Subcommand)]
+enum SnipAction {
+    /// Register the Aujar Snip shortcut in GNOME Keyboard Shortcuts.
+    ShortcutInstall {
+        /// Modifier names followed by one key (default: the settings, SUPER+SHIFT+S).
+        #[arg(long)]
+        keys: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -165,6 +176,17 @@ enum Command {
         #[command(subcommand)]
         action: ExtensionAction,
     },
+
+    /// Aujar Snip: freeze the screen, select an area, then copy it, read its text or save it.
+    /// Needs the Aujar UI running. Also `snip shortcut-install`.
+    Snip {
+        #[command(subcommand)]
+        action: Option<SnipAction>,
+    },
+
+    /// Text Extractor: select part of the screen and copy the text in it (OCR). Also
+    /// `--file PICTURE`, `text languages` and `text shortcut-install`.
+    Text(text::TextArgs),
 
     /// Color tools.
     Color {
@@ -403,6 +425,29 @@ async fn main() -> Result<()> {
             ShortcutAction::Remove => shortcut::remove()?,
         },
 
+        Command::Text(args) => text::run(args, resolve_socket()).await?,
+
+        Command::Snip { action: None } => {
+            match send(&resolve_socket(), Request::Launcher(LauncherCommand::Snip)).await? {
+                Response::Delivered { subscribers } if subscribers > 0 => {}
+                Response::Delivered { .. } => anyhow::bail!(
+                    "Aujar Snip draws its overlay in the Aujar UI, which is not running. Start it \
+                     with `systemctl --user start aujar-ui` (or run `aujar-ui`)."
+                ),
+                Response::Error(message) => anyhow::bail!(message),
+                other => println!("{other:?}"),
+            }
+        }
+
+        Command::Snip {
+            action: Some(SnipAction::ShortcutInstall { keys }),
+        } => {
+            let keys =
+                keys.unwrap_or_else(|| aujar_config::Settings::load_or_default().snip.shortcut);
+
+            shortcut::install_snip(&keys)?;
+        }
+
         Command::Color { action } => match action {
             ColorAction::Editor => {
                 match send(
@@ -445,7 +490,7 @@ async fn main() -> Result<()> {
                             || picked.to_hex(),
                             |format| picked.format(&format.pattern),
                         );
-                        if let Err(error) = copy_color_to_clipboard(&copied) {
+                        if let Err(error) = copy_to_clipboard(&copied) {
                             eprintln!("Could not copy color to clipboard: {error}");
                         }
                         println!("{}\n{}\n{}", color.hex, color.rgb, color.hsl);
@@ -549,7 +594,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn copy_color_to_clipboard(text: &str) -> Result<(), String> {
+fn copy_to_clipboard(text: &str) -> Result<(), String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -709,6 +754,8 @@ async fn doctor_report() -> anyhow::Result<()> {
     let socket = resolve_socket();
 
     println!("socket:     {}", socket.display());
+    // Local: Text Extractor's Tesseract does not depend on the daemon running.
+    println!("ocr:        {}", ocr_report().await);
 
     let health = match send(&socket, Request::Health).await {
         Ok(Response::Health(health)) => health,
@@ -759,6 +806,15 @@ async fn doctor_report() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// One line on Text Extractor's Tesseract: version and languages, or how to install it.
+async fn ocr_report() -> String {
+    match tokio::task::spawn_blocking(aujar_text_extractor::ocr::status).await {
+        Ok(Ok(status)) => format!("{} ({})", status.version, status.languages.join(", ")),
+        Ok(Err(error)) => format!("{error:#}"),
+        Err(error) => format!("could not check Tesseract: {error}"),
+    }
 }
 
 /// One line on IPC protocol compatibility between this program and the daemon.

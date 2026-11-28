@@ -610,6 +610,8 @@ dependencies = [
  "aujar-platform",
  "aujar-rename",
  "aujar-runtime",
+ "aujar-text-extractor",
+ "image",
  "serde",
  "serde_json",
  "tempfile",
@@ -682,6 +684,7 @@ dependencies = [
  "aujar-mwb-cli",
  "aujar-platform",
  "aujar-rename",
+ "aujar-text-extractor",
  "clap",
  "clap_complete",
  "tokio",
@@ -815,6 +818,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "aujar-text-extractor"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "ashpd",
+ "async-trait",
+ "aujar-runtime",
+ "image",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "aujar-ui"
 version = "0.1.1"
 dependencies = [
@@ -827,8 +844,10 @@ dependencies = [
  "aujar-ipc",
  "aujar-log",
  "aujar-mouse-borders",
+ "aujar-text-extractor",
  "gpui-pre",
  "gpui-pre-platform",
+ "image",
  "libc",
  "tokio",
  "tracing",

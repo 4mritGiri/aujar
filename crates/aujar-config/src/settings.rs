@@ -510,6 +510,56 @@ pub struct Settings {
     pub weather: Weather,
     pub mouse_borders: MouseBorders,
     pub awake: Awake,
+    pub text_extractor: TextExtractor,
+    pub snip: Snip,
+}
+
+/// Aujar Snip: Aujar's own snipping overlay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Snip {
+    /// Keys for `aujar snip shortcut-install`.
+    pub shortcut: String,
+    /// Where Ctrl+S saves. Empty means `~/Pictures/Screenshots`.
+    pub folder: String,
+    /// `aujar text` uses the overlay (when the UI runs) instead of the desktop's area selection.
+    pub text_extractor: bool,
+}
+
+impl Default for Snip {
+    fn default() -> Self {
+        Self {
+            shortcut: "SUPER+SHIFT+S".to_owned(),
+            folder: String::new(),
+            text_extractor: true,
+        }
+    }
+}
+
+/// Text Extractor: select part of the screen and copy the text in it (OCR with Tesseract).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TextExtractor {
+    /// Tesseract languages to recognise, e.g. `["eng", "nep"]`. Each must be installed
+    /// (`tesseract --list-langs`). More languages are slower and can confuse similar scripts.
+    pub languages: Vec<String>,
+    /// Join the recognised text into one line.
+    pub single_line: bool,
+    /// How the area is selected: `auto`, `portal`, `grim` (with slurp), `maim` or `scrot`.
+    pub backend: String,
+    /// Keys for `aujar text shortcut-install`.
+    pub shortcut: String,
+}
+
+impl Default for TextExtractor {
+    fn default() -> Self {
+        Self {
+            languages: vec!["eng".to_owned()],
+            single_line: false,
+            backend: "auto".to_owned(),
+            shortcut: "SUPER+SHIFT+T".to_owned(),
+        }
+    }
 }
 
 /// Awake: keeping the computer from sleeping while you are away from the keyboard.

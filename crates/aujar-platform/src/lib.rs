@@ -55,6 +55,8 @@ pub fn feature_support(platform: Platform) -> Vec<FeatureSupport> {
         Platform::Linux => {
             set(Launcher, Partial, &mut report);
             set(ColorPicker, Partial, &mut report);
+            // Needs Tesseract and the desktop's area selection (portal, grim/slurp, maim/scrot).
+            set(TextExtractor, Partial, &mut report);
             set(ClipboardHistory, Partial, &mut report);
             set(MouseWithoutBorders, Partial, &mut report);
             set(WindowManagement, Partial, &mut report);

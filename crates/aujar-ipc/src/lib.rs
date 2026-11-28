@@ -70,6 +70,13 @@ pub enum Request {
     NexDesk(NexDeskRequest),
     /// Keep the computer from sleeping, or ask whether that is on.
     Awake(AwakeRequest),
+    /// Let the user select part of the screen and recognise the text in it (Text Extractor).
+    /// The response arrives once they choose an area or cancel.
+    ExtractText(ExtractTextRequest),
+    /// A picture of the whole screen, taken without asking the user to select anything, for
+    /// the snipping overlay. The daemon writes it to an owner-only file; the client reads and
+    /// deletes it.
+    CaptureScreen,
     /// Which protocol versions the daemon speaks (older daemons do not know it
     /// and answer `Error`, which means "v1 only").
     Version,
@@ -100,6 +107,10 @@ pub enum LauncherCommand {
     ColorPicker,
     /// Open the color editor with the color history.
     ColorEditor,
+    /// Aujar Snip: freeze the screen and let the user select an area to copy, read or save.
+    Snip,
+    /// Aujar Snip straight to text: the selected area's text is recognised and copied.
+    SnipText,
 }
 
 /// Messages pushed by the daemon on a subscribed connection.
@@ -117,7 +128,9 @@ impl Request {
             Self::Windows => Some(Capability::ReadWindows),
             Self::Rename(_) => Some(Capability::FileSystem),
             Self::Execute(_) => Some(Capability::ExecuteCommand),
-            Self::PickColor => Some(Capability::ScreenCapture),
+            Self::PickColor | Self::ExtractText(_) | Self::CaptureScreen => {
+                Some(Capability::ScreenCapture)
+            }
             Self::MouseBorders(request) => request.required_capability(),
             Self::NexDesk(request) => request.required_capability(),
             Self::Awake(request) => request.required_capability(),
@@ -199,9 +212,37 @@ pub enum Response {
         subscribers: usize,
     },
     Version(VersionResponse),
+    Text(ExtractTextResponse),
+    /// Answer to [`Request::CaptureScreen`]: an owner-only PNG for the client to read and delete.
+    Screen {
+        path: String,
+    },
     /// The request failed. This variant's shape is frozen across protocol versions, so a client
     /// of any version can read why the daemon refused it.
     Error(String),
+}
+
+/// Options for [`Request::ExtractText`]; empty fields use the Text Extractor settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtractTextRequest {
+    /// Tesseract language codes (`eng`, `nep`, or `eng+nep`). Empty: the configured ones.
+    #[serde(default)]
+    pub languages: Vec<String>,
+    /// Join the text into one line (also on when the settings say so).
+    #[serde(default)]
+    pub single_line: bool,
+}
+
+/// Answer to [`Request::ExtractText`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtractTextResponse {
+    /// The recognised text; empty when the area held no readable text.
+    pub text: String,
+    /// The Tesseract languages used.
+    pub languages: Vec<String>,
+    /// The user closed the selection without choosing an area (not an error).
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 /// Answer to [`Request::Version`].
@@ -646,6 +687,27 @@ mod tests {
     }
 
     #[test]
+    fn extracting_text_needs_screen_capture() {
+        assert_eq!(
+            Request::ExtractText(ExtractTextRequest::default()).required_capability(),
+            Some(Capability::ScreenCapture)
+        );
+
+        // Older clients send no options at all.
+        let line = r#"{"version":1,"payload":{"ExtractText":{}}}"#;
+        assert!(matches!(
+            Incoming::parse(line),
+            Incoming::Request {
+                request: Request::ExtractText(ExtractTextRequest {
+                    single_line: false,
+                    ..
+                }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn picking_a_color_needs_screen_capture() {
         assert_eq!(
             Request::PickColor.required_capability(),
@@ -655,7 +717,18 @@ mod tests {
 
     #[test]
     fn the_color_shortcut_and_editor_read_nothing_from_the_screen() {
-        for command in [LauncherCommand::ColorPicker, LauncherCommand::ColorEditor] {
+        // The snip shortcut only reaches the UI; the UI's `CaptureScreen` is what is gated.
+        assert_eq!(
+            Request::CaptureScreen.required_capability(),
+            Some(Capability::ScreenCapture)
+        );
+
+        for command in [
+            LauncherCommand::ColorPicker,
+            LauncherCommand::ColorEditor,
+            LauncherCommand::Snip,
+            LauncherCommand::SnipText,
+        ] {
             assert_eq!(Request::Launcher(command).required_capability(), None);
         }
     }

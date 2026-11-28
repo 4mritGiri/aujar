@@ -10,6 +10,7 @@ async-trait.workspace = true
 aujar-config = { workspace = true }
 aujar-core = { workspace = true }
 aujar-color = { workspace = true }
+aujar-text-extractor = { workspace = true }
 aujar-hotkeys = { workspace = true }
 aujar-ipc = { workspace = true }
 aujar-log = { workspace = true }
@@ -26,5 +27,6 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+image.workspace = true
 tempfile = "3"
 

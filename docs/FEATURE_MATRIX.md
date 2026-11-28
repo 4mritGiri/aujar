@@ -59,14 +59,15 @@ the current target's machine-readable feature support report.
 | Mouse Without Borders (Linux, macOS, Windows) | Mouse Without Borders | `modules/mouse-borders` | ✅ engine, encrypted protocol, CLI, system service, 120+ tests; evdev/uinput/X11 backends compile-checked and smoke-tested with two real daemons, not yet on physical hardware. Layout editor in the settings window (drag-and-drop 📅) ([MOUSE_BORDERS](MOUSE_BORDERS.md)) | ✅ edges + shortcuts | ⚠️ shortcuts only: no pointer position on Wayland | ⚠️ shortcuts only | ⚠️ shortcuts only | evdev capture, uinput injection, X11 pointer; InputCapture portal 📅 |
 | NexDesk (open the remote-access manager) | — | `modules/nexdesk` | ✅ `aujar nexdesk open` / `status`; saved-connection search and a settings page 📅 ([NEXDESK](NEXDESK.md)) | ✅ | ✅ | ✅ | ✅ | process launch only, no desktop backend |
 | Mouse utilities (find my mouse, highlighter) | Mouse Utilities | — | 📅 | ❌ generic / ⚠️ per compositor | ⚠️ | ⚠️ | ⚠️ | |
-| Text extractor (OCR) | Text Extractor | — | 📅 | 📅 | 📅 | 📅 | 📅 | Screen capture + Tesseract |
+| Snipping tool (Aujar Snip) | Snipping Tool | `apps/aujar-ui` (`snip.rs`), `modules/text-extractor` (capture) | 🚧 `aujar snip`: frozen full-screen overlay, drag/resize/nudge, magnifier with color, size; copy picture, copy text (OCR), save PNG; GNOME shortcut; tested with stand-in tools and unit tests ([SNIP](SNIP.md)) | 🚧 (`maim`/`scrot`, portal) | 🚧 (`grim`) | 🚧 (portal) | 🚧 (portal, non-interactive) | Whole-screen capture, then the UI's own overlay |
+| Text extractor (OCR) | Text Extractor | `modules/text-extractor` | 🚧 `aujar text`: select an area, Tesseract OCR, clipboard; `--file`; GNOME shortcut; tested with stand-in tools, not yet on real desktops; Settings page ([TEXT_EXTRACTOR](TEXT_EXTRACTOR.md)) | 🚧 (`maim`/`scrot`, portal) | 🚧 (`grim` + `slurp`) | 🚧 (portal) | 🚧 (portal) | Tesseract (external), desktop area selection |
 | Awake (inhibit sleep) | Awake | `modules/awake` | ✅ `aujar awake on/off/for/status`, Settings page, remembered across restarts, timed modes | 📅 | ✅ (portal Inhibit) | 📅 | 📅 | `xdg-desktop-portal` Inhibit |
 
 ## 3. Front-ends
 
 | Front-end | Status | Notes |
 |---|---|---|
-| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `launcher`, `events`, `color`, `doctor`, `shortcut`, `rename`, `daemon` |
+| CLI (`aujar`) | ✅ | `ping`, `health`, `windows`, `modules`, `search`, `run`, `launcher`, `events`, `color`, `text`, `snip`, `doctor`, `shortcut`, `rename`, `daemon` |
 | Settings app | 📅 | v0.4+; GPUI (proposed, [ADR 0002](adr/0002-ui-framework-gpui.md)) |
 | Launcher UI | 🚧 spike in `apps/aujar-ui` (`gpui-pre` snapshot of Zed `main`): window + daemon events, search field with selection, undo and IME (composed text), launch; cross-desktop checklist still open | See [UI_SPIKE](UI_SPIKE.md), [UI_UX](UI_UX.md) |
 | Tray / status indicator | 📅 | StatusNotifierItem |

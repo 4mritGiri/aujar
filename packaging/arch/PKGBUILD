@@ -12,7 +12,11 @@ optdepends=('nexdesk: remote desktop manager behind `rdp <name>` and `aujar nexd
             'ffmpegthumbnailer: video previews'
             'poppler: PDF previews'
             'libgsf: Office document previews'
-            'gnome-control-center: the settings pages behind `wifi`, `bluetooth`, ...')
+            'gnome-control-center: the settings pages behind `wifi`, `bluetooth`, ...'
+            'tesseract: Text Extractor (`aujar text`), with a tesseract-data-* language'
+            'slurp: Text Extractor area selection on Sway/Hyprland (with grim)'
+            'grim: Text Extractor capture on Sway/Hyprland (with slurp)'
+            'maim: Text Extractor area selection on X11')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 install=aujar.install
 sha256sums=('SKIP') # Replace before publishing.

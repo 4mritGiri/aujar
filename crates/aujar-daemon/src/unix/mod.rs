@@ -483,6 +483,9 @@ async fn initialize_runtime(
     registry
         .register(nexdesk)
         .context("failed to register the NexDesk module")?;
+    registry
+        .register(aujar_text_extractor::TextExtractorModule)
+        .context("failed to register the Text Extractor module")?;
 
     let context = ModuleContext::new(env!("CARGO_PKG_VERSION"));
 
@@ -638,6 +641,69 @@ async fn stream_events(
     Ok(())
 }
 
+/// A frozen picture of the screen for the snipping overlay.
+async fn capture_screen() -> Response {
+    let backend = aujar_config::Settings::load_or_default()
+        .text_extractor
+        .backend;
+
+    let backend = match backend.parse::<aujar_text_extractor::Backend>() {
+        Ok(backend) => backend,
+        Err(error) => return Response::Error(format!("text_extractor.backend: {error}")),
+    };
+
+    match tokio::task::spawn_blocking(move || {
+        aujar_text_extractor::capture::capture_screen(backend)
+    })
+    .await
+    {
+        Ok(Ok(path)) => Response::Screen {
+            path: path.to_string_lossy().into_owned(),
+        },
+        Ok(Err(error)) => Response::Error(format!("{error:#}")),
+        Err(error) => Response::Error(format!("the screen capture task failed: {error}")),
+    }
+}
+
+/// Text Extractor: the request's options over the saved settings.
+async fn extract_text(request: aujar_ipc::ExtractTextRequest) -> Response {
+    let settings = aujar_config::Settings::load_or_default().text_extractor;
+
+    let backend = match settings.backend.parse::<aujar_text_extractor::Backend>() {
+        Ok(backend) => backend,
+        Err(error) => return Response::Error(format!("text_extractor.backend: {error}")),
+    };
+    let options = aujar_text_extractor::Options {
+        languages: if request.languages.is_empty() {
+            settings.languages
+        } else {
+            request.languages
+        },
+        single_line: request.single_line || settings.single_line,
+        backend,
+    };
+
+    match aujar_text_extractor::extract_from_screen(options).await {
+        Ok(extracted) => Response::Text(aujar_ipc::ExtractTextResponse {
+            text: extracted.text,
+            languages: extracted.languages,
+            cancelled: false,
+        }),
+        Err(error)
+            if error
+                .downcast_ref::<aujar_text_extractor::Cancelled>()
+                .is_some() =>
+        {
+            Response::Text(aujar_ipc::ExtractTextResponse {
+                text: String::new(),
+                languages: Vec::new(),
+                cancelled: true,
+            })
+        }
+        Err(error) => Response::Error(format!("{error:#}")),
+    }
+}
+
 async fn resolve_off_thread(shared: &Shared, id: String) -> Result<LaunchSpec, String> {
     let launcher = current_launcher(shared);
 
@@ -700,6 +766,10 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
             }),
             Err(error) => Response::Error(format!("{error:#}")),
         },
+
+        Request::ExtractText(request) => extract_text(request).await,
+
+        Request::CaptureScreen => capture_screen().await,
 
         Request::Subscribe => {
             Response::Error("Subscribe is handled by the connection layer".into())

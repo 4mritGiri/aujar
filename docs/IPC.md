@@ -44,7 +44,9 @@ One request per connection, one response, then the daemon closes it.
 | `Status` | `Status{subscribers, hotkeys}` | — |
 | `Version` | `Version{protocol, min_protocol, daemon}` | — |
 | `PickColor` | `Color{hex, rgb, hsl}` (waits until the user picks or cancels) | `screen_capture` |
-| `Launcher("Show"\|"Hide"\|"Toggle"\|"Settings"\|"ColorPicker"\|"ColorEditor")` | `Delivered{subscribers}` | — |
+| `CaptureScreen` | `Screen{path}`: an owner-only PNG of the whole screen in `$XDG_RUNTIME_DIR`; the client reads and deletes it | `screen_capture` |
+| `ExtractText{languages, single_line}` | `Text{text, languages, cancelled}` (waits until the user selects an area or cancels) | `screen_capture` |
+| `Launcher("Show"\|"Hide"\|"Toggle"\|"Settings"\|"ColorPicker"\|"ColorEditor"\|"Snip"\|"SnipText")` | `Delivered{subscribers}` | — |
 | `Subscribe` | `Subscribed`, then events | — |
 | `MouseBorders(Status\|GenerateKey\|ShowKey\|SetKey\|Reload)` | `MouseBorders(Status\|Key\|NoKey\|Done)` | — |
 | `MouseBorders(Switch\|SetEasyMouse\|LockAll\|Reconnect\|MultiMachineInput)` | `MouseBorders(Done{message})` | `control_input` |

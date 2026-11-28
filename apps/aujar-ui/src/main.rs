@@ -17,6 +17,7 @@ mod color_picker;
 mod ime;
 mod model;
 mod settings_view;
+mod snip;
 mod theme;
 mod thumbs;
 
@@ -109,6 +110,8 @@ enum UiMessage {
     ColorPicked(aujar_color::Rgb),
     /// Open the color editor.
     ColorEditor,
+    /// Aujar Snip has the picture of the screen: open the overlay.
+    SnipReady(snip::Shot),
 }
 
 /// UI thread -> bridge thread.
@@ -5659,6 +5662,8 @@ struct UiState {
     launcher: Option<WindowHandle<LauncherView>>,
     settings: Option<WindowHandle<SettingsView>>,
     color_editor: Option<WindowHandle<color_editor::ColorEditorView>>,
+    /// The snipping overlay, while it is open (one at a time).
+    snip: Option<WindowHandle<snip::SnipView>>,
     /// Clipboard history, newest first (memory only).
     clips: Vec<ClipEntry>,
 }
@@ -5719,6 +5724,31 @@ fn handle_message(
         }
         UiMessage::Launcher(LauncherCommand::ColorEditor) | UiMessage::ColorEditor => {
             color_picker::open_editor(cx, state)
+        }
+        UiMessage::Launcher(command @ (LauncherCommand::Snip | LauncherCommand::SnipText)) => {
+            let open = state
+                .snip
+                .as_ref()
+                .is_some_and(|handle| handle.update(cx, |_, _, _| ()).is_ok());
+
+            // A second press while the overlay is up does nothing (it is already frozen).
+            if !open {
+                // The launcher must not be in the picture of the screen.
+                if let Some(handle) = state.launcher.take() {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
+
+                let mode = if command == LauncherCommand::SnipText {
+                    snip::Mode::Text
+                } else {
+                    snip::Mode::Picture
+                };
+
+                snip::start(cx, mode);
+            }
+        }
+        UiMessage::SnipReady(shot) => {
+            state.snip = snip::open(cx, shot);
         }
         UiMessage::ColorPick => color_picker::start_pick(cx),
         UiMessage::ColorPicked(color) => color_picker::picked(cx, state, color),

@@ -12,6 +12,10 @@ const LIST_KEY: &str = "custom-keybindings";
 const ENTRY_PATH: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aujar/";
 const COLOR_ENTRY_PATH: &str =
     "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aujar-color/";
+const SNIP_ENTRY_PATH: &str =
+    "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aujar-snip/";
+const TEXT_ENTRY_PATH: &str =
+    "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/aujar-text/";
 
 /// Default key combination in GNOME's accelerator syntax.
 pub const DEFAULT_KEYS: &str = "<Control><Alt>space";
@@ -105,27 +109,48 @@ pub fn install(keys: &str) -> Result<()> {
 
 /// Install a second GNOME custom shortcut for the screen color picker.
 pub fn install_color_picker(keys: &str) -> Result<()> {
+    install_tool(COLOR_ENTRY_PATH, "Aujar Color Picker", "color pick", keys)?;
+    println!("The color picker shortcut is installed.");
+    Ok(())
+}
+
+/// Install a GNOME custom shortcut for Text Extractor (`aujar text`).
+pub fn install_text_extractor(keys: &str) -> Result<()> {
+    install_tool(TEXT_ENTRY_PATH, "Aujar Text Extractor", "text", keys)?;
+    println!("Press it, drag over some text, and the text is on the clipboard.");
+    Ok(())
+}
+
+/// Install a GNOME custom shortcut for Aujar Snip (`aujar snip`).
+pub fn install_snip(keys: &str) -> Result<()> {
+    install_tool(SNIP_ENTRY_PATH, "Aujar Snip", "snip", keys)?;
+    println!("Press it, drag an area, then Enter to copy, T for its text or Ctrl+S to save.");
+    Ok(())
+}
+
+/// A GNOME custom shortcut at `path` that runs `aujar <arguments>`.
+fn install_tool(path: &str, name: &str, arguments: &str, keys: &str) -> Result<()> {
     let binding = gnome_binding(keys)?;
     let executable = std::env::current_exe().context("could not determine the path of `aujar`")?;
     let executable = executable.display().to_string();
-    let command = format!("'{}' color pick", executable.replace('\'', "'\\''"));
+    let command = format!("'{}' {arguments}", executable.replace('\'', "'\\''"));
     let mut items = parse_list(&gsettings(&["get", SCHEMA, LIST_KEY])?);
-    if !items.iter().any(|item| item == COLOR_ENTRY_PATH) {
-        items.push(COLOR_ENTRY_PATH.to_owned());
+    if !items.iter().any(|item| item == path) {
+        items.push(path.to_owned());
     }
     gsettings(&["set", SCHEMA, LIST_KEY, &format_list(&items)])?;
-    let entry = format!("{SCHEMA}.custom-keybinding:{COLOR_ENTRY_PATH}");
-    gsettings(&["set", &entry, "name", "Aujar Color Picker"])?;
+    let entry = format!("{SCHEMA}.custom-keybinding:{path}");
+    gsettings(&["set", &entry, "name", name])?;
     let command_value = variant_string(&command);
     gsettings(&["set", &entry, "command", &command_value])?;
     gsettings(&["set", &entry, "binding", &binding])?;
 
     let saved_binding = gsettings(&["get", &entry, "binding"])?;
     if !saved_binding.contains(&binding) {
-        bail!("GNOME did not save the color picker shortcut: {saved_binding}");
+        bail!("GNOME did not save the {name} shortcut: {saved_binding}");
     }
 
-    println!("Color picker shortcut installed: {keys} runs `{command}`.");
+    println!("Shortcut installed: {keys} runs `{command}`.");
     Ok(())
 }
 

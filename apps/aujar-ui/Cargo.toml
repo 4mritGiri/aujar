@@ -12,10 +12,12 @@ description = "Aujar launcher UI (GPUI spike)"
 
 [dependencies]
 anyhow = "1"
+image.workspace = true
 async-channel = "2"
 aujar-backup = { workspace = true }
 aujar-config = { workspace = true }
 aujar-awake = { path = "../../modules/awake", version = "0.1.1" }
+aujar-text-extractor = { workspace = true }
 aujar-color = { path = "../../modules/color", version = "0.1.1" }
 aujar-ipc = { workspace = true }
 aujar-log = { workspace = true }

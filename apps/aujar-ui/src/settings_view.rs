@@ -224,6 +224,7 @@ impl Render for Tip {
 enum Page {
     Appearance,
     ColorPicker,
+    TextExtractor,
     Search,
     Web,
     MouseBorders,
@@ -237,9 +238,10 @@ enum Page {
 
 impl Page {
     /// The top group of the sidebar.
-    const MAIN: [Page; 7] = [
+    const MAIN: [Page; 8] = [
         Page::Appearance,
         Page::ColorPicker,
+        Page::TextExtractor,
         Page::Search,
         Page::Web,
         Page::MouseBorders,
@@ -249,9 +251,10 @@ impl Page {
     /// The collapsible "Data" group.
     const DATA: [Page; 3] = [Page::Files, Page::History, Page::Backup];
     /// Every page, in sidebar order (used by search).
-    const ALL: [Page; 11] = [
+    const ALL: [Page; 12] = [
         Page::Appearance,
         Page::ColorPicker,
+        Page::TextExtractor,
         Page::Search,
         Page::Web,
         Page::MouseBorders,
@@ -267,6 +270,7 @@ impl Page {
         match self {
             Self::Appearance => "Appearance",
             Self::ColorPicker => "Color Picker",
+            Self::TextExtractor => "Text Extractor",
             Self::Search => "Search plugins",
             Self::Web => "Web search",
             Self::MouseBorders => "Mouse Borders",
@@ -283,6 +287,7 @@ impl Page {
         match self {
             Self::Appearance => "Colors, window style, and what the launcher shows",
             Self::ColorPicker => "Pick colors from your screen, refine them, and copy a format",
+            Self::TextExtractor => "Copy the text in any part of your screen",
             Self::Search => "Choose what the launcher can find and answer",
             Self::Web => "Where the \"search the web\" row and keyword shortcuts go",
             Self::MouseBorders => "Use one keyboard and mouse across your computers",
@@ -299,6 +304,7 @@ impl Page {
         match self {
             Self::Appearance => "icons/sliders.svg",
             Self::ColorPicker => "icons/palette.svg",
+            Self::TextExtractor => "icons/file-text.svg",
             Self::Search => "icons/search.svg",
             Self::Web => "icons/globe.svg",
             Self::MouseBorders => "icons/mouse.svg",
@@ -321,6 +327,10 @@ impl Page {
                  launcher spotlight top center"
             }
             Self::ColorPicker => "color picker eyedropper hex rgb hsl format history sample screen",
+            Self::TextExtractor => {
+                "text extractor ocr tesseract recognise recognize copy text screen screenshot \
+                 language languages nepali english grim slurp maim scrot portal"
+            }
             Self::Search => {
                 "plugins applications apps files folders windows system clipboard calculator \
                  units currency dictionary weather stocks nepse nepal sports shell online \
@@ -391,6 +401,7 @@ pub struct SettingsView {
     page: Page,
     mouse_borders: mouse_borders::State,
     nexdesk: nexdesk::State,
+    text_extractor: text_extractor::State,
     awake: awake::State,
     backup: backup::State,
     pub focus_handle: FocusHandle,
@@ -431,6 +442,7 @@ impl SettingsView {
             page: Page::Appearance,
             mouse_borders: mouse_borders::State::default(),
             nexdesk: nexdesk::State::default(),
+            text_extractor: text_extractor::State::default(),
             awake: awake::State::default(),
             backup: backup::State::default(),
             focus_handle: cx.focus_handle(),
@@ -476,6 +488,10 @@ impl SettingsView {
 
         if page == Page::Awake {
             self.refresh_awake(cx);
+        }
+
+        if page == Page::TextExtractor {
+            self.refresh_text_extractor(cx);
         }
 
         if page == Page::Backup {
@@ -1751,6 +1767,7 @@ mod history;
 mod mouse_borders;
 mod nexdesk;
 mod plugins;
+mod text_extractor;
 mod web;
 
 impl Focusable for SettingsView {
@@ -1786,6 +1803,7 @@ impl Render for SettingsView {
             Page::MouseBorders => self.mouse_borders_page(cx),
             Page::Awake => self.awake_page(cx),
             Page::NexDesk => self.nexdesk_page(cx),
+            Page::TextExtractor => self.text_extractor_page(cx),
             Page::Files => self.files_page(cx),
             Page::History => self.history_page(cx),
             Page::Backup => self.backup_page(cx),
