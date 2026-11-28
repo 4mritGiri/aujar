@@ -7,13 +7,14 @@
 //! Keys: type to search, Left/Right/Home/End to edit, Up/Down/Tab to select, Enter to
 //! launch, Ctrl+Enter to show a file in its folder, Ctrl+C to copy, Ctrl+L to look a word up,
 //! Ctrl+K (or right-click) for the actions menu, Alt+1..9 to launch a row, Esc to clear/close.
-//! Files can be dragged out of the window into other apps (Wayland). Limitation: plain key
-//! events only (no IME / composition yet).
+//! Files can be dragged out of the window into other apps (Wayland). Input methods (IME, dead
+//! keys, compose) work in the search field; see `ime.rs`.
 
 mod assets;
 mod clips;
 mod color_editor;
 mod color_picker;
+mod ime;
 mod model;
 mod settings_view;
 mod theme;
@@ -27,10 +28,11 @@ use aujar_ipc::{
 };
 use gpui::{
     Animation, AnimationExt as _, AnyElement, AnyView, App, Bounds, ClipboardEntry, ClipboardItem,
-    Context, ExternalDragPayload, FileDragPaths, FocusHandle, Focusable, FontWeight, ImageFormat,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ScrollHandle, SharedString,
-    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowHandle, WindowOptions, div, img, point, prelude::*, px, rgb, rgba, size, svg,
+    Context, ElementInputHandler, ExternalDragPayload, FileDragPaths, FocusHandle, Focusable,
+    FontWeight, ImageFormat, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
+    ScrollHandle, SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowHandle, WindowOptions, canvas, div, img, point, prelude::*, px, rgb,
+    rgba, size, svg,
 };
 use gpui_platform::application;
 use model::{
@@ -1301,6 +1303,11 @@ struct LauncherView {
     redo: Vec<(String, usize, usize)>,
     /// Set while the left mouse button is held after pressing inside the search field.
     drag_anchor: Option<usize>,
+    /// Text an input method is still composing: a byte range of `query`, shown underlined and
+    /// not searched until it is committed.
+    marked: Option<std::ops::Range<usize>>,
+    /// Where the caret was last painted, for the input method's candidate window.
+    caret_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     results: Vec<SearchHit>,
     /// Section of each result, same length as `results`.
     sections: Vec<Section>,
@@ -1396,6 +1403,8 @@ impl LauncherView {
             undo: Vec::new(),
             redo: Vec::new(),
             drag_anchor: None,
+            marked: None,
+            caret_bounds: Default::default(),
             results: Vec::new(),
             sections: Vec::new(),
             all_hits: Vec::new(),
@@ -1565,6 +1574,8 @@ impl LauncherView {
 
     /// Call after the query text changed.
     fn edited(&mut self, cx: &mut Context<Self>) {
+        // Any other edit ends a composition (the input-method paths clear it themselves).
+        self.marked = None;
         self.more = false;
         self.tips = false;
         self.cursor = self.cursor.min(self.query.len());
@@ -2438,6 +2449,11 @@ impl LauncherView {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // The launcher handles every key itself. Without this, GPUI would also hand the key's
+        // character to the input handler (`ime.rs`): typed twice, Enter and Tab as text, and
+        // letters typed while the actions menu is open.
+        cx.stop_propagation();
+
         // Already fading out: ignore what is typed in the meantime.
         if self.closing {
             return;
@@ -3689,14 +3705,50 @@ impl LauncherView {
     /// (each character has a left and a right half), select by dragging, and double-click
     /// a word or triple-click everything.
     fn render_query(&self, cx: &mut Context<Self>) -> AnyElement {
-        let pal = self.palette;
+        let entity = cx.entity();
+        let focus = self.focus_handle.clone();
 
-        let caret = || {
+        // Registers the input-method handler over the field's area on every paint (GPUI needs
+        // that to enable the platform's IME and deliver composed text).
+        let input = canvas(
+            |_, _, _| (),
+            move |bounds, _, window, cx| {
+                window.handle_input(&focus, ElementInputHandler::new(bounds, entity), cx);
+            },
+        )
+        .absolute()
+        .size_full();
+
+        div()
+            .relative()
+            .flex()
+            .flex_row()
+            .items_center()
+            .flex_1()
+            .child(self.render_query_field(cx))
+            .child(input)
+            .into_any_element()
+    }
+
+    fn render_query_field(&self, cx: &mut Context<Self>) -> AnyElement {
+        let pal = self.palette;
+        let caret_bounds = self.caret_bounds.clone();
+
+        let caret = move || {
+            let caret_bounds = caret_bounds.clone();
+
             div()
                 .w(px(2.))
                 .h(px(26.))
                 .flex_shrink_0()
                 .bg(rgb(pal.accent))
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, _, _, _| caret_bounds.set(Some(bounds)),
+                    )
+                    .size_full(),
+                )
         };
 
         let field = div()
@@ -3819,6 +3871,10 @@ impl LauncherView {
 
             let selected =
                 start >= selection_start && end <= selection_end && selection_start < selection_end;
+            let composing = self
+                .marked
+                .as_ref()
+                .is_some_and(|marked| start >= marked.start && end <= marked.end);
 
             parts.push(
                 div()
@@ -3826,6 +3882,9 @@ impl LauncherView {
                     .flex_shrink_0()
                     .text_color(rgb(pal.text))
                     .when(selected, |this| this.bg(rgba(pal.selection)))
+                    .when(composing, |this| {
+                        this.border_b_1().border_color(rgb(pal.text))
+                    })
                     .child(c.to_string())
                     .child(hit_area(start, true))
                     .child(hit_area(end, false))
