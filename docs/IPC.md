@@ -10,8 +10,23 @@ Framing: **one JSON object per line** (UTF-8, `\n` terminated), each wrapped in 
 ```
 
 Requests are limited to 64 KB and must arrive within 5 seconds of connecting.
-Unknown protocol versions are rejected. New request/response/event variants are added without
-bumping the version; clients must tolerate variants they do not know.
+
+## Versioning
+
+- `PROTOCOL_VERSION` (currently 1) is the version this build speaks; `MIN_PROTOCOL_VERSION` is
+  the oldest one the daemon still answers. Both live in `aujar-ipc`.
+- **Additive changes keep the version:** new request, response or event variants, and new fields
+  marked `#[serde(default)]`. Clients must tolerate variants they do not know; a daemon answers an
+  unknown request with `Error("unrecognised request ...")`.
+- **Breaking changes bump the version:** renaming or removing a variant or field, or changing what
+  one means. Keep the previous version in `MIN_PROTOCOL_VERSION` for at least one release.
+- The daemon reads the envelope's `version` before the payload, and answers **in the client's
+  version**. A client outside the supported range gets `Error` explaining the mismatch, still in
+  its own version. `Error(String)` has the same shape in every version, so any client can read it.
+- A client reads the version of every reply first, and reports a daemon outside its range as a
+  mismatch ("install the same Aujar release for both and restart the daemon"), not as bad JSON.
+- `Version` asks the daemon which versions it speaks. Older daemons answer it with
+  `Error`; treat that as "v1 only". `aujar doctor` prints the result.
 
 ## Request / response
 
@@ -27,6 +42,7 @@ One request per connection, one response, then the daemon closes it.
 | `Execute{id}` | `Executed{title, pid}` | `execute_command` |
 | `Rename{...}` | `Rename{...}` | `filesystem` |
 | `Status` | `Status{subscribers, hotkeys}` | — |
+| `Version` | `Version{protocol, min_protocol, daemon}` | — |
 | `PickColor` | `Color{hex, rgb, hsl}` (waits until the user picks or cancels) | `screen_capture` |
 | `Launcher("Show"\|"Hide"\|"Toggle"\|"Settings"\|"ColorPicker"\|"ColorEditor")` | `Delivered{subscribers}` | — |
 | `Subscribe` | `Subscribed`, then events | — |

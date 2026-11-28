@@ -723,6 +723,7 @@ async fn doctor_report() -> anyhow::Result<()> {
 
     println!("daemon:     running, v{}", health.version);
     println!("session:    {:?}", health.session);
+    println!("protocol:   {}", protocol_report(&socket).await);
 
     let Ok(Response::Status(status)) = send(&socket, Request::Status).await else {
         println!("status:     the daemon is older than this client; restart it");
@@ -758,6 +759,43 @@ async fn doctor_report() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// One line on IPC protocol compatibility between this program and the daemon.
+async fn protocol_report(socket: &std::path::Path) -> String {
+    use aujar_ipc::{PROTOCOL_VERSION, VersionResponse};
+
+    match send(socket, Request::Version).await {
+        Ok(Response::Version(daemon)) => describe_protocol(&daemon, PROTOCOL_VERSION),
+        // Older daemons do not know `Version` and only speak v1.
+        Ok(Response::Error(_)) => describe_protocol(
+            &VersionResponse {
+                protocol: 1,
+                min_protocol: 1,
+                daemon: "older release".to_owned(),
+            },
+            PROTOCOL_VERSION,
+        ),
+        Ok(other) => format!("unexpected answer {other:?}"),
+        Err(error) => format!("{error:#}"),
+    }
+}
+
+fn describe_protocol(daemon: &aujar_ipc::VersionResponse, ours: u16) -> String {
+    let range = if daemon.min_protocol == daemon.protocol {
+        format!("v{}", daemon.protocol)
+    } else {
+        format!("v{} to v{}", daemon.min_protocol, daemon.protocol)
+    };
+
+    if daemon.accepts(ours) {
+        format!("v{ours} (daemon speaks {range}), compatible")
+    } else {
+        format!(
+            "MISMATCH: this program speaks v{ours}, the daemon {range}. Install the same Aujar \
+             release for both and run `systemctl --user restart aujar`"
+        )
+    }
 }
 
 fn resolve_socket() -> PathBuf {

@@ -16,7 +16,36 @@ type LocalStream = UnixStream;
 #[cfg(windows)]
 type LocalStream = NamedPipeClient;
 
+/// The IPC protocol version this build speaks (see `docs/IPC.md`, "Versioning").
+///
+/// Bump it only for an incompatible change: a renamed or removed variant or field, or a changed
+/// meaning. New variants and new `#[serde(default)]` fields are additive and keep the version.
 pub const PROTOCOL_VERSION: u16 = 1;
+
+/// The oldest protocol version the daemon still answers. When the protocol is bumped, keep the
+/// old version here for at least one release so older clients get answers (in their own
+/// version) instead of errors.
+pub const MIN_PROTOCOL_VERSION: u16 = 1;
+
+/// Whether this build can talk protocol `version`.
+pub fn supports_version(version: u16) -> bool {
+    (MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&version)
+}
+
+/// Explains a version mismatch to a person, with the fix.
+fn version_mismatch(theirs: u16, them: &str) -> String {
+    let ours = if MIN_PROTOCOL_VERSION == PROTOCOL_VERSION {
+        format!("v{PROTOCOL_VERSION}")
+    } else {
+        format!("v{MIN_PROTOCOL_VERSION} to v{PROTOCOL_VERSION}")
+    };
+
+    format!(
+        "Aujar IPC protocol mismatch: the {them} uses v{theirs}, this program supports {ours}. \
+         Install the same Aujar release for both and restart the daemon \
+         (`systemctl --user restart aujar`)"
+    )
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
@@ -41,6 +70,9 @@ pub enum Request {
     NexDesk(NexDeskRequest),
     /// Keep the computer from sleeping, or ask whether that is on.
     Awake(AwakeRequest),
+    /// Which protocol versions the daemon speaks (older daemons do not know it
+    /// and answer `Error`, which means "v1 only").
+    Version,
 }
 
 /// Mouse Borders request and response types, shared with the standalone agent.
@@ -95,6 +127,7 @@ impl Request {
             | Self::Search(_)
             | Self::Subscribe
             | Self::Status
+            | Self::Version
             | Self::Launcher(_) => None,
         }
     }
@@ -165,7 +198,37 @@ pub enum Response {
     Delivered {
         subscribers: usize,
     },
+    Version(VersionResponse),
+    /// The request failed. This variant's shape is frozen across protocol versions, so a client
+    /// of any version can read why the daemon refused it.
     Error(String),
+}
+
+/// Answer to [`Request::Version`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VersionResponse {
+    /// The newest protocol version the daemon speaks.
+    pub protocol: u16,
+    /// The oldest protocol version the daemon still answers.
+    pub min_protocol: u16,
+    /// The daemon's release (`0.1.1`).
+    pub daemon: String,
+}
+
+impl VersionResponse {
+    /// What this build of the daemon answers.
+    pub fn current() -> Self {
+        Self {
+            protocol: PROTOCOL_VERSION,
+            min_protocol: MIN_PROTOCOL_VERSION,
+            daemon: env!("CARGO_PKG_VERSION").to_owned(),
+        }
+    }
+
+    /// Whether a client speaking `version` can talk to this daemon.
+    pub fn accepts(&self, version: u16) -> bool {
+        (self.min_protocol..=self.protocol).contains(&version)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,28 +371,89 @@ fn trace_sent(socket: &Path, kind: &str, started: std::time::Instant, result: &R
 
 /// Serialize `payload` as one protocol line (JSON followed by a newline).
 pub fn encode_line<T: Serialize>(payload: T) -> Result<Vec<u8>> {
-    let mut bytes = serde_json::to_vec(&Envelope {
-        version: PROTOCOL_VERSION,
-        payload,
-    })?;
+    encode_line_as(PROTOCOL_VERSION, payload)
+}
+
+/// Serialize `payload` as one protocol line in protocol `version` (the daemon answers each
+/// client in the version it spoke).
+pub fn encode_line_as<T: Serialize>(version: u16, payload: T) -> Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec(&Envelope { version, payload })?;
 
     bytes.push(b'\n');
 
     Ok(bytes)
 }
 
-/// Parse one protocol line and verify the protocol version.
-pub fn decode_line<T: DeserializeOwned>(line: &str) -> Result<T> {
-    let envelope: Envelope<T> = serde_json::from_str(line)?;
+/// Only the version of an envelope, read before the payload so a payload from another protocol
+/// version is reported as a version mismatch rather than as malformed JSON.
+#[derive(Deserialize)]
+struct Header {
+    version: u16,
+}
 
-    if envelope.version != PROTOCOL_VERSION {
-        anyhow::bail!(
-            "unsupported Aujar IPC protocol version {}",
-            envelope.version
-        );
+/// Parse one line from the daemon (a response or an event) and verify the protocol version.
+pub fn decode_line<T: DeserializeOwned>(line: &str) -> Result<T> {
+    let header: Header = serde_json::from_str(line).context("malformed Aujar IPC message")?;
+
+    if !supports_version(header.version) {
+        anyhow::bail!(version_mismatch(header.version, "daemon"));
     }
 
+    let envelope: Envelope<T> = serde_json::from_str(line).with_context(|| {
+        "unrecognised Aujar IPC message (is the daemon newer than this program? \
+         restart both after upgrading)"
+    })?;
+
     Ok(envelope.payload)
+}
+
+/// A request line the daemon read, or why it cannot be served.
+#[derive(Debug)]
+pub enum Incoming {
+    /// Serve `request` and answer in protocol `version`.
+    Request { version: u16, request: Request },
+    /// Answer `response` (always [`Response::Error`]) in protocol `version`, then close.
+    Refused { version: u16, response: Response },
+}
+
+impl Incoming {
+    /// Decode one request line on the daemon side.
+    ///
+    /// The refusal is written in the client's own version when the envelope says which one it
+    /// is, because [`Response::Error`] reads the same in every version.
+    pub fn parse(line: &str) -> Self {
+        let version = match serde_json::from_str::<Header>(line) {
+            Ok(header) => header.version,
+            Err(error) => {
+                return Self::Refused {
+                    version: PROTOCOL_VERSION,
+                    response: Response::Error(format!("malformed request: {error}")),
+                };
+            }
+        };
+
+        if !supports_version(version) {
+            return Self::Refused {
+                version,
+                response: Response::Error(version_mismatch(version, "client")),
+            };
+        }
+
+        match serde_json::from_str::<Envelope<Request>>(line) {
+            Ok(envelope) => Self::Request {
+                version,
+                request: envelope.payload,
+            },
+            // Most likely a newer client talking to this daemon: say so instead of hanging up.
+            Err(error) => Self::Refused {
+                version,
+                response: Response::Error(format!(
+                    "unrecognised request (is the daemon older than the client? restart it \
+                     after upgrading): {error}"
+                )),
+            },
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -451,7 +575,74 @@ mod tests {
         assert_eq!(decode_line::<Event>(&line).unwrap(), Event::Shutdown);
 
         let wrong = r#"{"version":999,"payload":"Shutdown"}"#;
-        assert!(decode_line::<Event>(wrong).is_err());
+        let error = decode_line::<Event>(wrong).unwrap_err().to_string();
+        assert!(error.contains("daemon uses v999"), "{error}");
+        assert!(error.contains("restart the daemon"), "{error}");
+    }
+
+    #[test]
+    fn a_newer_payload_in_a_known_version_is_unrecognised_not_a_mismatch() {
+        let line = r#"{"version":1,"payload":"SomethingFromTheFuture"}"#;
+        let error = format!("{:#}", decode_line::<Event>(line).unwrap_err());
+
+        assert!(error.contains("unrecognised"), "{error}");
+    }
+
+    #[test]
+    fn daemon_parses_supported_requests() {
+        let line = String::from_utf8(encode_line(Request::Version).unwrap()).unwrap();
+
+        match Incoming::parse(&line) {
+            Incoming::Request { version, request } => {
+                assert_eq!(version, PROTOCOL_VERSION);
+                assert!(matches!(request, Request::Version));
+            }
+            other => panic!("refused: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn daemon_refuses_other_versions_in_the_clients_version() {
+        let line = r#"{"version":7,"payload":"Ping"}"#;
+
+        let Incoming::Refused { version, response } = Incoming::parse(line) else {
+            panic!("accepted an unsupported version");
+        };
+
+        // A v7 client can read the refusal: same version, frozen `Error` shape.
+        assert_eq!(version, 7);
+        let encoded = String::from_utf8(encode_line_as(version, &response).unwrap()).unwrap();
+        assert!(
+            encoded.starts_with(r#"{"version":7,"payload":{"Error":"#),
+            "{encoded}"
+        );
+
+        let Response::Error(message) = response else {
+            panic!("not an error")
+        };
+        assert!(message.contains("client uses v7"), "{message}");
+    }
+
+    #[test]
+    fn daemon_refuses_garbage_and_unknown_requests() {
+        assert!(matches!(
+            Incoming::parse("not json"),
+            Incoming::Refused { .. }
+        ));
+        assert!(matches!(
+            Incoming::parse(r#"{"version":1,"payload":"Teleport"}"#),
+            Incoming::Refused { version: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn version_response_describes_the_supported_range() {
+        let current = VersionResponse::current();
+
+        assert!(current.accepts(PROTOCOL_VERSION));
+        assert!(current.accepts(MIN_PROTOCOL_VERSION));
+        assert!(!current.accepts(PROTOCOL_VERSION + 1));
+        assert!(!current.accepts(0));
     }
 
     #[test]

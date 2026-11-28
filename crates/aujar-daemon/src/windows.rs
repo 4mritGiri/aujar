@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use aujar_core::{Health, Platform, Session};
-use aujar_ipc::{Envelope, PROTOCOL_VERSION, Request, Response, StatusResponse, encode_line};
+use aujar_ipc::{Incoming, Request, Response, StatusResponse, VersionResponse, encode_line_as};
 use std::path::Path;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -45,14 +45,13 @@ async fn serve(mut server: NamedPipeServer) -> Result<()> {
         .context("failed to read IPC request")?;
     drop(reader);
 
-    let response = match serde_json::from_str::<Envelope<Request>>(&line) {
-        Ok(envelope) if envelope.version == PROTOCOL_VERSION => dispatch(envelope.payload),
-        Ok(envelope) => {
-            Response::Error(format!("unsupported protocol version {}", envelope.version))
-        }
-        Err(error) => Response::Error(format!("unrecognised request: {error}")),
+    let (version, response) = match Incoming::parse(&line) {
+        Incoming::Request { version, request } => (version, dispatch(request)),
+        Incoming::Refused { version, response } => (version, response),
     };
-    server.write_all(&encode_line(response)?).await?;
+    server
+        .write_all(&encode_line_as(version, response)?)
+        .await?;
     server.flush().await?;
     Ok(())
 }
@@ -60,6 +59,7 @@ async fn serve(mut server: NamedPipeServer) -> Result<()> {
 fn dispatch(request: Request) -> Response {
     match request {
         Request::Ping => Response::Pong,
+        Request::Version => Response::Version(VersionResponse::current()),
         Request::Health => Response::Health(Health {
             name: "Aujar".into(),
             version: env!("CARGO_PKG_VERSION").into(),

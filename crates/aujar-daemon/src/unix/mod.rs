@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use aujar_core::{Capability, Health, Platform, WindowId};
 use aujar_hotkeys::{HotkeyEvent, ShortcutSpec};
 use aujar_ipc::{
-    ColorResponse, Envelope, Event, ExecuteResponse, LauncherCommand, ModuleInfo, ModulesResponse,
-    PROTOCOL_VERSION, RenameResponse, Request, Response, SearchHit, SearchResponse, StatusResponse,
-    encode_line,
+    ColorResponse, Event, ExecuteResponse, Incoming, LauncherCommand, ModuleInfo, ModulesResponse,
+    RenameResponse, Request, Response, SearchHit, SearchResponse, StatusResponse, VersionResponse,
+    encode_line_as,
 };
 use aujar_launcher::{LaunchSpec, Launcher};
 use aujar_platform::detect_session;
@@ -82,6 +82,7 @@ fn launcher_options(settings: &aujar_config::Settings) -> aujar_launcher::Launch
         files: settings.plugins.files,
         system: settings.plugins.system,
         shell: settings.plugins.shell,
+        commands: settings.plugins.commands,
         dictionary: settings.plugins.dictionary,
         weather: settings.plugins.weather,
         imperial: settings.weather.imperial,
@@ -552,40 +553,33 @@ async fn handle_client(stream: UnixStream, shared: Arc<Shared>) -> Result<()> {
         .await
         .context("timed out reading IPC request")??;
 
-    let envelope: Envelope<Request> = match serde_json::from_str(&line) {
-        Ok(envelope) => envelope,
-        Err(error) => {
-            // Most likely a newer client talking to this daemon: say so instead of hanging up.
-            let reply = Response::Error(format!(
-                "unrecognised request (is the daemon older than the client?): {error}"
-            ));
-            write_half.write_all(&encode_line(reply)?).await?;
+    let (version, request) = match Incoming::parse(&line) {
+        Incoming::Request { version, request } => (version, request),
+        Incoming::Refused { version, response } => {
+            write_half
+                .write_all(&encode_line_as(version, response)?)
+                .await?;
 
             return Ok(());
         }
     };
 
-    if envelope.version == PROTOCOL_VERSION && matches!(envelope.payload, Request::Subscribe) {
-        return stream_events(reader, write_half, &shared).await;
+    if matches!(request, Request::Subscribe) {
+        return stream_events(reader, write_half, &shared, version).await;
     }
 
-    let payload = if envelope.version != PROTOCOL_VERSION {
-        Response::Error(format!("unsupported protocol version {}", envelope.version))
-    } else {
-        // Only the kind of request is ever logged, never its contents.
-        let traced = aujar_ipc::trace_enabled()
-            .then(|| (envelope.payload.kind(), std::time::Instant::now()));
+    // Only the kind of request is ever logged, never its contents.
+    let traced = aujar_ipc::trace_enabled().then(|| (request.kind(), std::time::Instant::now()));
 
-        let response = dispatch(envelope.payload, &shared).await;
+    let response = dispatch(request, &shared).await;
 
-        if let Some((kind, started)) = traced {
-            aujar_ipc::trace_handled(&kind, started, &response);
-        }
+    if let Some((kind, started)) = traced {
+        aujar_ipc::trace_handled(&kind, started, &response);
+    }
 
-        response
-    };
-
-    write_half.write_all(&encode_line(payload)?).await?;
+    write_half
+        .write_all(&encode_line_as(version, response)?)
+        .await?;
 
     Ok(())
 }
@@ -596,10 +590,11 @@ async fn stream_events(
     mut reader: BufReader<Take<OwnedReadHalf>>,
     mut writer: OwnedWriteHalf,
     shared: &Shared,
+    version: u16,
 ) -> Result<()> {
     let Some(_guard) = SubscriberGuard::acquire(&shared.subscribers) else {
         let error = Response::Error("too many event subscribers".into());
-        writer.write_all(&encode_line(error)?).await?;
+        writer.write_all(&encode_line_as(version, error)?).await?;
 
         return Ok(());
     };
@@ -608,7 +603,7 @@ async fn stream_events(
     let mut events = shared.events.subscribe();
 
     writer
-        .write_all(&encode_line(Response::Subscribed)?)
+        .write_all(&encode_line_as(version, Response::Subscribed)?)
         .await?;
 
     tracing::debug!(target: "aujar::ipc", "event subscriber connected");
@@ -619,7 +614,7 @@ async fn stream_events(
         tokio::select! {
             received = events.recv() => match received {
                 Ok(event) => {
-                    writer.write_all(&encode_line(&event)?).await?;
+                    writer.write_all(&encode_line_as(version, &event)?).await?;
 
                     tracing::debug!(target: "aujar::ipc", event = ?event, "event pushed");
 
@@ -663,6 +658,8 @@ async fn dispatch(request: Request, shared: &Shared) -> Response {
         Request::Ping => Response::Pong,
 
         Request::Health => Response::Health(shared.health.clone()),
+
+        Request::Version => Response::Version(VersionResponse::current()),
 
         Request::Windows => Response::Windows(Vec::<WindowId>::new()),
 
